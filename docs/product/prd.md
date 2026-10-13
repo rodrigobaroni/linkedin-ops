@@ -1,6 +1,6 @@
 # PRD — LinkedIn Ops
 
-- Versão: 0.2 (Onda 1 — alinhamento do Maestro; semântica dos modos conforme decisão provisória, ver §13.11)
+- Versão: 0.3 (semântica dos modos de autonomia ratificada por Rodrigo em 2026-10-13, ver §13.11)
 - Data: 2026-10-13
 - Autor: Farol (Product & Delivery Lead)
 - Fonte canônica do briefing: `docs/product/maestro-prompt.md`
@@ -79,7 +79,7 @@ Durante o MVP, EPIC-07/08/09 recebem apenas contratos (taxonomia de eventos, esq
 
 ## 6. Modos de autonomia
 
-> **Decisão provisória do Maestro (2026-10-13), a ratificar por Rodrigo (§13.11):** adotada a semântica modelada por Atlas em `docs/architecture/data-model.md` (`AutonomyMode = ASSISTED | AUTOPILOT_CONTROLLED | AUTOPILOT_FULL`). Nomes em PT-BR na UI: **Assistido**, **Piloto automático controlado**, **Piloto automático completo**.
+> **Decisão ratificada por Rodrigo em 2026-10-13 (§13.11):** adotada a semântica modelada por Atlas em `docs/architecture/data-model.md` (`AutonomyMode = ASSISTED | AUTOPILOT_CONTROLLED | AUTOPILOT_FULL`). Nomes em PT-BR na UI: **Assistido**, **Piloto automático controlado**, **Piloto automático completo**.
 
 ### 6.1 Princípios
 
@@ -323,7 +323,7 @@ Consolidadas também na note `product-brief`. Itens 12–19 vêm dos documentos 
 8. Lista inicial de fontes RSS/Atom, domínios permitidos e watchlist (necessária para a primeira curadoria real).
 9. Lista de tópicos sensíveis que sempre exigem revisão humana (G7) e `allowed_pillar_ids` iniciais do piloto automático.
 10. Remote GitHub: criar repositório (conta pessoal) para habilitar PRs, Issues e CI?
-11. **Semântica dos modos piloto automático — decisão provisória do Maestro (2026-10-13), ratificar:** Assistido = humano aprova tudo (com opção de pré-gerar rascunho e propor slot); Controlado = auto-aprova e agenda, notifica, janela de cancelamento de `cancel_window_minutes` antes de publicar; Completo = sem janela; mídia sempre exige humano por padrão. Este PRD v0.2 já segue essa semântica. A leitura anterior (controlado com aprovação humana obrigatória) foi preservada como a opção `assistedPrefetchDraft` do Assistido.
+11. **Semântica dos modos piloto automático — RATIFICADA por Rodrigo em 2026-10-13:** Assistido = humano aprova tudo (com opção de pré-gerar rascunho e propor slot); Controlado = auto-aprova e agenda, notifica, janela de cancelamento de `cancel_window_minutes` antes de publicar; Completo = sem janela; mídia sempre exige humano por padrão. Este PRD v0.2 já segue essa semântica. A leitura anterior (controlado com aprovação humana obrigatória) foi preservada como a opção `assistedPrefetchDraft` do Assistido.
 12. **Pilares editoriais reais e participação de cada um** — proposta provisória em `docs/editorial/editorial-system.md` §2.1.
 13. **`founderMode`** (ângulos de fundador, `editorial-system.md` §5.3): ligar ou não.
 14. **Quando gerar versão em inglês** (`editorial-system.md` §6): por item sob demanda (proposta), por pilar, ou nunca no MVP.
