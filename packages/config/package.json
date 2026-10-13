@@ -10,7 +10,8 @@
     "./tsconfig.app.json": "./tsconfig.app.json",
     "./eslint": "./eslint/base.js",
     "./prettier": "./prettier/index.js",
-    "./vitest": "./vitest/base.js"
+    "./vitest": "./vitest/base.js",
+    "./eslint/react": "./eslint/react.js"
   },
   "files": [
     "tsconfig.*.json",
@@ -28,10 +29,13 @@
   "dependencies": {
     "@eslint/js": "^10.0.1",
     "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.13.0",
     "typescript-eslint": "^8.71.2"
   },
   "devDependencies": {
+    "@types/eslint-plugin-jsx-a11y": "^6.10.1",
     "@types/node": "^24.0.0",
     "eslint": "^10.12.0",
     "prettier": "^3.9.10",

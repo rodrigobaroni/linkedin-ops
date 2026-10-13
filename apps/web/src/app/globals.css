@@ -1,0 +1,11 @@
+@import "tailwindcss";
+@import "@linkedin-ops/ui/styles.css";
+
+@layer base {
+  /* Keep focused elements clear of the fixed bottom navigation on mobile (WCAG 2.2 2.4.11). */
+  @media (max-width: 767px) {
+    html {
+      scroll-padding-bottom: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom));
+    }
+  }
+}

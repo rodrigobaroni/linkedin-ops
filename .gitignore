@@ -57,3 +57,6 @@ Thumbs.db
 
 # Tooling caches
 .eslintcache
+
+# Next.js generated types (apps/web: `next typegen` / `next build`)
+next-env.d.ts

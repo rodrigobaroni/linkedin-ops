@@ -1,0 +1,27 @@
+import type { NextConfig } from "next";
+
+/**
+ * Baseline browser hardening (ADR-0007 §8). Caddy adds HSTS in production; a strict, nonce-based CSP
+ * arrives with T-057. `apps/web` never holds secrets: only `NEXT_PUBLIC_*` values reach the bundle.
+ */
+const securityHeaders = [
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "Referrer-Policy", value: "no-referrer" },
+  { key: "X-Frame-Options", value: "DENY" },
+  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=()" },
+  {
+    key: "Content-Security-Policy",
+    value: "frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'",
+  },
+];
+
+const nextConfig: NextConfig = {
+  reactStrictMode: true,
+  poweredByHeader: false,
+  typedRoutes: true,
+  headers() {
+    return Promise.resolve([{ source: "/(.*)", headers: securityHeaders }]);
+  },
+};
+
+export default nextConfig;
