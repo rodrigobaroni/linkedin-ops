@@ -15,8 +15,13 @@ import {
   SparklesIcon,
 } from "lucide-react";
 
-/** Navigation groups mirror docs/product/design/navigation-map.md ("Navegação global"). */
-export type NavGroup = "main" | "editorialMemory";
+/**
+ * Navigation groups mirror docs/product/design/navigation-map.md ("Navegação global"): primary
+ * destinations, the "Memória editorial" group, then the secondary ones. Rendering follows `navGroups`.
+ */
+export type NavGroup = "primary" | "editorialMemory" | "secondary";
+
+export const navGroups: readonly NavGroup[] = ["primary", "editorialMemory", "secondary"];
 
 export type NavItem = {
   href: Route;
@@ -26,17 +31,17 @@ export type NavItem = {
 };
 
 export const navItems: readonly NavItem[] = [
-  { href: "/hoje", label: "Hoje", icon: HomeIcon, group: "main" },
-  { href: "/curadoria", label: "Curadoria", icon: SparklesIcon, group: "main" },
-  { href: "/estudio", label: "Estúdio", icon: PenSquareIcon, group: "main" },
-  { href: "/calendario", label: "Calendário", icon: CalendarDaysIcon, group: "main" },
-  { href: "/historico", label: "Histórico", icon: HistoryIcon, group: "main" },
+  { href: "/hoje", label: "Hoje", icon: HomeIcon, group: "primary" },
+  { href: "/curadoria", label: "Curadoria", icon: SparklesIcon, group: "primary" },
+  { href: "/estudio", label: "Estúdio", icon: PenSquareIcon, group: "primary" },
+  { href: "/calendario", label: "Calendário", icon: CalendarDaysIcon, group: "primary" },
+  { href: "/historico", label: "Histórico", icon: HistoryIcon, group: "primary" },
   { href: "/story-bank", label: "Story Bank", icon: BookOpenIcon, group: "editorialMemory" },
   { href: "/voice-profile", label: "Voice Profile", icon: MicVocalIcon, group: "editorialMemory" },
-  { href: "/fontes", label: "Fontes", icon: RssIcon, group: "main" },
-  { href: "/analytics", label: "Analytics", icon: BarChart3Icon, group: "main" },
-  { href: "/notificacoes", label: "Notificações", icon: BellIcon, group: "main" },
-  { href: "/configuracoes", label: "Configurações", icon: SettingsIcon, group: "main" },
+  { href: "/fontes", label: "Fontes", icon: RssIcon, group: "secondary" },
+  { href: "/analytics", label: "Analytics", icon: BarChart3Icon, group: "secondary" },
+  { href: "/notificacoes", label: "Notificações", icon: BellIcon, group: "secondary" },
+  { href: "/configuracoes", label: "Configurações", icon: SettingsIcon, group: "secondary" },
 ] as const;
 
 /** Mobile bottom bar: four destinations with always-visible labels; "Mais" opens the drawer. */

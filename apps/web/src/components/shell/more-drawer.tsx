@@ -64,7 +64,7 @@ export function MoreDrawer({
           <LinkedInStatus status={linkedInStatus} />
         </div>
         <Separator className="my-2" />
-        <nav aria-label={messages.nav.more} className="overflow-y-auto px-2 pb-4">
+        <nav aria-label={messages.nav.more} className="min-h-0 px-2 pb-4">
           <ul className="flex flex-col gap-1">
             {items.map((item) => {
               const isNotifications = item.href === "/notificacoes";

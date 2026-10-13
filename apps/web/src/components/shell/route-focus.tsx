@@ -7,6 +7,8 @@ import { MAIN_CONTENT_ID } from "./skip-link";
 /**
  * After a client-side navigation, move focus to the page `h1` (accessibility.md "Foco e comportamento
  * após ações"). Skipped on the first render so the initial focus stays at the top of the document.
+ * With `loading.tsx` the pathname commits while the skeleton is shown, so when no `h1` exists yet we
+ * watch `main` and focus the heading as soon as it streams in.
  */
 export function RouteFocus() {
   const pathname = usePathname();
@@ -21,8 +23,22 @@ export function RouteFocus() {
     previous.current = pathname;
 
     const main = document.getElementById(MAIN_CONTENT_ID);
-    const heading = main?.querySelector<HTMLElement>("h1");
-    (heading ?? main)?.focus({ preventScroll: false });
+    if (!main) return;
+
+    const focusHeading = () => {
+      const heading = main.querySelector<HTMLElement>("h1");
+      if (!heading) return false;
+      heading.focus();
+      return true;
+    };
+
+    if (focusHeading()) return;
+    main.focus();
+    const observer = new MutationObserver(() => {
+      if (focusHeading()) observer.disconnect();
+    });
+    observer.observe(main, { childList: true, subtree: true });
+    return () => observer.disconnect();
   }, [pathname]);
 
   return null;

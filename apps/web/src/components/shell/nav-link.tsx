@@ -27,11 +27,15 @@ export function NavLink({
   const pathname = usePathname();
   const active = isActivePath(pathname, item.href);
   const Icon = item.icon;
+  const hasCount = typeof count === "number" && count > 0;
 
   return (
     <Link
       href={item.href}
       aria-current={active ? "page" : undefined}
+      // The visible number is decorative for AT; the accessible name carries the full phrase once
+      // (WCAG 2.5.3: the name still starts with the visible label).
+      aria-label={hasCount ? `${item.label}, ${countLabel ?? String(count)}` : undefined}
       className={cn(
         "relative flex min-h-11 items-center gap-3 rounded-md px-3 py-2 text-sm font-medium leading-5 text-foreground transition-colors duration-fast hover:bg-secondary",
         "aria-[current=page]:bg-accent aria-[current=page]:font-semibold aria-[current=page]:text-accent-foreground",
@@ -41,10 +45,12 @@ export function NavLink({
     >
       <Icon aria-hidden="true" className="size-5 shrink-0" />
       <span className={cn("truncate", labelClassName)}>{item.label}</span>
-      {count && count > 0 ? (
-        <span className="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-xs font-semibold leading-4 text-primary-foreground">
+      {hasCount ? (
+        <span
+          aria-hidden="true"
+          className="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-xs font-semibold leading-4 text-primary-foreground"
+        >
           {count}
-          {countLabel ? <span className="sr-only"> {countLabel}</span> : null}
         </span>
       ) : null}
     </Link>

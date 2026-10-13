@@ -18,6 +18,8 @@ const STATE_LABELS: Record<ScreenState, string> = {
 };
 
 export function parseScreenState(value: string | string[] | undefined): ScreenState {
+  // State previews are a QA aid: a shared `?estado=erro` link must never show a fake error in production.
+  if (process.env.NODE_ENV === "production") return "vazio";
   const candidate = Array.isArray(value) ? value[0] : value;
   return (SCREEN_STATES as readonly string[]).includes(candidate ?? "")
     ? (candidate as ScreenState)
@@ -26,8 +28,8 @@ export function parseScreenState(value: string | string[] | undefined): ScreenSt
 
 export type PlaceholderScreenProps = {
   screen: ScreenKey;
-  /** Current pathname, used to build the state-preview links. */
-  pathname: Route;
+  /** Current pathname (may be dynamic, e.g. `/estudio/abc`), used to build the preview/retry links. */
+  pathname: string;
   state?: ScreenState;
   /** Extra line under the title (e.g. an item id). */
   meta?: ReactNode;
@@ -72,7 +74,7 @@ export function PlaceholderScreen({
             correlationId="exemplo-0000"
             actions={
               <Button asChild variant="secondary">
-                <Link href={pathname}>{messages.states.retry}</Link>
+                <Link href={pathname as Route}>{messages.states.retry}</Link>
               </Button>
             }
           />
@@ -95,7 +97,7 @@ export function PlaceholderScreen({
 }
 
 /** Links to preview each standard state. Hidden in production builds. */
-function StatePreviewNav({ pathname, current }: { pathname: Route; current: ScreenState }) {
+function StatePreviewNav({ pathname, current }: { pathname: string; current: ScreenState }) {
   if (process.env.NODE_ENV === "production") return null;
   return (
     <nav aria-label={messages.states.preview} className="flex flex-wrap items-center gap-2 text-xs">
@@ -104,7 +106,10 @@ function StatePreviewNav({ pathname, current }: { pathname: Route; current: Scre
         {SCREEN_STATES.map((state) => (
           <li key={state}>
             <Link
-              href={{ pathname, query: state === "vazio" ? {} : { estado: state } }}
+              href={{
+                pathname: pathname as Route,
+                query: state === "vazio" ? {} : { estado: state },
+              }}
               aria-current={state === current ? "true" : undefined}
               className={cn(
                 "inline-flex min-h-6 items-center rounded-sm border px-2 py-0.5 font-medium hover:bg-secondary",

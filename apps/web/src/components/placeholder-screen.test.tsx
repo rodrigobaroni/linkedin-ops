@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { screens } from "@/config/screens";
 import { AppProviders } from "@/providers/app-providers";
 import { formatViolations, runAxe } from "@/test/axe";
@@ -8,6 +8,16 @@ import { PlaceholderScreen, parseScreenState } from "./placeholder-screen";
 vi.mock("next/navigation", async () => (await import("@/test/next-navigation")).navigationMock);
 
 describe("parseScreenState", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("ignores the preview parameter in production builds", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    expect(parseScreenState("erro")).toBe("vazio");
+    expect(parseScreenState("carregando")).toBe("vazio");
+  });
+
   it("falls back to the empty state for unknown or missing values", () => {
     expect(parseScreenState(undefined)).toBe("vazio");
     expect(parseScreenState("qualquer")).toBe("vazio");

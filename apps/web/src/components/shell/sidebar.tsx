@@ -5,7 +5,7 @@ import { PanelLeftCloseIcon, PanelLeftOpenIcon, UserRoundIcon } from "lucide-rea
 import Link from "next/link";
 import { useState } from "react";
 import type { LinkedInConnectionStatus } from "@/config/mock";
-import { type NavItem, navItems } from "@/config/navigation";
+import { type NavGroup, navGroups, navItems } from "@/config/navigation";
 import { messages } from "@/i18n/pt-br";
 import { AutonomyIndicator } from "./autonomy-indicator";
 import { LinkedInStatus } from "./linkedin-status";
@@ -25,14 +25,14 @@ export type SidebarProps = {
 export function Sidebar({ linkedInStatus, unreadNotifications, accountName }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
 
-  // Order from the navigation map: main items, then the "Memória editorial" group, then the rest.
-  const main = navItems.filter((item) => item.group === "main");
-  const memory = navItems.filter((item) => item.group === "editorialMemory");
-  const sections: { key: string; heading?: string; items: NavItem[] }[] = [
-    { key: "primary", items: main.slice(0, 5) },
-    { key: "memory", heading: messages.nav.editorialMemory, items: memory },
-    { key: "secondary", items: main.slice(5) },
-  ];
+  const headings: Partial<Record<NavGroup, string>> = {
+    editorialMemory: messages.nav.editorialMemory,
+  };
+  const sections = navGroups.map((group) => ({
+    key: group,
+    heading: headings[group],
+    items: navItems.filter((item) => item.group === group),
+  }));
 
   // Labels are visible only on lg+ while expanded.
   const labelClassName = "max-lg:sr-only lg:group-data-collapsed:sr-only";

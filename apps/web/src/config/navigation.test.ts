@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { bottomNavHrefs, drawerItems, isActivePath, navItems } from "./navigation";
+import { bottomNavHrefs, drawerItems, isActivePath, navGroups, navItems } from "./navigation";
 
 const APP_DIR = join(__dirname, "..", "app", "(app)");
 
@@ -44,5 +44,14 @@ describe("navigation config", () => {
     expect(isActivePath("/estudio/123", "/estudio")).toBe(true);
     expect(isActivePath("/estudio-x", "/estudio")).toBe(false);
     expect(isActivePath("/hoje", "/curadoria")).toBe(false);
+  });
+
+  it("groups follow the navigation map: primary, Memória editorial, secondary", () => {
+    expect(navGroups).toEqual(["primary", "editorialMemory", "secondary"]);
+    const byGroup = (group: string) =>
+      navItems.filter((item) => item.group === group).map((item) => item.label);
+    expect(byGroup("primary")).toEqual(["Hoje", "Curadoria", "Estúdio", "Calendário", "Histórico"]);
+    expect(byGroup("editorialMemory")).toEqual(["Story Bank", "Voice Profile"]);
+    expect(byGroup("secondary")).toEqual(["Fontes", "Analytics", "Notificações", "Configurações"]);
   });
 });

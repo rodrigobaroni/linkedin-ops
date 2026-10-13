@@ -58,7 +58,7 @@ export function SheetContent({
           side === "left" && "inset-y-0 left-0 h-full w-3/4 max-w-sm border-r sm:max-w-sm",
           side === "top" && "inset-x-0 top-0 h-auto border-b",
           side === "bottom" &&
-            "inset-x-0 bottom-0 h-auto max-h-[85dvh] rounded-t-lg border-t pb-[env(safe-area-inset-bottom)]",
+            "inset-x-0 bottom-0 h-auto max-h-[85dvh] overflow-y-auto rounded-t-lg border-t pb-[env(safe-area-inset-bottom)]",
           className,
         )}
         {...props}

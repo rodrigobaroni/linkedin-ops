@@ -3,34 +3,33 @@
 import { Button } from "@linkedin-ops/ui";
 import { ArrowLeftIcon, BellIcon } from "lucide-react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
+import type { Route } from "next";
 import { messages, notificationsLabel } from "@/i18n/pt-br";
 
 /**
  * Mobile top bar: back control on nested routes, app name and the notifications bell.
  * The screen title itself is the page `h1` rendered right below (one `h1` per route).
+ * "Voltar" always lands inside the app (parent route), even when the page was opened from a deep link;
+ * returning to the recorded origin (navigation-map.md) arrives with the Estúdio epic.
  */
 export function MobileTopBar({ unreadNotifications }: { unreadNotifications: number }) {
   const pathname = usePathname();
-  const router = useRouter();
-  const nested = pathname.split("/").filter(Boolean).length > 1;
+  const parent = parentRoute(pathname);
 
   return (
     <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b bg-card px-2 md:hidden">
-      {nested ? (
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label={messages.nav.back}
-          onClick={() => router.back()}
-        >
-          <ArrowLeftIcon aria-hidden="true" />
+      {parent ? (
+        <Button asChild variant="ghost" size="icon">
+          <Link href={parent} aria-label={messages.nav.back}>
+            <ArrowLeftIcon aria-hidden="true" />
+          </Link>
         </Button>
       ) : null}
       <Link href="/hoje" className="min-w-0 flex-1 truncate px-2 text-base font-bold leading-6">
         {messages.app.name}
       </Link>
-      <Button asChild variant="ghost" size="icon">
+      <Button asChild variant="ghost" size="icon" className="relative">
         <Link href="/notificacoes" aria-label={notificationsLabel(unreadNotifications)}>
           <BellIcon aria-hidden="true" />
           {unreadNotifications > 0 ? (
@@ -45,4 +44,11 @@ export function MobileTopBar({ unreadNotifications }: { unreadNotifications: num
       </Button>
     </header>
   );
+}
+
+/** `/estudio/abc` → `/estudio`; top-level routes have no parent. */
+export function parentRoute(pathname: string): Route | null {
+  const segments = pathname.split("/").filter(Boolean);
+  if (segments.length < 2) return null;
+  return `/${segments.slice(0, -1).join("/")}` as Route;
 }
