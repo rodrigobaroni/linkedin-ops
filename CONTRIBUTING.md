@@ -51,8 +51,13 @@ O repositório é privado em plano gratuito, então o GitHub não permite branch
 a obrigatoriedade é regra do time (o Maestro/Rodrigo só integra floors com checks verdes). Quando o
 plano permitir, habilitar branch protection em `main` com esses quatro checks como _required_.
 
+Triagem do Trivy: um HIGH/CRITICAL sem correção disponível (ou não explorável aqui) só deixa de bloquear
+via entrada em `.trivyignore` no formato `CVE-AAAA-NNNNN exp:AAAA-MM-DD # owner: <papel>, reason: <motivo>`,
+revisada por Sentinela; a data de expiração obriga a reavaliar. Nunca use `ignore-unfixed` nem baixe a
+severidade. (T-062 traz `docs/security/scan-triage.md` com o registro completo.)
+
 Reproduzir localmente: `pnpm check && pnpm format:check`, `pnpm exec commitlint --from main --verbose`,
-`gitleaks git .` (`brew install gitleaks`), `actionlint` para validar os workflows.
+`.github/scripts/gitleaks-scan.sh full` (mesmo script e versão do CI), `actionlint` para validar os workflows.
 Nenhum secret é necessário nos workflows; nunca coloque valores reais em arquivos de workflow.
 
 ## Definition of Done
