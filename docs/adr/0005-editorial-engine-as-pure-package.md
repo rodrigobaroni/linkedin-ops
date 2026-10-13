@@ -16,13 +16,13 @@ at runtime, and resistant to prompt injection from external content.
 
 1. **`packages/editorial-engine` performs no I/O.** No `fetch`, no database, no file system at runtime,
    no `process.env`, no implicit `Date.now()`/`Math.random()` (a `Clock` and `Rng` are injected). It is a
-   *functional core*; `apps/worker` is the *imperative shell* that performs HTTP calls.
+   _functional core_; `apps/worker` is the _imperative shell_ that performs HTTP calls.
 2. **Request/response split.** For each capability the engine exposes:
    - `build<Capability>Request(input, options) → { promptId, promptVersion, model, instructions, input, outputSchema }`
    - `parse<Capability>Response(raw) → Result<T, EngineError>` (Zod validation of the Structured Output)
    - pure helpers: `dedupeSourceItems`, `scoreOpportunities`, `rankTopFive`, `detectCliches`, `checkVoice`, `findUnsupportedClaims`.
-   The worker's `LlmGateway` adapter sends the request to the OpenAI Responses API with
-   `text.format = { type: "json_schema", strict: true }` and hands the raw JSON back.
+     The worker's `LlmGateway` adapter sends the request to the OpenAI Responses API with
+     `text.format = { type: "json_schema", strict: true }` and hands the raw JSON back.
 3. **Prompt registry.** Prompts live in `src/prompts/<id>/v<major>.<minor>.<patch>.ts`, are immutable once
    released, and are addressed by `promptId@version`. `CurationRun` and `DraftVersion.generation`
    persist `promptId`, `promptVersion`, `model`, `engineVersion`. A changed prompt is a new version;

@@ -26,7 +26,8 @@ separation of database roles.
    columns or users.
 3. **KEK material**: `ENCRYPTION_KEY` (base64 of exactly 32 bytes, CSPRNG) from the runtime environment
    (Docker secret / `.env` on the host), never in Git, images, database, logs, frontend or ordinary
-   backups. Key ring: `ENCRYPTION_KEYS="<version>:<base64>,..."` + `ENCRYPTION_ACTIVE_KEY_VERSION`; a
+   backups. Key ring: the variable `ENCRYPTION_KEYS` holds comma-separated `<version>:<base64>` pairs, and
+   `ENCRYPTION_ACTIVE_KEY_VERSION` selects the write key; a
    single `ENCRYPTION_KEY` is shorthand for version `1`.
 4. **Startup fail-closed (SEC-004).** Outside `NODE_ENV=development`, `api` and `worker` refuse to start
    when `ENCRYPTION_KEY`/`ENCRYPTION_KEYS` is empty, equals a placeholder (`change-me*`, the `.env.example`

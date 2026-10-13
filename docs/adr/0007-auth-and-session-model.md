@@ -92,7 +92,7 @@ LinkedIn connection as high (TM-02) and silent autonomy elevation as high (TM-22
 ### Telegram
 
 16. Telegram identity is never an authentication factor. Notification `chatId` is configuration;
-    inbound webhooks (if enabled later) authenticate the *bot platform* via secret token and are limited to
+    inbound webhooks (if enabled later) authenticate the _bot platform_ via secret token and are limited to
     link/test/ack commands — never approval, autonomy change or publishing.
 
 ## Alternatives considered
