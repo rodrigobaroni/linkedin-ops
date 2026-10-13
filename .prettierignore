@@ -8,5 +8,7 @@ pnpm-lock.yaml
 CHANGELOG.md
 packages/editorial-engine/upstream
 .maestri
-# Product/architecture docs are owned by other roles; formatting of docs/** is not enforced in T-001 (revisit in T-002).
+# docs/** is owned by product/architecture/security roles and is not Prettier-clean yet (31 files on
+# 2026-10-13). Kept out of `format:check` in T-002; each owner reformats their docs in their own task,
+# then this line is removed.
 docs/

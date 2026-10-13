@@ -48,7 +48,7 @@ Referências de produto: `docs/product/prd.md`, `docs/product/user-journeys.md`,
 | ID | Épico | Título | Responsável | Estado | Dependências |
 |---|---|---|---|---|---|
 | [T-001](EPIC-00/T-001-monorepo-bootstrap.md) | EPIC-00 | Bootstrap do monorepo (pnpm + Turborepo) | Estaleiro (plataforma) | done | — |
-| [T-002](EPIC-00/T-002-ci-pipeline.md) | EPIC-00 | Pipeline de CI (GitHub Actions) | Estaleiro (plataforma) | todo | T-001 |
+| [T-002](EPIC-00/T-002-ci-pipeline.md) | EPIC-00 | Pipeline de CI (GitHub Actions) | Estaleiro (plataforma) | review | T-001 |
 | [T-003](EPIC-00/T-003-docker-compose-dev.md) | EPIC-00 | Ambiente de desenvolvimento com Docker Compose | Estaleiro (plataforma) | todo | T-001 |
 | [T-004](EPIC-00/T-004-contracts-package.md) | EPIC-00 | Pacote `contracts` (schemas Zod + tipos compartilhados) | Alicerce (backend) | todo | T-001 |
 | [T-005](EPIC-00/T-005-database-baseline-prisma.md) | EPIC-00 | Banco de dados base (PostgreSQL + Prisma + migrations) | Alicerce (backend) | todo | T-003, T-004 |

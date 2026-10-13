@@ -1,0 +1,73 @@
+# Security scans (T-002, gate G-06 of docs/security/threat-model.md; extended with triage in T-062).
+# - gitleaks: secret scanning over the PR commit range (or the pushed range on main; full history on
+#   schedule/manual runs). Findings fail the job. False positives are suppressed by fingerprint in
+#   `.gitleaksignore` (never by broad path allowlists).
+# - Trivy (filesystem): known vulnerabilities in `pnpm-lock.yaml` and misconfigurations in
+#   infra files. HIGH/CRITICAL fail the job; lower severities are reported only (T-062 adds the
+#   triage file and image scans).
+# No repository secrets are required: the repository belongs to a personal account, so
+# gitleaks-action needs no GITLEAKS_LICENSE. If the repo ever moves to an organization, add that
+# secret (free key at gitleaks.io) or switch to the gitleaks CLI.
+name: Security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 9 * * 1" # Mondays 09:00 UTC (06:00 America/Sao_Paulo): catch new CVEs without code changes
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gitleaks:
+    name: Secret scanning (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read # the action lists the PR commits to scan exactly the PR range
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: "false" # no PR write permission; results go to the job summary
+          GITLEAKS_ENABLE_SUMMARY: "true"
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "true" # SARIF artifact for triage when leaks are found
+
+  trivy:
+    name: Dependencies and config (Trivy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Trivy filesystem scan (vuln + misconfig)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          # Fallback registries avoid ghcr.io rate limits when pulling the vulnerability DB.
+          TRIVY_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2
+          TRIVY_JAVA_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-java-db:1,ghcr.io/aquasecurity/trivy-java-db:1
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,misconfig
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: false
+          format: table
+          hide-progress: true
+          skip-dirs: node_modules,.turbo
