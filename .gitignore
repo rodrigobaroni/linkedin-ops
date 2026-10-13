@@ -52,5 +52,5 @@ Thumbs.db
 *.swp
 
 # Maestri floors / local agent state
-.maestri/floors/
+.maestri/
 .claude/settings.local.json
