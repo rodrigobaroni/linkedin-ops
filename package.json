@@ -26,7 +26,7 @@
     "@commitlint/config-conventional": "^21.2.3",
     "@linkedin-ops/config": "workspace:*",
     "husky": "^9.1.7",
-    "prettier": "^3.9.10",
+    "prettier": "catalog:",
     "turbo": "^2.11.7",
     "typescript": "catalog:"
   },
