@@ -1,0 +1,20 @@
+{
+  "name": "@linkedin-ops/e2e",
+  "version": "0.0.0",
+  "private": true,
+  "description": "End-to-end tests (Playwright) for the critical flow: curation → draft → schedule → publish (with fakes)",
+  "type": "module",
+  "scripts": {
+    "build": "echo \"@linkedin-ops/e2e: nothing to build\"",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "echo \"@linkedin-ops/e2e: Playwright suite arrives with T-059/T-060\"",
+    "clean": "rm -rf .turbo test-results playwright-report *.tsbuildinfo"
+  },
+  "devDependencies": {
+    "@linkedin-ops/config": "workspace:*",
+    "@types/node": "^24.0.0",
+    "eslint": "^10.12.0",
+    "typescript": "~5.9.3"
+  }
+}

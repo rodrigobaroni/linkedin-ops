@@ -1,0 +1,24 @@
+{
+  "name": "@linkedin-ops/worker",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Background worker (pg-boss) — job handlers and external-service adapters over the domain layer",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist .next .turbo coverage *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@linkedin-ops/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@linkedin-ops/config": "workspace:*",
+    "@types/node": "^24.0.0",
+    "eslint": "^10.12.0",
+    "typescript": "~5.9.3",
+    "vitest": "^5.0.4"
+  }
+}

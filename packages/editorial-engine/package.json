@@ -1,0 +1,33 @@
+{
+  "name": "@linkedin-ops/editorial-engine",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Pure editorial logic: prompt registry, request builders, response parsers, scoring and evals (no I/O)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist .turbo coverage *.tsbuildinfo"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@linkedin-ops/config": "workspace:*",
+    "@types/node": "^24.0.0",
+    "eslint": "^10.12.0",
+    "typescript": "~5.9.3",
+    "vitest": "^5.0.4"
+  }
+}
