@@ -1,13 +1,13 @@
 # Security scans (T-002, gate G-06 of docs/security/threat-model.md; extended with triage in T-062).
-# - gitleaks: secret scanning over the PR commit range (or the pushed range on main; full history on
-#   schedule/manual runs). Findings fail the job. False positives are suppressed by fingerprint in
-#   `.gitleaksignore` (never by broad path allowlists).
-# - Trivy (filesystem): known vulnerabilities in `pnpm-lock.yaml` and misconfigurations in
-#   infra files. HIGH/CRITICAL fail the job (unfixed ones only on the weekly/manual full run);
-#   lower severities are reported only (T-062 adds the triage file and image scans).
-# No repository secrets are required: the repository belongs to a personal account, so
-# gitleaks-action needs no GITLEAKS_LICENSE. If the repo ever moves to an organization, add that
-# secret (free key at gitleaks.io) or switch to the gitleaks CLI.
+# - gitleaks (`.github/scripts/gitleaks-scan.sh`): CLI at a fixed version verified by SHA-256 (TM-21).
+#   On pull_request/push it scans the commit range (merge commits included) AND the checked-out
+#   working tree; on schedule/manual runs it scans the full history and the working tree. Any finding
+#   fails the job. False positives are suppressed by fingerprint in `.gitleaksignore` only.
+# - Trivy (filesystem): known vulnerabilities in `pnpm-lock.yaml` and misconfigurations in infra files.
+#   Only HIGH/CRITICAL are evaluated and every one of them fails the job, fixed or not; accepted
+#   findings go to `.trivyignore` with owner and expiry (process in CONTRIBUTING.md). T-062 adds image
+#   scans and the triage document.
+# No repository secrets are required or used.
 name: Security
 
 on:
@@ -30,9 +30,6 @@ jobs:
     name: Secret scanning (gitleaks)
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    permissions:
-      contents: read
-      pull-requests: read # the action lists the PR commits to scan exactly the PR range
     steps:
       - name: Checkout (full history)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -40,13 +37,29 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-      - name: Run gitleaks
-        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+      - name: Scan commits and working tree
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_ENABLE_COMMENTS: "false" # no PR write permission; results go to the job summary
-          GITLEAKS_ENABLE_SUMMARY: "true"
-          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "true" # SARIF artifact for triage when leaks are found
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+          REPORT_DIR: ${{ runner.temp }}/gitleaks-reports
+        run: |
+          case "$EVENT" in
+            pull_request) .github/scripts/gitleaks-scan.sh range "$PR_BASE" "$PR_HEAD" ;;
+            push) .github/scripts/gitleaks-scan.sh range "$PUSH_BEFORE" "$PUSH_AFTER" ;;
+            *) .github/scripts/gitleaks-scan.sh full ;;
+          esac
+
+      - name: Upload SARIF reports (only when secrets were found)
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gitleaks-sarif
+          path: ${{ runner.temp }}/gitleaks-reports/*.sarif
+          retention-days: 14
+          if-no-files-found: ignore
 
   trivy:
     name: Dependencies and config (Trivy)
@@ -70,9 +83,9 @@ jobs:
           scanners: vuln,misconfig
           severity: HIGH,CRITICAL
           exit-code: "1"
-          # PR/push: unfixed transitive CVEs must not block unrelated merges (triage arrives in T-062).
-          # Scheduled/manual runs scan everything, including unfixed findings.
-          ignore-unfixed: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+          # Every HIGH/CRITICAL fails, fixed or not. Accepted findings: .trivyignore (owner + expiry).
+          ignore-unfixed: false
+          trivyignores: .trivyignore
           format: table
           hide-progress: true
           skip-dirs: node_modules,.turbo

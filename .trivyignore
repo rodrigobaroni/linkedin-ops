@@ -1,0 +1,4 @@
+# Trivy triage (gate G-06; process in CONTRIBUTING.md and, from T-062, docs/security/scan-triage.md).
+# One finding per line, with owner and expiry so nothing is silenced forever. Format:
+#   CVE-YYYY-NNNNN exp:YYYY-MM-DD   # owner: <role>, reason: <why accepted / not exploitable here>
+# Every line is reviewed by Sentinela. No entries yet.

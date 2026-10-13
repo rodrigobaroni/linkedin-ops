@@ -17,7 +17,7 @@ Workflows em `.github/workflows/`: `ci.yml` (lint, typecheck, test, build via Tu
 ## Critérios de aceite (verificáveis)
 
 - [x] PR de exemplo com erro de lint falha; PR limpo passa. (PR limpo: run real do PR desta tarefa; lint quebrado: validado localmente com o mesmo comando `pnpm turbo lint typecheck test build`, exit 1)
-- [x] Commit contendo um segredo falso (fixture) é bloqueado pelo secret scanning. (gitleaks 8.30 local: fixture `ghp_…` detectada, exit 2; mesmo binário/config que o `gitleaks-action` executa em CI)
+- [x] Commit contendo um segredo falso (fixture) é bloqueado pelo secret scanning. (fixture `ghp_…` commitada em clone descartável e detectada pelo mesmo script e versão do CI, `.github/scripts/gitleaks-scan.sh` com gitleaks 8.30.1: exit 2 com o segredo num commit do range, só no working tree, ou só na resolução de um merge; checksum adulterado aborta com exit 1)
 - [x] Tempo de CI em cache quente ≤ 5 min para o monorepo vazio. (PR #65: job `check` 54 s e 62 s em cache frio; `commitlint` 16–22 s; `gitleaks` 10–14 s; `trivy` 26–30 s)
 - [x] Documentado em `CONTRIBUTING.md` quais checks são obrigatórios.
 
@@ -36,7 +36,7 @@ Segredos em CI só via GitHub Secrets; nenhum valor real em workflow. Permissõe
 ## Entregue (2026-10-13)
 
 - `.github/workflows/ci.yml`: jobs `check` (Node via `.nvmrc`, pnpm via `packageManager`, cache do store e do Turborepo, `pnpm install --frozen-lockfile`, `pnpm turbo lint typecheck test build`, `pnpm format:check`) e `commitlint` (commits do PR). Job `compose-smoke` deixado comentado com instruções; ativado em T-003.
-- `.github/workflows/security.yml`: `gitleaks` (commits do PR / push em `main`; histórico completo no agendamento semanal e manual) e `trivy` fs (vuln + misconfig, HIGH/CRITICAL falham). Alinhado ao gate G-06; T-062 amplia com Semgrep, imagens e triagem.
+- `.github/workflows/security.yml`: `gitleaks` via `.github/scripts/gitleaks-scan.sh` (CLI 8.30.1 com SHA-256 fixo; range do PR/push com merges + working tree; histórico completo no agendamento semanal e manual) e `trivy` fs (vuln + misconfig; todo HIGH/CRITICAL falha, triagem só por `.trivyignore` com owner e expiração). Alinhado ao gate G-06, que continua aberto; T-062 amplia com Semgrep, imagens e `scan-triage.md`.
 - `.github/dependabot.yml`: npm e github-actions, semanal, agrupado, prefixos `build(deps)`/`ci(deps)` compatíveis com commitlint.
 - Ressalvas de Atlas (T-001): R3 `engine-strict=true` em `.npmrc`; R4 `catalog` em `pnpm-workspace.yaml` para `typescript`, `eslint`, `vitest`, `@types/node` (+ `prettier`, pedido na revisão desta tarefa).
 - `.gitleaksignore` com dois falsos positivos (placeholders em docs) por fingerprint.
@@ -48,4 +48,3 @@ Segredos em CI só via GitHub Secrets; nenhum valor real em workflow. Permissõe
 - Branch protection com checks *required* não está disponível (repositório privado em plano gratuito); regra documentada em `CONTRIBUTING.md`.
 - `docs/**` continua fora do `format:check`: 31 arquivos de outros papéis não estão formatados; cada dono formata na própria tarefa.
 - `gitleaks-action` dispensa licença em conta pessoal; se o repositório migrar para organização, exige `GITLEAKS_LICENSE` (chave gratuita) ou troca pelo CLI.
-
