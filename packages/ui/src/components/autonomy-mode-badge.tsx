@@ -5,9 +5,10 @@ import { cn } from "../lib/cn.js";
 import type { AutonomyMode } from "../types/autonomy.js";
 
 /**
- * Presentation of the autonomy mode. Labels/icons follow screen-states.md ("Aparência do modo de
- * autonomia"); the short messages follow the ratified semantics in docs/architecture/data-model.md §2.1
- * (PRD v0.2 §6): CONTROLLED auto-approves and schedules with a 60-minute cancel window, FULL has no window.
+ * Presentation of the autonomy mode: badge labels, icons and short messages from the ratified
+ * screen-states.md ("Aparência do modo de autonomia", T-013 revision, aligned with data-model.md §2.1):
+ * ASSISTED = you approve every step; AUTOPILOT_CONTROLLED = the system approves and schedules, you can
+ * cancel before the deadline (`cancel_window_minutes`, default 60); AUTOPILOT_FULL = no cancel window.
  * Icon + textual label; colour is support only. The component receives the mode — it never decides it.
  */
 export const AUTONOMY_MODE_PRESENTATION: Record<
@@ -16,17 +17,17 @@ export const AUTONOMY_MODE_PRESENTATION: Record<
 > = {
   ASSISTED: {
     label: "Assistido",
-    shortMessage: "Você seleciona, aprova e agenda.",
+    shortMessage: "Você aprova todas as etapas.",
     symbol: "◉",
   },
   AUTOPILOT_CONTROLLED: {
     label: "Controlado",
-    shortMessage: "O sistema aprova e agenda; você pode cancelar na janela de 60 min.",
+    shortMessage: "O sistema aprova e agenda; você pode cancelar antes do prazo.",
     symbol: "◐",
   },
   AUTOPILOT_FULL: {
     label: "Completo",
-    shortMessage: "O sistema aprova, agenda e publica sem janela de cancelamento.",
+    shortMessage: "O sistema aprova e agenda sem janela de cancelamento.",
     symbol: "◆",
   },
 };
