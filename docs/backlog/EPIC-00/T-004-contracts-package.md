@@ -44,4 +44,10 @@ Campos sensíveis (tokens) **não** fazem parte de contratos expostos ao fronten
   para T-008; rota adicional `GET /drafts/{id}/approvals`; `expectedRowVersion` em todas as mutações de draft;
   estado `OPPORTUNITY` do briefing §13 nomeado `CANDIDATE` (data-model.md); schemas de saída do modelo mantêm os
   nomes de Pena (ADR-0005 §9) e os DTOs os nomes de `contracts.md`.
-
+- Revisões aplicadas no PR #68: Atlas (aprovado com ressalvas) R1 `retry-publication` elevado, R2 respostas 202
+  estendem `AsyncAccepted`, R3 `publication.publish` expira em 300 s / `cancelWindowMinutes ≥ 5` /
+  `HumanizationReport.promptId` tipado, R4 regra de versionamento de `eval.quality` no CHANGELOG. Sentinela
+  (bloqueado → corrigido) S-1 `roles: OWNER` + sessão elevada nas ações de alto risco, S-2 `AuditEvent.before/after`
+  com schema JSON recursivo que rejeita chaves sensíveis, S-3 callback OAuth com XOR `code`/`error`, S-4 senha mínima
+  15, S-5 `rateLimited` em OAuth start/callback/disconnect e autonomia, S-6 inputs, queries, params e payloads de job
+  `strictObject` (chaves extras falham). R5 do Atlas (select + create_draft na mesma transação) é nota para T-005/T-008.

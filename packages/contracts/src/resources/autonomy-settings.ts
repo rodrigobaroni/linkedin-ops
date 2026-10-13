@@ -3,8 +3,10 @@ import { IanaTimezoneSchema, IsoDateTimeSchema, TimeOfDaySchema } from "../commo
 import { UuidSchema } from "../common/ids.js";
 import { AutonomyModeSchema } from "../enums/autonomy-mode.js";
 
+export const AUTONOMY_MIN_CANCEL_WINDOW_MINUTES = 5;
+
 export const QuietHoursSchema = z
-  .object({
+  .strictObject({
     start: TimeOfDaySchema,
     end: TimeOfDaySchema,
     timezone: IanaTimezoneSchema,
@@ -12,7 +14,7 @@ export const QuietHoursSchema = z
   .meta({ id: "QuietHours" });
 export type QuietHours = z.infer<typeof QuietHoursSchema>;
 
-const AutonomySettingsBaseSchema = z.object({
+const autonomySettingsShape = {
   mode: AutonomyModeSchema,
   autoApproveMinScore: z
     .number()
@@ -27,9 +29,11 @@ const AutonomySettingsBaseSchema = z.object({
   maxAutoPostsPerWeek: z.int().min(0).max(21),
   cancelWindowMinutes: z
     .int()
-    .min(0)
+    .min(AUTONOMY_MIN_CANCEL_WINDOW_MINUTES)
     .max(1440)
-    .describe("AUTOPILOT_CONTROLLED: minutes between notification and publish"),
+    .describe(
+      "AUTOPILOT_CONTROLLED: minutes between notification and publish (≥ 5, or CONTROLLED would equal FULL)",
+    ),
   mediaRequiresHuman: z
     .boolean()
     .describe("Media is only published with human approval; applies to every mode"),
@@ -37,10 +41,10 @@ const AutonomySettingsBaseSchema = z.object({
     .boolean()
     .describe("ASSISTED only: pre-generate a draft for the best candidate"),
   quietHours: QuietHoursSchema.nullable(),
-});
+};
 
 function requireScoreInAutopilot(
-  value: z.infer<typeof AutonomySettingsBaseSchema>,
+  value: { mode: string; autoApproveMinScore: number | null },
   ctx: z.RefinementCtx,
 ): void {
   if (value.mode !== "ASSISTED" && value.autoApproveMinScore === null) {
@@ -52,18 +56,19 @@ function requireScoreInAutopilot(
   }
 }
 
-/** `PUT /settings/autonomy` body (complete replacement). */
-export const AutonomySettingsInputSchema = AutonomySettingsBaseSchema.superRefine(
-  requireScoreInAutopilot,
-).meta({
-  id: "AutonomySettingsInput",
-});
+/** `PUT /settings/autonomy` body (complete replacement). Strict: unknown keys are rejected. */
+export const AutonomySettingsInputSchema = z
+  .strictObject(autonomySettingsShape)
+  .superRefine(requireScoreInAutopilot)
+  .meta({ id: "AutonomySettingsInput" });
 export type AutonomySettingsInput = z.infer<typeof AutonomySettingsInputSchema>;
 
 /** `GET /settings/autonomy` (contracts.md §3.4). */
-export const AutonomySettingsSchema = AutonomySettingsBaseSchema.extend({
-  updatedAt: IsoDateTimeSchema,
-})
+export const AutonomySettingsSchema = z
+  .object({
+    ...autonomySettingsShape,
+    updatedAt: IsoDateTimeSchema,
+  })
   .superRefine(requireScoreInAutopilot)
   .meta({ id: "AutonomySettings" });
 export type AutonomySettings = z.infer<typeof AutonomySettingsSchema>;

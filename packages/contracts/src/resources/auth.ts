@@ -4,11 +4,19 @@ import { UuidSchema } from "../common/ids.js";
 import { UserRoleSchema } from "../enums/user-role.js";
 import { EmailSchema, LocaleSchema, UserNameSchema } from "./user.js";
 
-/** Credentials never echo back; error responses are generic (`AUTH_INVALID_CREDENTIALS`). */
-export const PasswordSchema = z.string().min(12).max(256).describe("Password (12–256 chars)");
+export const PASSWORD_MIN_LENGTH = 15;
+export const PASSWORD_MAX_LENGTH = 256;
 
+/** ADR-0007: minimum 15 characters in the single-user phase. Credentials never echo back. */
+export const PasswordSchema = z
+  .string()
+  .min(PASSWORD_MIN_LENGTH)
+  .max(PASSWORD_MAX_LENGTH)
+  .describe(`Password (${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} chars)`);
+
+/** Strict: unknown keys are rejected, not stripped (threat model TM-06). */
 export const LoginInputSchema = z
-  .object({
+  .strictObject({
     email: EmailSchema,
     password: PasswordSchema,
   })
@@ -17,7 +25,7 @@ export type LoginInput = z.infer<typeof LoginInputSchema>;
 
 /** `POST /auth/reauth`: elevates the session for 15 minutes (ADR-0007). */
 export const ReauthInputSchema = z
-  .object({
+  .strictObject({
     password: PasswordSchema,
   })
   .meta({ id: "ReauthInput" });

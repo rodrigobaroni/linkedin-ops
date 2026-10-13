@@ -19,7 +19,7 @@ export const MimeTypeSchema = z.string().regex(/^[a-z]+\/[a-z0-9.+-]+$/, "Expect
 
 /** Input of a locally rendered code card (Satori/Resvg/Sharp; never AI image generation). */
 export const CodeCardRenderSpecSchema = z
-  .object({
+  .strictObject({
     language: z.string().trim().min(1).max(40),
     code: z.string().min(1).max(4000),
     title: z.string().trim().max(120).optional(),
@@ -30,7 +30,7 @@ export type CodeCardRenderSpec = z.infer<typeof CodeCardRenderSpecSchema>;
 
 /** `POST /media/render` body. */
 export const MediaRenderInputSchema = z
-  .object({
+  .strictObject({
     kind: z.literal("CODE_CARD"),
     spec: CodeCardRenderSpecSchema,
   })

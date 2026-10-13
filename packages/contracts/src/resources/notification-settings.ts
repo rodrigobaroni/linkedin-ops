@@ -17,11 +17,11 @@ export const NotificationSettingsSchema = z
   .meta({ id: "NotificationSettings" });
 export type NotificationSettings = z.infer<typeof NotificationSettingsSchema>;
 
-/** `PUT /settings/notifications` body. */
+/** `PUT /settings/notifications` body. Strict at every level. */
 export const NotificationSettingsInputSchema = z
-  .object({
-    telegram: z.object({ enabled: z.boolean() }),
-    inApp: z.object({ enabled: z.boolean() }),
+  .strictObject({
+    telegram: z.strictObject({ enabled: z.boolean() }),
+    inApp: z.strictObject({ enabled: z.boolean() }),
   })
   .meta({ id: "NotificationSettingsInput" });
 export type NotificationSettingsInput = z.infer<typeof NotificationSettingsInputSchema>;

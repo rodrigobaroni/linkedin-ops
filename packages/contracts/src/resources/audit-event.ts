@@ -3,6 +3,7 @@ import { AuditActorTypeSchema } from "../common/actor.js";
 import { IsoDateTimeSchema } from "../common/datetime.js";
 import { CorrelationIdSchema, UuidSchema } from "../common/ids.js";
 import { PaginationQuerySchema } from "../common/pagination.js";
+import { RedactedJsonObjectSchema } from "../common/redaction.js";
 
 /** Dotted action name (`draft.approve`, `settings.autonomy.update`, `oauth.connect`). */
 export const AuditActionSchema = z
@@ -11,8 +12,12 @@ export const AuditActionSchema = z
   .max(100);
 export type AuditAction = z.infer<typeof AuditActionSchema>;
 
-/** Redacted diff: never tokens, never full prompt content. */
-export const AuditSnapshotSchema = z.record(z.string(), z.unknown());
+/**
+ * Redacted diff: never tokens, never full prompt content. Keys that look like credentials are rejected at
+ * every nesting level; depth and size are bounded (`common/redaction.ts`). Redaction happens before persisting.
+ */
+export const AuditSnapshotSchema = RedactedJsonObjectSchema;
+export type AuditSnapshot = z.infer<typeof AuditSnapshotSchema>;
 
 /** Append-only audit record (data-model.md §2.7). */
 export const AuditEventSchema = z

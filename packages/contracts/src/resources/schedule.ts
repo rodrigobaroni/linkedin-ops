@@ -25,7 +25,7 @@ export type Schedule = z.infer<typeof ScheduleSchema>;
 
 /** `GET /schedules?from&to` (calendar window). */
 export const ScheduleListQuerySchema = z
-  .object({
+  .strictObject({
     from: IsoDateTimeSchema,
     to: IsoDateTimeSchema,
   })

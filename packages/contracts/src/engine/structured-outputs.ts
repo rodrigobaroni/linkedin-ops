@@ -227,7 +227,7 @@ export type HumanizationAction = z.infer<typeof HumanizationActionSchema>;
 
 export const HumanizationReportSchema = z
   .object({
-    promptId: Text,
+    promptId: PromptIdSchema,
     paragraphDensity: z.array(z.int()).describe("Markers per paragraph after the pass."),
     actions: z.array(HumanizationActionSchema),
     voiceConflicts: z

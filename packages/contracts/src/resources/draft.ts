@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ClassifiedErrorSchema } from "../common/async.js";
+import { AsyncAcceptedSchema, ClassifiedErrorSchema } from "../common/async.js";
 import {
   IanaTimezoneSchema,
   IsoDateTimeSchema,
@@ -61,7 +61,7 @@ export const DraftListQuerySchema = PaginationQuerySchema.extend({
 export type DraftListQuery = z.infer<typeof DraftListQuerySchema>;
 
 /** Every draft mutation carries the expected row version (contracts.md §1, `409 ROW_VERSION_MISMATCH`). */
-export const DraftMutationInputSchema = z.object({
+export const DraftMutationInputSchema = z.strictObject({
   expectedRowVersion: RowVersionSchema,
 });
 export type DraftMutationInput = z.infer<typeof DraftMutationInputSchema>;
@@ -111,11 +111,8 @@ export const DraftDiscardInputSchema = DraftMutationInputSchema.extend({
 }).meta({ id: "DraftDiscardInput" });
 export type DraftDiscardInput = z.infer<typeof DraftDiscardInputSchema>;
 
-/** `202` from publish / retry-publication. */
-export const PublishAcceptedSchema = z
-  .object({
-    publicationId: UuidSchema,
-    jobId: z.string().min(1),
-  })
-  .meta({ id: "PublishAccepted" });
+/** `202` from publish / retry-publication (`id` = publication id). */
+export const PublishAcceptedSchema = AsyncAcceptedSchema.extend({
+  publicationId: UuidSchema,
+}).meta({ id: "PublishAccepted" });
 export type PublishAccepted = z.infer<typeof PublishAcceptedSchema>;
