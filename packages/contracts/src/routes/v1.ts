@@ -101,8 +101,11 @@ export const CSRF_TOKEN_HEADER = "X-CSRF-Token";
 export const IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
 export const SESSION_COOKIE_NAME = "__Host-session";
 
-export const IdParamsSchema = z.object({ id: UuidSchema });
-export const DraftVersionParamsSchema = z.object({ id: UuidSchema, versionId: UuidSchema });
+export const IdParamsSchema = z.strictObject({ id: UuidSchema });
+export const DraftVersionParamsSchema = z.strictObject({ id: UuidSchema, versionId: UuidSchema });
+
+/** ADR-0007 §11: LinkedIn connect, publication:create and settings:autonomy require OWNER. */
+export const OWNER_ONLY = [UserRole.OWNER] as const;
 
 export const routesV1 = defineRoutes({
   // 2.1 Health
@@ -201,7 +204,9 @@ export const routesV1 = defineRoutes({
     summary: "Start the OAuth flow (state + PKCE) and return the authorize URL",
     tag: "integrations",
     auth: "elevated",
+    roles: OWNER_ONLY,
     responses: { 200: LinkedInConnectResponseSchema },
+    rateLimited: true,
   },
   "integrations.linkedin.callback": {
     method: "GET",
@@ -211,6 +216,7 @@ export const routesV1 = defineRoutes({
     auth: "none",
     query: LinkedInCallbackQuerySchema,
     responses: { 302: null },
+    rateLimited: true,
   },
   "integrations.linkedin.disconnect": {
     method: "DELETE",
@@ -218,7 +224,9 @@ export const routesV1 = defineRoutes({
     summary: "Revoke and remove the LinkedIn token",
     tag: "integrations",
     auth: "elevated",
+    roles: OWNER_ONLY,
     responses: { 204: null },
+    rateLimited: true,
   },
 
   // 2.4 Settings
@@ -236,8 +244,10 @@ export const routesV1 = defineRoutes({
     summary: "Replace autonomy settings; a downgrade revokes pending automatic approvals",
     tag: "settings",
     auth: "elevated",
+    roles: OWNER_ONLY,
     body: AutonomySettingsInputSchema,
     responses: { 200: AutonomySettingsUpdateResponseSchema },
+    rateLimited: true,
   },
   "settings.notifications.get": {
     method: "GET",
@@ -685,6 +695,7 @@ export const routesV1 = defineRoutes({
     summary: "Publish now (elevated session)",
     tag: "drafts",
     auth: "elevated",
+    roles: OWNER_ONLY,
     params: IdParamsSchema,
     body: DraftPublishInputSchema,
     responses: { 202: PublishAcceptedSchema },
@@ -695,9 +706,10 @@ export const routesV1 = defineRoutes({
   "drafts.retryPublication": {
     method: "POST",
     path: "/drafts/{id}/retry-publication",
-    summary: "Retry after a non-ambiguous FAILED publication",
+    summary: "Retry after a non-ambiguous FAILED publication (elevated: publishes to LinkedIn)",
     tag: "drafts",
-    auth: "session",
+    auth: "elevated",
+    roles: OWNER_ONLY,
     params: IdParamsSchema,
     body: DraftRetryPublicationInputSchema,
     responses: { 202: PublishAcceptedSchema },

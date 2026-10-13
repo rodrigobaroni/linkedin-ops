@@ -14,7 +14,7 @@ export type AuditActorType = z.infer<typeof AuditActorTypeSchema>;
 
 /** Carried by every job payload (contracts.md §6.1). */
 export const RequestedBySchema = z
-  .object({
+  .strictObject({
     type: ActorTypeSchema,
     id: z.string().min(1).max(128).describe("User id, or system component name"),
   })

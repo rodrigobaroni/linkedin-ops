@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AsyncAcceptedSchema } from "../common/async.js";
 import { IsoDateTimeSchema } from "../common/datetime.js";
 import { HttpsUrlSchema, SlugSchema, UuidSchema } from "../common/ids.js";
 import { PaginationQuerySchema } from "../common/pagination.js";
@@ -87,19 +88,16 @@ export type OpportunityListQuery = z.infer<typeof OpportunityListQuerySchema>;
 
 /** `POST /opportunities/{id}/dismiss` body. */
 export const OpportunityDismissInputSchema = z
-  .object({
+  .strictObject({
     reason: z.string().trim().max(500).optional(),
   })
   .meta({ id: "OpportunityDismissInput" });
 export type OpportunityDismissInput = z.infer<typeof OpportunityDismissInputSchema>;
 
-/** `202` from `POST /opportunities/{id}/select`: a new draft is being generated. */
-export const OpportunitySelectAcceptedSchema = z
-  .object({
-    draftId: UuidSchema,
-    jobId: z.string().min(1),
-  })
-  .meta({ id: "OpportunitySelectAccepted" });
+/** `202` from `POST /opportunities/{id}/select`: a new draft is being generated (`id` = draft id). */
+export const OpportunitySelectAcceptedSchema = AsyncAcceptedSchema.extend({
+  draftId: UuidSchema,
+}).meta({ id: "OpportunitySelectAccepted" });
 export type OpportunitySelectAccepted = z.infer<typeof OpportunitySelectAcceptedSchema>;
 
 /** `200` from `POST /opportunities/{id}/select`: an existing prefetched draft was adopted, no new job. */
@@ -112,7 +110,7 @@ export type OpportunitySelectAdopted = z.infer<typeof OpportunitySelectAdoptedSc
 
 /** `POST /opportunities/manual` body: a topic typed by Rodrigo. */
 export const ManualOpportunityInputSchema = z
-  .object({
+  .strictObject({
     title: z.string().trim().min(1).max(200),
     summary: z.string().trim().max(2000).optional(),
     contentPillar: SlugSchema,
@@ -122,11 +120,9 @@ export const ManualOpportunityInputSchema = z
   .meta({ id: "ManualOpportunityInput" });
 export type ManualOpportunityInput = z.infer<typeof ManualOpportunityInputSchema>;
 
-export const ManualOpportunityAcceptedSchema = z
-  .object({
-    opportunityId: UuidSchema,
-    draftId: UuidSchema,
-    jobId: z.string().min(1),
-  })
-  .meta({ id: "ManualOpportunityAccepted" });
+/** `202` from `POST /opportunities/manual` (`id` = opportunity id). */
+export const ManualOpportunityAcceptedSchema = AsyncAcceptedSchema.extend({
+  opportunityId: UuidSchema,
+  draftId: UuidSchema,
+}).meta({ id: "ManualOpportunityAccepted" });
 export type ManualOpportunityAccepted = z.infer<typeof ManualOpportunityAcceptedSchema>;

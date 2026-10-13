@@ -5,7 +5,22 @@ versioning: internal SemVer (see `README.md`).
 
 ## [0.1.0] - 2026-10-13
 
+### Security
+
+- Request bodies, query strings, path params and job payloads are `z.strictObject`: unknown keys fail validation
+  instead of being stripped (threat model TM-06). `PasswordSchema` requires 15 characters (ADR-0007).
+- `AuditEvent.before/after` use `RedactedJsonObjectSchema`: credential-like keys (`SENSITIVE_KEY_PATTERN`) are rejected
+  at any depth, nesting and size are bounded (I10, TM-04).
+- `LinkedInCallbackQuery` requires exactly one of `code`/`error`. High-risk routes (LinkedIn connect/disconnect,
+  autonomy update, publish, retry-publication) are `elevated`, `OWNER_ONLY` and `rateLimited` (ADR-0007 §3, §10, §11).
+
 ### Added
+
+- Rule: `DraftVersion.eval.quality` types the API DTO with the model's `QualityEvaluation` (schemaVersion `1.0`). A
+  bump of the model schema is therefore an API change: treat it as additive (new nullable field, never remove) or
+  version it (Atlas review of T-004, R4).
+- Rule: every `202 Accepted` body extends `AsyncAccepted { id, status, jobId }` and keeps its named ids
+  (`draftId`, `publicationId`, …), so clients have one base type for every async action (Atlas review, R2).
 
 - `common/`: `Uuid`, `Slug`, `LinkedInUrn`, `IdempotencyKey`, `RowVersion`, `Semver`, `HttpsUrl`; `IsoDateTime`,
   `LocalDateTime`, `IanaTimezone`, `LocalSlot`; cursor pagination; `ActorType`/`AuditActorType`/`RequestedBy`;

@@ -11,7 +11,7 @@ export const ALT_TEXT_MAX_CHARS = 300;
 
 /** Hook with provenance (object since 2026-10-13, for audit and evals). */
 export const HookSchema = z
-  .object({
+  .strictObject({
     text: z.string().trim().min(1).max(HOOK_MAX_CHARS),
     formula: HookFormulaSchema.nullable(),
     rationale: z.string().max(500).nullable(),
@@ -21,7 +21,7 @@ export type Hook = z.infer<typeof HookSchema>;
 
 /** Media attached to a version. `altText` is mandatory whenever a suggestion exists (accessibility). */
 export const DraftMediaSuggestionSchema = z
-  .object({
+  .strictObject({
     format: MediaFormatSchema,
     description: z.string().trim().min(1).max(1000),
     altText: z.string().trim().min(1).max(ALT_TEXT_MAX_CHARS),
@@ -32,7 +32,7 @@ export type DraftMediaSuggestion = z.infer<typeof DraftMediaSuggestionSchema>;
 
 /** Source of a factual claim: a collected item, an external URL, or both. */
 export const CitationSchema = z
-  .object({
+  .strictObject({
     sourceItemId: UuidSchema.nullable(),
     url: z.url().max(2048).nullable(),
     claim: z.string().trim().min(1).max(1000),
@@ -120,7 +120,7 @@ export type DraftVersionSummary = z.infer<typeof DraftVersionSummarySchema>;
 
 /** `POST /drafts/{id}/versions`: manual edit → new version with `authorType = USER`. */
 export const DraftVersionCreateInputSchema = z
-  .object({
+  .strictObject({
     body: z.string().min(1).max(POST_BODY_MAX_CHARS),
     hooks: z.array(HookSchema).max(10),
     mediaSuggestion: DraftMediaSuggestionSchema.nullable().optional(),

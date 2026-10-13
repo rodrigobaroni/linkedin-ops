@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { z } from "zod";
-import { QUEUES, routesV1, toJsonSchema, type RouteDefinition } from "../src/index.js";
-
-const SECRET_KEY = /token|secret|password|apikey|api_key|ciphertext|passwordhash/i;
-/** Keys that match the pattern but carry counts, not credentials (`GenerationUsage`). */
-const ALLOWED_KEYS = new Set<string>(["inputTokens", "outputTokens"]);
+import {
+  QUEUES,
+  isSensitiveKey,
+  routesV1,
+  toJsonSchema,
+  type RouteDefinition,
+} from "../src/index.js";
 
 function propertyNames(schema: Record<string, unknown>, found = new Set<string>()): Set<string> {
   const visit = (node: unknown) => {
@@ -30,18 +32,14 @@ describe("no secret ever appears in a response or job payload (contracts.md §6 
 
   for (const { name, schema } of responseSchemas) {
     it(`response ${name}`, () => {
-      const offending = [...propertyNames(toJsonSchema(schema))].filter(
-        (key) => SECRET_KEY.test(key) && !ALLOWED_KEYS.has(key),
-      );
+      const offending = [...propertyNames(toJsonSchema(schema))].filter(isSensitiveKey);
       expect(offending).toEqual([]);
     });
   }
 
   for (const queue of Object.values(QUEUES)) {
     it(`job payload ${queue.name}`, () => {
-      const offending = [...propertyNames(toJsonSchema(queue.payload))].filter((key) =>
-        SECRET_KEY.test(key),
-      );
+      const offending = [...propertyNames(toJsonSchema(queue.payload))].filter(isSensitiveKey);
       expect(offending).toEqual([]);
     });
   }

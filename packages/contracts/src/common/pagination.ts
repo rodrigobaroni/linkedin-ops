@@ -4,7 +4,8 @@ export const PAGINATION_DEFAULT_LIMIT = 20;
 export const PAGINATION_MAX_LIMIT = 100;
 
 /** Cursor pagination query (`?limit=20&cursor=<opaque>`). */
-export const PaginationQuerySchema = z.object({
+/** Strict: unknown query params are rejected (TM-06). `.extend()` keeps strictness. */
+export const PaginationQuerySchema = z.strictObject({
   limit: z.coerce.number().int().min(1).max(PAGINATION_MAX_LIMIT).default(PAGINATION_DEFAULT_LIMIT),
   cursor: z.string().min(1).max(512).optional(),
 });

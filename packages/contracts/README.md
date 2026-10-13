@@ -35,6 +35,9 @@ test/         Vitest: valid example + ≥2 invalid variants per schema, transiti
 - Schemas registered with `.meta({ id })` become `$defs` in JSON Schema and components in OpenAPI.
 - No response schema contains a field matching `/token|secret|password|apiKey/i` — a test enforces it.
 - Mutations on drafts carry `expectedRowVersion` (`409 ROW_VERSION_MISMATCH`).
+- Every `202 Accepted` body extends `AsyncAccepted { id, status, jobId }` plus named ids (`draftId`, `publicationId`).
+- `DraftVersion.eval.quality` embeds the model's `QualityEvaluation`; a model schema bump is an API change (additive
+  or versioned, see `CHANGELOG.md`).
 
 ## Usage
 

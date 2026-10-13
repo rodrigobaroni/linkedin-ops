@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { API_V1_BASE_PATH, pathParamNames, routesV1, type RouteDefinition } from "../src/index.js";
+import {
+  API_V1_BASE_PATH,
+  pathParamNames,
+  routesV1,
+  toJsonSchema,
+  type RouteDefinition,
+} from "../src/index.js";
 
 const entries = Object.entries(routesV1) as Array<[string, RouteDefinition]>;
 
@@ -67,6 +73,7 @@ describe("routes/v1 registry", () => {
   it("high-risk routes require an elevated session (ADR-0007)", () => {
     for (const key of [
       "drafts.publish",
+      "drafts.retryPublication",
       "settings.autonomy.update",
       "integrations.linkedin.connect",
       "integrations.linkedin.disconnect",
@@ -118,6 +125,17 @@ describe("routes/v1 registry", () => {
       "audit",
     ]) {
       expect(tags.has(tag), tag).toBe(true);
+    }
+  });
+
+  it("every 202 response extends AsyncAccepted { id, status, jobId } (contracts.md §1)", () => {
+    for (const [key, route] of entries) {
+      const accepted = route.responses[202];
+      if (!accepted) continue;
+      const properties = toJsonSchema(accepted).properties as Record<string, unknown>;
+      expect(Object.keys(properties), key).toEqual(
+        expect.arrayContaining(["id", "status", "jobId"]),
+      );
     }
   });
 

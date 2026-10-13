@@ -1,5 +1,5 @@
 import * as c from "../../src/index.js";
-import { drop, repeat, replace, set, type SchemaCase } from "../helpers.js";
+import { DELETE, drop, patch, repeat, replace, set, type SchemaCase } from "../helpers.js";
 import { AT, LATER, SHA256, ids } from "./ids.js";
 import { qualityEvaluation } from "./structured-outputs.js";
 
@@ -607,7 +607,12 @@ export const resourceCases: SchemaCase[] = [
     name: "LoginInput",
     schema: c.LoginInputSchema,
     valid: { email: user.email, password: "correct-horse-battery" },
-    invalid: { "short password": set("password", "short"), "missing email": drop("email") },
+    invalid: {
+      "short password": set("password", "short"),
+      "14-char password": set("password", "abcdefghijklmn"),
+      "missing email": drop("email"),
+      "extra key stripped? no, rejected": set("accessToken", "x"),
+    },
   },
   {
     name: "ReauthInput",
@@ -656,7 +661,19 @@ export const resourceCases: SchemaCase[] = [
     name: "LinkedInCallbackQuery",
     schema: c.LinkedInCallbackQuerySchema,
     valid: { state: "s", code: "c" },
-    invalid: { "neither code nor error": drop("code"), "missing state": drop("state") },
+    invalid: {
+      "neither code nor error": drop("code"),
+      "both code and error": set("error", "access_denied"),
+      "empty error": (v) => patch(patch(v, "code", DELETE), "error", ""),
+      "missing state": drop("state"),
+      "unknown param": set("access_token", "x"),
+    },
+  },
+  {
+    name: "LinkedInCallbackQuery (error only)",
+    schema: c.LinkedInCallbackQuerySchema,
+    valid: { state: "s", error: "access_denied", error_description: "User denied" },
+    invalid: { "code added": set("code", "c"), "missing state": drop("state") },
   },
   // settings
   {
@@ -668,6 +685,7 @@ export const resourceCases: SchemaCase[] = [
       "quiet hours 25:00": set("quietHours.start", "25:00"),
       "negative weekly cap": set("maxAutoPostsPerWeek", -1),
       "score over 100": set("autoApproveMinScore", 101),
+      "cancel window below 5": set("cancelWindowMinutes", 0),
     },
   },
   {
@@ -916,8 +934,12 @@ export const resourceCases: SchemaCase[] = [
   {
     name: "OpportunitySelectAccepted",
     schema: c.OpportunitySelectAcceptedSchema,
-    valid: { draftId: ids.draft, jobId: "job-1" },
-    invalid: { "empty jobId": set("jobId", ""), "missing draftId": drop("draftId") },
+    valid: { id: ids.draft, status: "GENERATING", jobId: "job-1", draftId: ids.draft },
+    invalid: {
+      "empty jobId": set("jobId", ""),
+      "missing draftId": drop("draftId"),
+      "missing base id": drop("id"),
+    },
   },
   {
     name: "OpportunitySelectAdopted",
@@ -938,8 +960,18 @@ export const resourceCases: SchemaCase[] = [
   {
     name: "ManualOpportunityAccepted",
     schema: c.ManualOpportunityAcceptedSchema,
-    valid: { opportunityId: ids.opportunity, draftId: ids.draft, jobId: "job-1" },
-    invalid: { "missing jobId": drop("jobId"), "opportunityId number": set("opportunityId", 1) },
+    valid: {
+      id: ids.opportunity,
+      status: "selected",
+      jobId: "job-1",
+      opportunityId: ids.opportunity,
+      draftId: ids.draft,
+    },
+    invalid: {
+      "missing jobId": drop("jobId"),
+      "opportunityId number": set("opportunityId", 1),
+      "missing status": drop("status"),
+    },
   },
   // drafts
   {
@@ -1132,8 +1164,17 @@ export const resourceCases: SchemaCase[] = [
   {
     name: "PublishAccepted",
     schema: c.PublishAcceptedSchema,
-    valid: { publicationId: ids.publication, jobId: "job-3" },
-    invalid: { "bad publicationId": set("publicationId", "p"), "missing jobId": drop("jobId") },
+    valid: {
+      id: ids.publication,
+      status: "PENDING",
+      jobId: "job-3",
+      publicationId: ids.publication,
+    },
+    invalid: {
+      "bad publicationId": set("publicationId", "p"),
+      "missing jobId": drop("jobId"),
+      "missing base id": drop("id"),
+    },
   },
   // approvals
   {
@@ -1234,6 +1275,10 @@ export const resourceCases: SchemaCase[] = [
       "action not dotted": set("action", "DraftApprove"),
       "unknown actor": set("actorType", "ROBOT"),
       "empty correlationId": set("correlationId", ""),
+      "token in after": set("after", { status: "APPROVED", accessToken: "x" }),
+      "nested refresh token": set("before", { a: { b: { refreshToken: "x" } } }),
+      "secret inside array": set("after", { items: [{ clientSecret: "x" }] }),
+      "password hash": set("before", { passwordHash: "x" }),
     },
   },
   // list queries

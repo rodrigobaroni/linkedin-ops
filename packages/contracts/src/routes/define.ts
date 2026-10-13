@@ -19,7 +19,7 @@ export interface RouteDefinition {
   summary: string;
   tag: string;
   auth: RouteAuth;
-  /** Roles allowed; omitted = any authenticated role. */
+  /** Roles allowed; omitted = any authenticated role. High-risk actions are `OWNER_ONLY` (ADR-0007 §11). */
   roles?: readonly UserRole[];
   params?: z.ZodObject;
   query?: z.ZodType;

@@ -237,6 +237,7 @@ export const structuredOutputCases: SchemaCase[] = [
       "hook introduces new fact": set("alternativeHooks.0.introducesNewFact", true),
       "humanization changed facts": set("humanization.factsChanged", true),
       "hook over 210 chars": set("hook", repeat("h", 211)),
+      "unknown humanization promptId": set("humanization.promptId", "humanize@v1"),
     },
   },
   {

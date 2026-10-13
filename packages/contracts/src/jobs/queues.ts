@@ -25,7 +25,7 @@ export type QueueName = z.infer<typeof QueueNameSchema>;
 
 /** Fields present in every job payload. Handlers accept version N-1 during deploys (contracts.md §5). */
 export function jobEnvelope<V extends number>(schemaVersion: V) {
-  return z.object({
+  return z.strictObject({
     schemaVersion: z.literal(schemaVersion),
     correlationId: CorrelationIdSchema,
     requestedBy: RequestedBySchema,
@@ -190,7 +190,7 @@ export const QUEUES = {
     retryLimit: 0,
     retryBackoff: false,
     retryDelaySeconds: 0,
-    expireInSeconds: 120,
+    expireInSeconds: 300,
     singletonKeyFrom: (p) => p.publicationId,
     deadLetter: deadLetterOf("publication.publish"),
   }),

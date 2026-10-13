@@ -22,16 +22,20 @@ export const LinkedInConnectResponseSchema = z
   .meta({ id: "LinkedInConnectResponse" });
 export type LinkedInConnectResponse = z.infer<typeof LinkedInConnectResponseSchema>;
 
-/** Query of `GET /integrations/linkedin/callback` (RFC 6749 §4.1.2). `code` is exchanged server-side and never stored. */
+/**
+ * Query of `GET /integrations/linkedin/callback` (RFC 6749 §4.1.2 / §4.1.2.1): exactly one of `code` or
+ * `error`, never both, never neither. `code` is exchanged server-side and never stored. Unknown params are
+ * rejected (TM-03).
+ */
 export const LinkedInCallbackQuerySchema = z
-  .object({
+  .strictObject({
     state: z.string().min(1).max(512),
     code: z.string().min(1).max(2048).optional(),
-    error: z.string().max(128).optional(),
+    error: z.string().min(1).max(128).optional(),
     error_description: z.string().max(1024).optional(),
   })
-  .refine((query) => query.code !== undefined || query.error !== undefined, {
-    message: "Either code or error must be present",
+  .refine((query) => (query.code !== undefined) !== (query.error !== undefined), {
+    message: "Exactly one of code or error must be present",
     path: ["code"],
   })
   .meta({ id: "LinkedInCallbackQuery" });
