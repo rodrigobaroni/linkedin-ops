@@ -18,7 +18,7 @@ Workflows em `.github/workflows/`: `ci.yml` (lint, typecheck, test, build via Tu
 
 - [x] PR de exemplo com erro de lint falha; PR limpo passa. (PR limpo: run real do PR desta tarefa; lint quebrado: validado localmente com o mesmo comando `pnpm turbo lint typecheck test build`, exit 1)
 - [x] Commit contendo um segredo falso (fixture) é bloqueado pelo secret scanning. (gitleaks 8.30 local: fixture `ghp_…` detectada, exit 2; mesmo binário/config que o `gitleaks-action` executa em CI)
-- [x] Tempo de CI em cache quente ≤ 5 min para o monorepo vazio. (ver tempos do run do PR no relatório)
+- [x] Tempo de CI em cache quente ≤ 5 min para o monorepo vazio. (PR #65: job `check` 54 s e 62 s em cache frio; `commitlint` 16–22 s; `gitleaks` 10–14 s; `trivy` 26–30 s)
 - [x] Documentado em `CONTRIBUTING.md` quais checks são obrigatórios.
 
 ## Fora de escopo
@@ -38,9 +38,10 @@ Segredos em CI só via GitHub Secrets; nenhum valor real em workflow. Permissõe
 - `.github/workflows/ci.yml`: jobs `check` (Node via `.nvmrc`, pnpm via `packageManager`, cache do store e do Turborepo, `pnpm install --frozen-lockfile`, `pnpm turbo lint typecheck test build`, `pnpm format:check`) e `commitlint` (commits do PR). Job `compose-smoke` deixado comentado com instruções; ativado em T-003.
 - `.github/workflows/security.yml`: `gitleaks` (commits do PR / push em `main`; histórico completo no agendamento semanal e manual) e `trivy` fs (vuln + misconfig, HIGH/CRITICAL falham). Alinhado ao gate G-06; T-062 amplia com Semgrep, imagens e triagem.
 - `.github/dependabot.yml`: npm e github-actions, semanal, agrupado, prefixos `build(deps)`/`ci(deps)` compatíveis com commitlint.
-- Ressalvas de Atlas (T-001): R3 `engine-strict=true` em `.npmrc`; R4 `catalog` em `pnpm-workspace.yaml` para `typescript`, `eslint`, `vitest`, `@types/node`.
+- Ressalvas de Atlas (T-001): R3 `engine-strict=true` em `.npmrc`; R4 `catalog` em `pnpm-workspace.yaml` para `typescript`, `eslint`, `vitest`, `@types/node` (+ `prettier`, pedido na revisão desta tarefa).
 - `.gitleaksignore` com dois falsos positivos (placeholders em docs) por fingerprint.
-- Actions pinadas por SHA (TM-21); `permissions: contents: read` por padrão; nenhum secret necessário.
+- Actions pinadas por SHA (TM-21); `permissions: contents: read` por padrão; `persist-credentials: false` em todo checkout; nenhum secret necessário.
+- Revisão estrutural de Atlas: APROVADO (R1–R5 aplicadas no commit `ci: apply Atlas review`). Revisão de Sentinela: solicitada duas vezes; o terminal dela (Codex, sem rede) travou em prompts de permissão e não emitiu veredito — pendente para o Maestro/Rodrigo.
 
 ## Pendências / decisões
 
