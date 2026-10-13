@@ -3,7 +3,7 @@
 - Épico: EPIC-00 Foundation
 - Responsável (papel/agente): Alicerce (backend) · definição e revisão Atlas
 - Branch/floor: `feat/T-004-contracts-package`
-- Estado: todo
+- Estado: review
 - Dependências: T-001; `docs/architecture/data-model.md` (Atlas)
 
 ## Contexto
@@ -16,10 +16,10 @@ Web, API, worker e editorial-engine devem consumir os mesmos contratos. Regras d
 
 ## Critérios de aceite (verificáveis)
 
-- [ ] Schemas cobrem todos os campos do contrato §13 do briefing com os mesmos nomes.
-- [ ] Testes unitários (Vitest) da tabela de transições do PRD §8.2: transições permitidas passam, proibidas falham.
-- [ ] Pacote sem dependência de NestJS/Next (puro TS + Zod).
-- [ ] Changelog/versionamento semântico interno documentado no README do pacote.
+- [x] Schemas cobrem todos os campos do contrato §13 do briefing com os mesmos nomes (`OpportunitySchema`; fixture "Opportunity (briefing §13 minimal)").
+- [x] Testes unitários (Vitest) da tabela de transições do PRD §8.2: transições permitidas passam, proibidas falham (`test/content-transitions.test.ts`).
+- [x] Pacote sem dependência de NestJS/Next (puro TS + Zod 4; `test/boundaries.test.ts` garante imports só de `zod`/relativos).
+- [x] Changelog/versionamento semântico interno documentado no README do pacote (`packages/contracts/README.md`, `CHANGELOG.md`).
 
 ## Fora de escopo
 
@@ -32,3 +32,16 @@ Vitest nos schemas (parse de fixtures válidas/inválidas) e nas transições.
 ## Riscos de segurança / compliance
 
 Campos sensíveis (tokens) **não** fazem parte de contratos expostos ao frontend.
+
+## Registro de execução (2026-10-13, Alicerce)
+
+- Implementado em `packages/contracts` conforme `docs/architecture/contracts.md` §6: `common/`, `enums/`, `resources/`,
+  `state/content-transitions.ts`, `routes/v1.ts`, `jobs/queues.ts`, `engine/structured-outputs.ts`.
+- Dependência de runtime: só `zod@^4`. O helper de JSON Schema usa `z.toJSONSchema` nativo do Zod 4 (equivalente a
+  `zod-to-json-schema`), com alvo draft 2020-12 (Structured Outputs, strict) e OpenAPI 3.0.
+- Decisões/hipóteses registradas no PR (divergências em relação a `contracts.md` para o Atlas atualizar o doc):
+  `@asteasolutions/zod-to-openapi` não adicionado (Zod 4 nativo cobre); `openapi/v1.json` e o teste de drift ficam
+  para T-008; rota adicional `GET /drafts/{id}/approvals`; `expectedRowVersion` em todas as mutações de draft;
+  estado `OPPORTUNITY` do briefing §13 nomeado `CANDIDATE` (data-model.md); schemas de saída do modelo mantêm os
+  nomes de Pena (ADR-0005 §9) e os DTOs os nomes de `contracts.md`.
+
