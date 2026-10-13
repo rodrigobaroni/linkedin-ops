@@ -13,7 +13,7 @@ export const ignores = [
   "**/.next/**",
   "**/.turbo/**",
   "**/coverage/**",
-  "**/upstream/**", // ADR-0006: vendored linkedin-skills snapshot is read-only reference material
+  "upstream/**", // ADR-0006: vendored linkedin-skills snapshot (packages/editorial-engine/upstream) is read-only reference material
 ];
 
 /**
@@ -46,9 +46,20 @@ export function config(...extra) {
         "no-restricted-imports": [
           "error",
           {
+            paths: [
+              { name: "@linkedin-ops/api", message: "Nothing may depend on apps/* (ADR-0001)." },
+              { name: "@linkedin-ops/web", message: "Nothing may depend on apps/* (ADR-0001)." },
+              { name: "@linkedin-ops/worker", message: "Nothing may depend on apps/* (ADR-0001)." },
+            ],
             patterns: [
               {
-                group: ["**/apps/*", "**/apps/**"],
+                group: [
+                  "**/apps/*",
+                  "**/apps/**",
+                  "@linkedin-ops/api/*",
+                  "@linkedin-ops/web/*",
+                  "@linkedin-ops/worker/*",
+                ],
                 message: "Nothing may depend on apps/* (ADR-0001).",
               },
             ],
