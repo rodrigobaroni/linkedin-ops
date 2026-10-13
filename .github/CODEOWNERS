@@ -1,0 +1,11 @@
+# Default owner: Rodrigo reviews everything that is not claimed below.
+*                                   @rodrigobaroni
+
+# Editorial engine and its vendored upstream snapshot (ADR-0006).
+/packages/editorial-engine/         @rodrigobaroni
+/docs/editorial/                    @rodrigobaroni
+
+# Security-sensitive areas: review required before merge.
+/docs/security/                     @rodrigobaroni
+/.github/                           @rodrigobaroni
+/infra/                             @rodrigobaroni

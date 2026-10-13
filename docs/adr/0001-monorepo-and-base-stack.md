@@ -1,6 +1,6 @@
 # ADR-0001: Monorepo and base stack
 
-- Status: accepted (stack and baseline structure, decided by Rodrigo in `docs/product/maestro-prompt.md` §3 and §6); **proposed** for the structure amendment in "Decision › Structure amendment"
+- Status: accepted (stack and baseline structure, decided by Rodrigo in `docs/product/maestro-prompt.md` §3 and §6); structure amendment (`packages/domain`) **accepted** by Rodrigo on 2026-10-13
 - Date: 2026-10-13
 - Deciders: Rodrigo (product owner), Atlas (architect)
 
@@ -66,7 +66,7 @@ apps/web → packages/ui
 nothing depends on apps/*
 ```
 
-### Structure amendment (proposed — needs Rodrigo's approval, see Q1 in system-overview.md)
+### Structure amendment (accepted by Rodrigo on 2026-10-13 — resolves Q1 in system-overview.md)
 
 Add `packages/domain` (`@linkedin-ops/domain`): entities, content state machine, autonomy policy,
 application services, Prisma schema/client and repositories, token encryption. Both `apps/api` and

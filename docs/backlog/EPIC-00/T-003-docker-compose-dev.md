@@ -8,7 +8,7 @@
 
 ## Contexto
 
-Dev e produção usam Docker Compose + Caddy. Postgres e storage S3-compatible (MinIO) precisam subir localmente com um comando. Risco registrado: Docker não está instalado na máquina local de Rodrigo (delivery-status).
+Dev e produção usam Docker Compose + Caddy. Postgres e storage S3-compatible (MinIO) precisam subir localmente com um comando. Risco registrado: Docker não está instalado na máquina local de Rodrigo (delivery-status). Decisão de Rodrigo (2026-10-13): a validação desta tarefa acontece em CI (GitHub Actions), não na máquina local; T-002 deve prover o job que sobe o compose e executa os health checks.
 
 ## Resultado esperado
 
