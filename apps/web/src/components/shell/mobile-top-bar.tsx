@@ -46,4 +46,3 @@ export function MobileTopBar({ unreadNotifications }: { unreadNotifications: num
     </header>
   );
 }
-
