@@ -16,22 +16,22 @@ makes explicit the responsibilities of each workspace package.
 
 ### Stack (accepted)
 
-| Concern | Choice |
-|---|---|
-| Monorepo | pnpm workspaces + Turborepo |
-| Web | Next.js (App Router), React, TypeScript, Tailwind CSS, shadcn/ui; TanStack Query for server state; React Hook Form + Zod for forms |
-| API | NestJS, REST, OpenAPI |
-| Worker | Node.js/TypeScript + pg-boss (see ADR-0002) |
-| Database | PostgreSQL + Prisma |
-| Files | S3-compatible object storage (MinIO in dev, OCI Object Storage in prod) |
-| AI | OpenAI Responses API with Structured Outputs |
-| Tests | Vitest, Supertest, Playwright, Testcontainers |
-| Infra | Docker Compose, Caddy, Oracle Cloud |
-| CI/CD | GitHub Actions |
-| Observability | Pino, health checks, OpenTelemetry, alerts |
-| Publishing | Official LinkedIn API (OAuth 2.0) only |
-| Notifications | Telegram Bot API |
-| Local rendering | Sharp, Satori, Resvg |
+| Concern         | Choice                                                                                                                             |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Monorepo        | pnpm workspaces + Turborepo                                                                                                        |
+| Web             | Next.js (App Router), React, TypeScript, Tailwind CSS, shadcn/ui; TanStack Query for server state; React Hook Form + Zod for forms |
+| API             | NestJS, REST, OpenAPI                                                                                                              |
+| Worker          | Node.js/TypeScript + pg-boss (see ADR-0002)                                                                                        |
+| Database        | PostgreSQL + Prisma                                                                                                                |
+| Files           | S3-compatible object storage (MinIO in dev, OCI Object Storage in prod)                                                            |
+| AI              | OpenAI Responses API with Structured Outputs                                                                                       |
+| Tests           | Vitest, Supertest, Playwright, Testcontainers                                                                                      |
+| Infra           | Docker Compose, Caddy, Oracle Cloud                                                                                                |
+| CI/CD           | GitHub Actions                                                                                                                     |
+| Observability   | Pino, health checks, OpenTelemetry, alerts                                                                                         |
+| Publishing      | Official LinkedIn API (OAuth 2.0) only                                                                                             |
+| Notifications   | Telegram Bot API                                                                                                                   |
+| Local rendering | Sharp, Satori, Resvg                                                                                                               |
 
 Languages: code, identifiers, branches, commits, schemas and APIs in English; initial UI and product
 docs in Brazilian Portuguese; ADRs and strictly technical docs may be in English. The editorial engine
