@@ -32,11 +32,11 @@
     "typescript-eslint": "^8.71.2"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
-    "eslint": "^10.12.0",
+    "@types/node": "catalog:",
+    "eslint": "catalog:",
     "prettier": "^3.9.10",
-    "typescript": "~5.9.3",
-    "vitest": "^5.0.4"
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   },
   "peerDependencies": {
     "eslint": "^10.0.0",
