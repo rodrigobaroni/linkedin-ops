@@ -54,3 +54,6 @@ Thumbs.db
 # Maestri floors / local agent state
 .maestri/
 .claude/settings.local.json
+
+# Tooling caches
+.eslintcache

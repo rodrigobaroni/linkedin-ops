@@ -3,7 +3,7 @@
 - Épico: EPIC-00 Foundation
 - Responsável (papel/agente): Estaleiro (plataforma) · revisão Atlas
 - Branch/floor: `chore/T-001-monorepo-bootstrap`
-- Estado: todo
+- Estado: in-progress
 - Dependências: nenhuma (commit base ea2f55b existe)
 
 ## Contexto

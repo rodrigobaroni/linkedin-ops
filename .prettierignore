@@ -1,0 +1,12 @@
+node_modules
+dist
+build
+.next
+.turbo
+coverage
+pnpm-lock.yaml
+CHANGELOG.md
+packages/editorial-engine/upstream
+.maestri
+# Product/architecture docs are owned by other roles; formatting of docs/** is not enforced in T-001 (revisit in T-002).
+docs/
