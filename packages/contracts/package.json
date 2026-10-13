@@ -1,7 +1,8 @@
 {
   "name": "@linkedin-ops/contracts",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
+  "sideEffects": false,
   "description": "Zod schemas, inferred types, route registry, job payloads and OpenAPI source (no logic)",
   "type": "module",
   "main": "./dist/index.js",
@@ -22,7 +23,9 @@
     "test": "vitest run",
     "clean": "rm -rf dist .turbo coverage *.tsbuildinfo"
   },
-  "dependencies": {},
+  "dependencies": {
+    "zod": "^4.6.7"
+  },
   "devDependencies": {
     "@linkedin-ops/config": "workspace:*",
     "@types/node": "catalog:",
