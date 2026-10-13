@@ -66,7 +66,7 @@ Não há áudio/vídeo previsto no MVP. Se upload de vídeo entrar no escopo, le
 ### 2.2 Tempo suficiente — 2.2.1, 2.2.2 (A)
 
 - [ ] Sessão prestes a expirar avisa com antecedência e oferece extensão acessível; texto não salvo é preservado localmente quando seguro.
-- [ ] Janela de veto informa horário absoluto e restante; não é um limite de interação imposto pela UI, e sim regra editorial configurável.
+- [ ] No piloto automático controlado, a janela de cancelamento informa horário absoluto e restante; não é um limite de interação imposto pela UI, e sim a regra `cancel_window_minutes` (padrão: 60).
 - [ ] Toast de sucesso não contém a única forma de desfazer; quando houver `Desfazer`, também manter estado recuperável na tela pelo período definido.
 - [ ] Animação/progresso contínuo respeita `prefers-reduced-motion` e tem texto estático.
 
@@ -156,6 +156,7 @@ Não há áudio/vídeo previsto no MVP. Se upload de vídeo entrar no escopo, le
 - [ ] Autosave nunca captura foco; erro de autosave é persistente e permite copiar o texto.
 - [ ] Barra fixa mobile não cobre o editor nem o cursor com teclado aberto.
 - [ ] Dialog de aprovação move foco ao título, resume versão/gates/fontes e devolve foco após fechar.
+- [ ] Conteúdo com mídia exige aprovação humana em todos os modos; essa exigência é anunciada antes das ações de agendar/publicar.
 
 ### Calendário
 
@@ -206,7 +207,7 @@ Não há áudio/vídeo previsto no MVP. Se upload de vídeo entrar no escopo, le
 
 - [ ] Os três modos são radio group/cards selecionáveis com descrição; não são toggle binário.
 - [ ] Diferenças de automação estão em tabela/lista textual navegável.
-- [ ] Contagem da janela de veto tem horário absoluto e não atualiza live region a cada segundo.
+- [ ] A contagem da janela de cancelamento do piloto automático controlado tem horário absoluto e não atualiza live region a cada segundo; o piloto automático completo informa textualmente que não há janela.
 - [ ] Reautenticação aceita password manager/colar; erro não limpa o formulário principal.
 - [ ] Fluxo OAuth informa que abrirá domínio externo e confirma retorno; popup tem fallback na mesma aba.
 - [ ] Telegram deixa explícito que não aprova; código de vínculo aceita colar e tem validade descrita.

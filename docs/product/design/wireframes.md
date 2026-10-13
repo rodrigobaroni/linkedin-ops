@@ -76,7 +76,7 @@ Os wireframes definem hierarquia, conteúdo mínimo e comportamento responsivo. 
 └────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Prioridade: falha crítica → veto expirando → aprovação pendente → lote atual → agenda. Quando não há pendências, trocar o bloco inicial por “Tudo em dia” e a próxima ação útil.
+Prioridade: falha crítica → cancelamento perto do fim → aprovação humana pendente → lote atual → agenda. Quando não há pendências, trocar o bloco inicial por “Tudo em dia” e a próxima ação útil.
 
 ### Mobile
 
@@ -248,7 +248,7 @@ Desktop                                      Mobile
 └─────────────────────────────────────────┘  └──────────────────────────────┘
 ```
 
-Ordenação padrão: falha → veto perto do fim → revisão/aprovação → aprovado sem horário → rascunho. Estado vazio orienta `Ir para Curadoria` ou `Novo assunto`.
+Ordenação padrão: falha → cancelamento perto do fim → revisão/aprovação humana → aprovado sem horário → rascunho. Estado vazio orienta `Ir para Curadoria` ou `Novo assunto`.
 
 ### Desktop
 
@@ -299,7 +299,7 @@ VERSÕES
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Regenerar abre diálogo com instrução opcional, resumo de que uma nova versão será criada e botão `Regenerar`. Aprovar abre um resumo de versão, gates, fontes e idioma. `Publicar agora` sempre usa confirmação explícita com versão e destino, mesmo no modo completo quando acionado manualmente.
+Regenerar abre diálogo com instrução opcional, resumo de que uma nova versão será criada e botão `Regenerar`. Aprovar abre um resumo de versão, gates, fontes e idioma. `Publicar agora` sempre usa confirmação explícita com versão e destino, mesmo no Piloto automático completo quando acionado manualmente.
 
 ### Mobile
 
@@ -548,21 +548,24 @@ No mobile, as subseções são uma lista; cada item abre uma rota com botão vol
 │ Define o que acontece sem você. Guardrails continuam ativos em todos os modos.     │
 │                                                                                    │
 │ ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐                     │
-│ │ ● ASSISTIDO      │ │ CONTROLADO       │ │ COMPLETO         │                     │
-│ │ Você seleciona,  │ │ Sistema escolhe  │ │ Sistema aprova   │                     │
-│ │ aprova e agenda. │ │ e propõe horário;│ │ e agenda se todos│                     │
-│ │ Atual · padrão   │ │ você aprova.     │ │ gates passarem.  │                     │
+│ │ ● ASSISTIDO      │ │ PILOTO AUTOMÁTICO│ │ PILOTO AUTOMÁTICO│                     │
+│ │ Humano aprova    │ │ CONTROLADO       │ │ COMPLETO         │                     │
+│ │ todas as etapas. │ │ Autoaprova e     │ │ Autoaprova e     │                     │
+│ │ Atual · padrão   │ │ agenda; cancelar │ │ agenda sem janela│                     │
+│ │                  │ │ em 60 min.       │ │ de cancelamento. │                     │
 │ │                  │ │ [Selecionar]     │ │ [Selecionar]     │                     │
 │ └──────────────────┘ └──────────────────┘ └──────────────────┘                     │
 │                                                                                    │
 │ Comparar o que é automático [tabela seleção/geração/aprovação/agendamento]         │
 │ Guardrails ativos            [Ver e editar política v3]                            │
-│ Janela de veto               60 minutos                                             │
+│ Janela de cancelamento       60 min no Piloto automático controlado                 │
+│ Chave da política            `cancel_window_minutes`                                │
+│ Mídia                        Sempre exige aprovação humana                           │
 │ Última alteração             02 out, por Rodrigo [Ver auditoria]                   │
 └────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Subir o nível abre confirmação com lista concreta das novas ações automáticas e reautenticação. Descer aplica imediatamente e lista itens cuja aprovação automática será revogada. O modo atual nunca é representado somente por cor.
+Subir o nível abre confirmação com lista concreta das novas ações automáticas e reautenticação. Descer aplica imediatamente e lista itens cuja aprovação automática será revogada. O modo atual nunca é representado somente por cor. O Piloto automático completo declara explicitamente “sem janela de cancelamento”; mídia sempre retorna para aprovação humana.
 
 ### LinkedIn OAuth — `/configuracoes/integracoes/linkedin`
 
