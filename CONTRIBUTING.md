@@ -23,7 +23,8 @@ Nunca faça push direto em `main`. Nunca sobrescreva trabalho alheio.
 [Conventional Commits](https://www.conventionalcommits.org/): `type(scope): subject`.
 Tipos: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `ci`, `build`, `perf`, `security`, `revert`.
 Validado localmente pelo hook `commit-msg` (husky + commitlint, `commitlint.config.js`); o hook é
-instalado por `pnpm install`.
+instalado por `pnpm install`. Reverts devem ser escritos como `revert: <subject>`: a mensagem
+`Revert "..."` gerada pelo botão do GitHub falha no `type-enum` e precisa ser reescrita antes do PR.
 
 ## Ferramentas
 
