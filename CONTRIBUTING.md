@@ -21,7 +21,16 @@ Nunca faça push direto em `main`. Nunca sobrescreva trabalho alheio.
 ## Commits
 
 [Conventional Commits](https://www.conventionalcommits.org/): `type(scope): subject`.
-Tipos: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `ci`, `build`, `perf`, `security`.
+Tipos: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `ci`, `build`, `perf`, `security`, `revert`.
+Validado localmente pelo hook `commit-msg` (husky + commitlint, `commitlint.config.js`); o hook é
+instalado por `pnpm install`.
+
+## Ferramentas
+
+- Node 24 LTS (`.nvmrc`) e pnpm 10 (`packageManager`). Turborepo orquestra `lint`, `typecheck`, `test` e `build`.
+- Configuração compartilhada em `packages/config` (tsconfig, ESLint flat config, Prettier, Vitest).
+  Cada workspace só estende essas bases; regras novas entram lá, com revisão de Atlas.
+- Antes de abrir PR: `pnpm check` e `pnpm format:check`.
 
 ## Definition of Done
 
