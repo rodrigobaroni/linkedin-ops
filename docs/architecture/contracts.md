@@ -25,6 +25,7 @@ entre este documento e `packages/contracts`, o pacote vence e este documento dev
 | Ações                 | verbos de domínio como sub-recursos `POST /drafts/{id}/approve` (não `PATCH status`) — mantém a state machine no domínio                                                                                                                                                                                                              |
 | Assíncrono            | ações que enfileiram job respondem `202 Accepted` com `Location` do recurso. Corpo base `AsyncAccepted { id, status, jobId }` (`id` = recurso principal, `status` = estado atual); cada ação **estende** esse base com ids nomeados (`draftId`, `publicationId`, `opportunityId`) para o cliente ter um tipo comum e nomes explícitos |
 | Concorrência          | recursos mutáveis expõem `rowVersion`; **todas** as mutações de `Draft` (incl. `submit-review`, `reject`, `discard`) exigem `expectedRowVersion` no corpo → `409 ROW_VERSION_MISMATCH` se divergir. `AutonomySettings` não tem `rowVersion` (o `PUT` substitui o documento inteiro)                                                   |
+| Validação | inputs, queries e path params são `z.strictObject` (chave desconhecida → `400 VALIDATION_FAILED`); DTOs de resposta e dados lidos do banco usam `strip` (campos desconhecidos ignorados, compatibilidade aditiva). Envelope de job também strict |
 | Idempotência de ações | header opcional `Idempotency-Key` (UUID) em `POST` de ação; a api guarda (userId, key, hash do corpo) por 24 h e devolve a mesma resposta. Obrigatório em `publish` e `schedule`                                                                                                                                                      |
 | Autenticação          | cookie de sessão `__Host-session` (ADR-0007). Sem Bearer tokens no MVP                                                                                                                                                                                                                                                                |
 | CSRF                  | mutações exigem `Origin` igual a `APP_BASE_URL`, `Content-Type: application/json` **e** header `X-Requested-With: linkedin-ops` (ver `system-overview.md` §3.1). Endpoints 🔐 exigem ainda `X-CSRF-Token` ligado à sessão **e** sessão elevada (`/auth/reauth` nos últimos 15 min)                                                    |
@@ -35,7 +36,7 @@ entre este documento e `packages/contracts`, o pacote vence e este documento dev
 
 ## 2. Recursos e verbos
 
-Legenda: 🔒 = autenticado; ⚡ = assíncrono (202 + job); 🧾 = exige `Idempotency-Key`; 🔐 = alto risco: exige sessão elevada + `X-CSRF-Token` (ADR-0007, threat model TM-02/TM-22).
+Legenda: 🔒 = autenticado; ⚡ = assíncrono (202 + job); 🧾 = exige `Idempotency-Key`; 🔐 = alto risco: exige sessão elevada + `X-CSRF-Token` e role OWNER (ADR-0007, threat model TM-02/TM-22).
 
 ### 2.1 Saúde
 
@@ -385,6 +386,9 @@ Regras:
    é da api (precisa de DNS); o schema garante só `https` + hostname válido.
 9. `DraftVersion.eval.quality` tipa o DTO com o `QualityEvaluation` (schemaVersion do modelo, Pena). Um bump de
    schema do modelo é mudança de API: só aditiva (campo novo nullable, nunca remover) ou versionada; registrar no CHANGELOG.
+10. `AuditEvent.before/after` são validados por `RedactedJsonObjectSchema` (JSON recursivo que rejeita chaves
+    `/token|secret|password|apiKey|ciphertext/i` em qualquer profundidade) **antes** de persistir; ações 🔐 exigem role
+    OWNER (`OWNER_ONLY`) além de sessão elevada; callback OAuth aceita exatamente um de `code`/`error`.
 
 **Ratificação T-004 (2026-10-13, Atlas):** o pacote `@linkedin-ops/contracts@0.1.0` (PR #68, Alicerce) é a fonte de
 verdade; as divergências registradas no PR foram aceitas e incorporadas acima (zod 4 nativo; `openapi/v1.json` + teste
