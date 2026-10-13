@@ -1,0 +1,9 @@
+# gitleaks false positives, one fingerprint per line.
+# Git mode: commit:file:rule:line. Directory mode (`gitleaks dir .`): file:rule:line.
+# Only placeholders/documentation go here. Never suppress a real secret: rotate it instead.
+# ADR-0004, line 29: documentation placeholder for the key-ring env var format (no real value).
+3cbc5485b407200855c1f2065269fc48bf9f6a80:docs/adr/0004-oauth-token-encryption-at-rest.md:generic-api-key:29
+docs/adr/0004-oauth-token-encryption-at-rest.md:generic-api-key:29
+# Backlog index, line 43: gate G-06 table row (tool names only, no value).
+3cbc5485b407200855c1f2065269fc48bf9f6a80:docs/backlog/README.md:generic-api-key:43
+docs/backlog/README.md:generic-api-key:43
