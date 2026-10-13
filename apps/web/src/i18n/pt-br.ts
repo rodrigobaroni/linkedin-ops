@@ -57,3 +57,10 @@ export const messages = {
     description: "O endereço pode ter mudado ou o item não existe mais.",
   },
 } as const;
+
+/** Accessible name of the notifications bell, e.g. "Notificações: 2 não lidas". */
+export function notificationsLabel(unread: number): string {
+  return unread > 0
+    ? `${messages.header.notifications}: ${messages.header.unread(unread)}`
+    : messages.header.notifications;
+}

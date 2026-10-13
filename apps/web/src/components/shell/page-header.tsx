@@ -11,13 +11,13 @@ import { BellIcon } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { notificationsLabel } from "@/i18n/pt-br";
 import { AutonomyIndicator } from "./autonomy-indicator";
-import { notificationsLabel } from "./mobile-top-bar";
 
 export type PageHeaderProps = {
   title: string;
   description?: ReactNode;
-  /** Breadcrumb trail above the title; the current page is appended automatically. */
+  /** Breadcrumb trail above the title; the current page is appended automatically. Empty = top level. */
   breadcrumb?: { label: string; href: Route }[];
   /** Screen actions (buttons/links) rendered on the right. */
   actions?: ReactNode;
@@ -41,16 +41,25 @@ export function PageHeader({
   return (
     <header className="flex flex-col gap-3 py-4 md:py-6">
       <div className="flex items-start justify-between gap-4">
-        <Breadcrumb>
-          <BreadcrumbList>
-            {breadcrumb.map((entry) => (
-              <BreadcrumbItemWithSeparator key={entry.href} label={entry.label} href={entry.href} />
-            ))}
-            <BreadcrumbItem>
-              <BreadcrumbPage>{title}</BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </Breadcrumb>
+        {breadcrumb.length > 0 ? (
+          <Breadcrumb>
+            <BreadcrumbList>
+              {breadcrumb.map((entry) => (
+                <BreadcrumbItemWithSeparator
+                  key={entry.href}
+                  label={entry.label}
+                  href={entry.href}
+                />
+              ))}
+              <BreadcrumbItem>
+                <BreadcrumbPage>{title}</BreadcrumbPage>
+              </BreadcrumbItem>
+            </BreadcrumbList>
+          </Breadcrumb>
+        ) : (
+          // Top-level screen (Hoje): no trail to show; keep the row so the bell stays aligned right.
+          <span aria-hidden="true" />
+        )}
         <Button asChild variant="ghost" size="icon" className="relative hidden md:inline-flex">
           <Link href="/notificacoes" aria-label={notificationsLabel(unreadNotifications)}>
             <BellIcon aria-hidden="true" />

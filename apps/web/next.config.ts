@@ -19,6 +19,8 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   typedRoutes: true,
+  // Do not generate apps/web/AGENTS.md: agent guidance lives in the repo docs and CLAUDE.md.
+  agentRules: false,
   headers() {
     return Promise.resolve([{ source: "/(.*)", headers: securityHeaders }]);
   },

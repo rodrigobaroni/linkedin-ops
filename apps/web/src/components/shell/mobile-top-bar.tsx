@@ -4,7 +4,7 @@ import { Button } from "@linkedin-ops/ui";
 import { ArrowLeftIcon, BellIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { messages } from "@/i18n/pt-br";
+import { messages, notificationsLabel } from "@/i18n/pt-br";
 
 /**
  * Mobile top bar: back control on nested routes, app name and the notifications bell.
@@ -47,8 +47,3 @@ export function MobileTopBar({ unreadNotifications }: { unreadNotifications: num
   );
 }
 
-export function notificationsLabel(unread: number): string {
-  return unread > 0
-    ? `${messages.header.notifications}: ${messages.header.unread(unread)}`
-    : messages.header.notifications;
-}
