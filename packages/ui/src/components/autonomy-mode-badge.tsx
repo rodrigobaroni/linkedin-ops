@@ -5,7 +5,9 @@ import { cn } from "../lib/cn.js";
 import type { AutonomyMode } from "../types/autonomy.js";
 
 /**
- * Presentation of the autonomy mode (screen-states.md "Aparência do modo de autonomia").
+ * Presentation of the autonomy mode. Labels/icons follow screen-states.md ("Aparência do modo de
+ * autonomia"); the short messages follow the ratified semantics in docs/architecture/data-model.md §2.1
+ * (PRD v0.2 §6): CONTROLLED auto-approves and schedules with a 60-minute cancel window, FULL has no window.
  * Icon + textual label; colour is support only. The component receives the mode — it never decides it.
  */
 export const AUTONOMY_MODE_PRESENTATION: Record<
@@ -19,12 +21,12 @@ export const AUTONOMY_MODE_PRESENTATION: Record<
   },
   AUTOPILOT_CONTROLLED: {
     label: "Controlado",
-    shortMessage: "O sistema seleciona e propõe; você aprova.",
+    shortMessage: "O sistema aprova e agenda; você pode cancelar na janela de 60 min.",
     symbol: "◐",
   },
   AUTOPILOT_FULL: {
     label: "Completo",
-    shortMessage: "O sistema pode aprovar e agendar se todos os guardrails passarem.",
+    shortMessage: "O sistema aprova, agenda e publica sem janela de cancelamento.",
     symbol: "◆",
   },
 };
