@@ -97,6 +97,20 @@ describe("S-2 · audit snapshots reject credential-like keys at any depth (I10, 
       AuditSnapshotSchema.safeParse({ usage: { inputTokens: 1, outputTokens: 2 } }).success,
     ).toBe(true);
   });
+  it("applies the 200-node budget globally, not only at the root (S-7)", () => {
+    const fields = (n: number) =>
+      Object.fromEntries(Array.from({ length: n }, (_, i) => [`f${i}`, i]));
+    expect(AuditSnapshotSchema.safeParse({ bucket: fields(201) }).success).toBe(false);
+    expect(AuditSnapshotSchema.safeParse({ a: fields(200), b: fields(200) }).success).toBe(false);
+    expect(AuditSnapshotSchema.safeParse({ a: fields(100), b: fields(100) }).success).toBe(false);
+    expect(
+      AuditSnapshotSchema.safeParse({ items: Array.from({ length: 200 }, (_, i) => i) }).success,
+    ).toBe(false);
+    expect(AuditSnapshotSchema.safeParse(fields(200)).success).toBe(true);
+    expect(AuditSnapshotSchema.safeParse({ a: fields(99), b: fields(99) }).success).toBe(true);
+    expect(AuditSnapshotSchema.safeParse(fields(201)).success).toBe(false);
+  });
+
   it("bounds nesting depth", () => {
     let deep: Record<string, unknown> = { leaf: 1 };
     for (let level = 0; level < REDACTED_JSON_MAX_DEPTH; level += 1) deep = { nested: deep };

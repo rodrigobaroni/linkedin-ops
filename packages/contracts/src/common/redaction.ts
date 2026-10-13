@@ -55,13 +55,23 @@ function depthOf(value: JsonValue, current = 1): number {
   );
 }
 
-/** Object form used by `AuditEvent.before/after`: redacted keys, bounded depth and size. */
+/** Total number of object keys and array items across the whole value (global budget, S-7). */
+export function countJsonNodes(value: JsonValue): number {
+  if (value === null || typeof value !== "object") return 0;
+  const children = Array.isArray(value) ? value : Object.values(value);
+  return children.reduce<number>((total, child) => total + 1 + countJsonNodes(child), 0);
+}
+
+/**
+ * Object form used by `AuditEvent.before/after`: redacted keys, bounded depth and a global budget of
+ * `REDACTED_JSON_MAX_ITEMS` keys + array items counted recursively (not only at the root).
+ */
 export const RedactedJsonObjectSchema = z
   .record(SafeKeySchema, RedactedJsonValueSchema)
   .refine((value) => depthOf(value) <= REDACTED_JSON_MAX_DEPTH, {
     message: `Snapshot nesting deeper than ${REDACTED_JSON_MAX_DEPTH}`,
   })
-  .refine((value) => Object.keys(value).length <= REDACTED_JSON_MAX_ITEMS, {
-    message: `Snapshot has more than ${REDACTED_JSON_MAX_ITEMS} keys`,
+  .refine((value) => countJsonNodes(value) <= REDACTED_JSON_MAX_ITEMS, {
+    message: `Snapshot has more than ${REDACTED_JSON_MAX_ITEMS} keys/items in total`,
   });
 export type RedactedJsonObject = z.infer<typeof RedactedJsonObjectSchema>;
