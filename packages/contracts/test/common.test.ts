@@ -51,6 +51,11 @@ describe("problem details", () => {
     expect(ERROR_CODE_HTTP_STATUS.LINKEDIN_REAUTH_REQUIRED).toBe(412);
     expect(ERROR_CODE_HTTP_STATUS.SCHEDULE_IN_PAST).toBe(422);
     expect(ERROR_CODE_HTTP_STATUS.RATE_LIMITED).toBe(429);
+    expect(ERROR_CODE_HTTP_STATUS.IDEMPOTENCY_KEY_REQUIRED).toBe(400);
+    expect(ERROR_CODE_HTTP_STATUS.IDEMPOTENCY_KEY_CONFLICT).toBe(409);
+    expect(problemTypeFor("IDEMPOTENCY_KEY_CONFLICT")).toBe(
+      "https://linkedin-ops.local/errors/idempotency-key-conflict",
+    );
   });
 
   it("rejects incoherent code/status/type/errors combinations (QA68-2)", () => {

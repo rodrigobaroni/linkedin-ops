@@ -7,6 +7,9 @@ versioning: internal SemVer (see `README.md`).
 
 ### Changed
 
+- `ErrorCode` gains `IDEMPOTENCY_KEY_CONFLICT` (409): same `Idempotency-Key` reused on the same route with a
+  different body (contracts.md §1, PR #73); `IDEMPOTENCY_KEY_REQUIRED` stays 400.
+
 - QA (Crivo, PR #68): `CurationRunDetail` and `OpportunityBatch` enforce invariant I1 — a `SUCCEEDED` run carries
   exactly five opportunities with distinct ids and ranks 1..5; `OpportunityBatch` gains `status`. `ProblemDetails`
   rejects incoherent `code`/`status`/`type` triples and allows `errors[]` only with `VALIDATION_FAILED`.
