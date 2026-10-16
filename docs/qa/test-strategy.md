@@ -124,8 +124,9 @@ Os testes normativos seguem ADR-0007, seção **Consequences › Tests**, e prov
   exibir o erro. O token anterior deixa de autorizar mutações.
 - **N3 — PKCE e identidade condicionados à prova real:** testar somente os modos
   `LINKEDIN_PKCE=required|disabled`. Incompatibilidade em `required` falha de forma explícita, sem fallback
-  silencioso para Authorization Code simples. Validação das claims OIDC realmente retornadas e formação da
-  Person URN a partir de `sub` só são habilitadas após a evidência do app real em G-01.
+  silencioso para Authorization Code simples. A validação de `iss`, `aud`, `exp`, `iat` e `nonce` é
+  obrigatória desde o primeiro token armazenado (ADR-0007 item 5); o que G-01 define é o conjunto de claims
+  adicionais realmente retornado pelo app e a formação da Person URN a partir de `sub`.
 - **N4 — matriz de todas as mutações:** todo `POST/PUT/PATCH/DELETE` exige sessão, com a única exceção de
   `POST /auth/login`; todos exigem `Origin` exatamente igual a `APP_BASE_URL`, JSON e
   `X-Requested-With: linkedin-ops`, rejeitam cross-site, `Origin: null`, form-urlencoded e method override.
