@@ -9,7 +9,7 @@
 #   Digests are refreshed by Dependabot (docker ecosystem); official-image digests arrive with T-062.
 # - Only Caddy publishes ports here (bound to CADDY_BIND_ADDRESS, 127.0.0.1 by default). Postgres and
 #   the object store are reachable from the host only through docker-compose.dev.yml.
-# - `${VAR:-default}` defaults exist only so the stack boots in dev/CI without a .env; they must match
+# - Interpolation defaults (`NAME:-value`) exist only so the stack boots in dev/CI without a .env; they must match
 #   the "dev default" values in .env.example and are refused by the apps outside NODE_ENV=development.
 # - `apps/web` never receives secrets (no env_file). Only api/worker read the root .env.
 
