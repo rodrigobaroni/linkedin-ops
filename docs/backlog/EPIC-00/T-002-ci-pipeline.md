@@ -3,7 +3,7 @@
 - Épico: EPIC-00 Foundation
 - Responsável (papel/agente): Estaleiro (plataforma)
 - Branch/floor: `ci/T-002-ci-pipeline`
-- Estado: review (PR aberto; checks validados no run real)
+- Estado: done (integrada em `main` via PR #65; `2a1cb1b` inclui `1efb51b`)
 - Dependências: T-001; remote GitHub (decisão de Rodrigo, PRD §13.10) — sem remote, entregar os workflows e validar com `act` ou execução local equivalente
 
 ## Contexto

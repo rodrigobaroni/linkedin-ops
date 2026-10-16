@@ -98,6 +98,11 @@ options are cross-app imports (`apps/worker` importing `apps/api`) or an interna
 - Lint/dependency rules must be added in `packages/config` to enforce the direction graph.
 - A Testcontainers-based integration suite in `packages/domain` becomes the primary place to test
   invariants from `docs/architecture/data-model.md`.
+- Build model per package (2026-10-16): packages consumed exclusively by a bundler (today only
+  `packages/ui`) export TypeScript source and are transpiled by the consumer (Next.js
+  `transpilePackages`); packages used by `api`/`worker` (`contracts`, `domain`, `editorial-engine`)
+  compile to `dist` + `.d.ts` because those apps run on Node. The `no-restricted-imports` lint rule
+  forbids importing `@linkedin-ops/ui` outside `apps/web` and `packages/ui` (PR #67, 4b4af5b).
 
 ## Security / compliance impact
 

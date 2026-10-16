@@ -3,7 +3,7 @@
 - Épico: EPIC-00 Foundation
 - Responsável (papel/agente): Alicerce (backend) · definição e revisão Atlas
 - Branch/floor: `feat/T-004-contracts-package`
-- Estado: review
+- Estado: done (integrada em `main` via PR #68, rebase, head `fceaa3f`; revisões de Atlas, Sentinela, Aurora e Crivo concluídas)
 - Dependências: T-001; `docs/architecture/data-model.md` (Atlas)
 
 ## Contexto

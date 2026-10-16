@@ -20,6 +20,8 @@ DoD global exige evidência proporcional ao risco. Cenários de J8 (LinkedIn for
 - [ ] Matriz J8 completa com dono do teste por cenário.
 - [ ] Fixtures maliciosas incluem XML bomb, `<script>`, URLs internas, instruções injetadas.
 - [ ] Script de verificação de ciclos no backlog roda em CI (docs).
+- [ ] `tests/e2e` deixa de ser placeholder: o script `test` hoje é um `echo` (T-001); esta tarefa instala Playwright com browsers reais (Chromium no mínimo) e o `pnpm turbo test` passa a executar a suíte, ainda que vazia, em vez de ecoar.
+- [ ] A estratégia documenta que verificação de contraste/acessibilidade não roda em jsdom: axe em jsdom não cobre contraste de cor; esses checks pertencem ao Playwright em browser real (T-060), e o unit/jsdom cobre só regras estruturais.
 
 ## Fora de escopo
 
@@ -32,3 +34,8 @@ Os próprios fakes têm testes.
 ## Riscos de segurança / compliance
 
 Fixtures sem dados pessoais reais.
+
+## Ressalvas (Crivo, revisão dos PRs #67/#68, 2026-10-16)
+
+- `tests/e2e` é placeholder (`test` = `echo`); nada E2E roda em CI até esta tarefa e T-060. Não considerar critérios de T-060 cumpridos por checks verdes do workspace vazio.
+- axe-core em jsdom não avalia contraste (sem layout/cores computadas). Contraste e foco visível são verificados com `@axe-core/playwright` em browser real, dentro de T-060.
