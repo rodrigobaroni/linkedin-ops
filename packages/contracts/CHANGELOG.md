@@ -5,6 +5,12 @@ versioning: internal SemVer (see `README.md`).
 
 ## [0.1.0] - 2026-10-13
 
+### Changed
+
+- ADR-0007 N2: `POST /auth/login` → `200 LoginResponse { csrfToken, elevatedUntil: null }` and `POST /auth/reauth` →
+  `200 ReauthResponse { csrfToken, elevatedUntil }` (were `204`); `Me` gains `csrfToken` and `elevatedUntil`.
+  `csrfToken` is the only `*Token` field any response may carry (contract test); audit snapshots still reject it.
+
 ### Security
 
 - Request bodies, query strings, path params and job payloads are `z.strictObject`: unknown keys fail validation

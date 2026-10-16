@@ -8,6 +8,9 @@ import {
   type RouteDefinition,
 } from "../src/index.js";
 
+/** ADR-0007 N2: the anti-CSRF token is handed over by exactly these responses and nowhere else. */
+const CSRF_TOKEN_ROUTES = new Set(["auth.login", "auth.reauth", "auth.me"]);
+
 function propertyNames(schema: Record<string, unknown>, found = new Set<string>()): Set<string> {
   const visit = (node: unknown) => {
     if (Array.isArray(node)) return node.forEach(visit);
@@ -32,10 +35,21 @@ describe("no secret ever appears in a response or job payload (contracts.md §6 
 
   for (const { name, schema } of responseSchemas) {
     it(`response ${name}`, () => {
-      const offending = [...propertyNames(toJsonSchema(schema))].filter(isSensitiveKey);
+      const routeKey = name.split(" ")[0] as string;
+      const offending = [...propertyNames(toJsonSchema(schema))].filter(
+        (key) => isSensitiveKey(key) && !(key === "csrfToken" && CSRF_TOKEN_ROUTES.has(routeKey)),
+      );
       expect(offending).toEqual([]);
     });
   }
+
+  it("csrfToken is returned by login, reauth and me only (ADR-0007 N2)", () => {
+    const withCsrf = responseSchemas
+      .filter(({ schema }) => propertyNames(toJsonSchema(schema)).has("csrfToken"))
+      .map(({ name }) => name.split(" ")[0]);
+    expect([...new Set(withCsrf)].sort()).toEqual([...CSRF_TOKEN_ROUTES].sort());
+    expect(isSensitiveKey("csrfToken"), "snapshots still reject it").toBe(true);
+  });
 
   for (const queue of Object.values(QUEUES)) {
     it(`job payload ${queue.name}`, () => {
