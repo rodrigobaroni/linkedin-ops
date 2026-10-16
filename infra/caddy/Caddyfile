@@ -1,0 +1,48 @@
+# LinkedIn Ops — Caddy reverse proxy (T-003 local; T-056 production reuses this file via env vars).
+#
+# Same origin for browser and API (system-overview: no CORS in production):
+#   /api/*  -> api:3001      everything else -> web:3000
+#
+# Env (see .env.example):
+#   CADDY_SITE_ADDRESS  localhost (dev) | your.public.host (prod)
+#   CADDY_TLS           internal (dev: Caddy's local CA, self-signed) | ops@example.com (prod: ACME e-mail)
+#   CADDY_HSTS_MAX_AGE  0 (dev; keeps http://localhost:<port> usable) | 31536000 (prod)
+# Threat model TM-18: host allowlist = the site address; only 80/443 are published; the admin API stays
+# on the container loopback (used by the Compose healthcheck); X-Forwarded-* are set by reverse_proxy.
+
+{
+	admin 127.0.0.1:2019
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+{$CADDY_SITE_ADDRESS:localhost} {
+	tls {$CADDY_TLS:internal}
+
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age={$CADDY_HSTS_MAX_AGE:0}; includeSubDomains"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy no-referrer
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+		-Server
+		-X-Powered-By
+	}
+
+	@api path /api /api/*
+	handle @api {
+		reverse_proxy api:3001
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}
