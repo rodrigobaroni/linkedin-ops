@@ -28,10 +28,21 @@ export const messages = {
   autonomy: {
     prefix: "Modo",
     learnMore: "Entender o modo",
+    fullName: {
+      ASSISTED: "Assistido",
+      AUTOPILOT_CONTROLLED: "Piloto automático controlado",
+      AUTOPILOT_FULL: "Piloto automático completo",
+    },
+    cancelWindow: (minutes: number) =>
+      `Janela de cancelamento: ${minutes} min depois da notificação, antes de publicar.`,
+    noCancelWindow: "Sem janela de cancelamento: a publicação segue no horário agendado.",
+    mediaRequiresHuman: "Mídia (imagens e cards) sempre exige aprovação humana.",
+    settingsLink: "Ver configurações de autonomia",
     source: "Dado de exemplo: a configuração real chega com a API de autonomia.",
   },
   linkedin: {
     label: "LinkedIn",
+    openSettings: "Abrir integrações",
     status: {
       CONNECTED: "Conectado",
       ATTENTION: "Atenção",

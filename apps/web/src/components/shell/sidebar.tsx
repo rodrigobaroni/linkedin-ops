@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Separator, cn } from "@linkedin-ops/ui";
+import { Button, Separator, Tooltip, TooltipContent, TooltipTrigger, cn } from "@linkedin-ops/ui";
 import { PanelLeftCloseIcon, PanelLeftOpenIcon, UserRoundIcon } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
@@ -20,7 +20,8 @@ export type SidebarProps = {
 /**
  * Desktop sidebar (≥ 1024 px: 256 px, collapsible to 72 px) and tablet rail (768–1023 px: icons +
  * tooltips). Hidden below 768 px, where the bottom navigation takes over (navigation-map.md).
- * Icon-only modes keep every label in the accessibility tree (`sr-only`) and as a `title` tooltip.
+ * Icon-only modes keep every label in the accessibility tree (`sr-only`) and show a real tooltip on
+ * hover and focus (accessibility.md 1.4.13); the tooltip is suppressed while the label is visible.
  */
 export function Sidebar({ linkedInStatus, unreadNotifications, accountName }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
@@ -34,8 +35,9 @@ export function Sidebar({ linkedInStatus, unreadNotifications, accountName }: Si
     items: navItems.filter((item) => item.group === group),
   }));
 
-  // Labels are visible only on lg+ while expanded.
+  // Labels are visible only on lg+ while expanded; tooltips take over whenever labels are hidden.
   const labelClassName = "max-lg:sr-only lg:group-data-collapsed:sr-only";
+  const tooltipClassName = collapsed ? undefined : "lg:hidden";
 
   return (
     <aside
@@ -103,16 +105,24 @@ export function Sidebar({ linkedInStatus, unreadNotifications, accountName }: Si
                 const isNotifications = item.href === "/notificacoes";
                 return (
                   <li key={item.href}>
-                    <NavLink
-                      item={item}
-                      title={item.label}
-                      labelClassName={labelClassName}
-                      className="max-lg:justify-center max-lg:px-0 lg:group-data-collapsed:justify-center lg:group-data-collapsed:px-0"
-                      count={isNotifications ? unreadNotifications : undefined}
-                      countLabel={
-                        isNotifications ? messages.header.unread(unreadNotifications) : undefined
-                      }
-                    />
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <NavLink
+                          item={item}
+                          labelClassName={labelClassName}
+                          className="max-lg:justify-center max-lg:px-0 lg:group-data-collapsed:justify-center lg:group-data-collapsed:px-0"
+                          count={isNotifications ? unreadNotifications : undefined}
+                          countLabel={
+                            isNotifications
+                              ? messages.header.unread(unreadNotifications)
+                              : undefined
+                          }
+                        />
+                      </TooltipTrigger>
+                      <TooltipContent side="right" className={tooltipClassName}>
+                        {item.label}
+                      </TooltipContent>
+                    </Tooltip>
                   </li>
                 );
               })}
@@ -122,21 +132,31 @@ export function Sidebar({ linkedInStatus, unreadNotifications, accountName }: Si
       </nav>
 
       <div className="flex flex-col gap-3 border-t px-3 py-3 max-lg:items-center lg:px-4 lg:group-data-collapsed:items-center">
-        <AutonomyIndicator labelClassName={labelClassName} />
-        <LinkedInStatus status={linkedInStatus} labelClassName={labelClassName} />
-        <Link
-          href="/configuracoes"
-          title={accountName}
-          className="flex min-h-11 items-center gap-2 rounded-md text-sm font-medium leading-5 hover:bg-secondary lg:px-1"
-        >
-          <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary">
-            <UserRoundIcon aria-hidden="true" className="size-4" />
-          </span>
-          <span className={cn("truncate", labelClassName)}>{accountName}</span>
-          <span className="sr-only">
-            {messages.header.account}. {messages.header.openSettings}
-          </span>
-        </Link>
+        <AutonomyIndicator labelClassName={labelClassName} side="right" />
+        <LinkedInStatus
+          status={linkedInStatus}
+          labelClassName={labelClassName}
+          tooltipClassName={tooltipClassName}
+        />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Link
+              href="/configuracoes"
+              className="flex min-h-11 items-center gap-2 rounded-md text-sm font-medium leading-5 hover:bg-secondary lg:px-1"
+            >
+              <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary">
+                <UserRoundIcon aria-hidden="true" className="size-4" />
+              </span>
+              <span className={cn("truncate", labelClassName)}>{accountName}</span>
+              <span className="sr-only">
+                {messages.header.account}. {messages.header.openSettings}
+              </span>
+            </Link>
+          </TooltipTrigger>
+          <TooltipContent side="right" className={tooltipClassName}>
+            {accountName}
+          </TooltipContent>
+        </Tooltip>
       </div>
     </aside>
   );

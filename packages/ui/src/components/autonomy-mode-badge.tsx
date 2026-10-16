@@ -1,8 +1,8 @@
 import { cva, type VariantProps } from "class-variance-authority";
 import { CircleDotIcon, CircleDotDashedIcon, DiamondIcon } from "lucide-react";
 import type { ComponentProps } from "react";
-import { cn } from "../lib/cn.js";
-import type { AutonomyMode } from "../types/autonomy.js";
+import { cn } from "../lib/cn";
+import type { AutonomyMode } from "../types/autonomy";
 
 /**
  * Presentation of the autonomy mode: badge labels, icons and short messages from the ratified
@@ -71,12 +71,11 @@ export function AutonomyModeBadge({
   ...props
 }: AutonomyModeBadgeProps) {
   const Icon = ICONS[mode];
-  const { label, shortMessage } = AUTONOMY_MODE_PRESENTATION[mode];
+  const { label } = AUTONOMY_MODE_PRESENTATION[mode];
   return (
     <span
       data-slot="autonomy-mode-badge"
       data-mode={mode}
-      title={shortMessage}
       className={cn(autonomyModeBadgeVariants({ autonomyMode: mode }), className)}
       {...props}
     >

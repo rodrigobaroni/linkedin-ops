@@ -101,7 +101,8 @@ describe("AppShell", () => {
 
     await userEvent.click(more);
     const dialog = await screen.findByRole("dialog", { name: messages.nav.more });
-    const drawerLinks = within(dialog)
+    const drawerNav = within(dialog).getByRole("navigation", { name: messages.nav.more });
+    const drawerLinks = within(drawerNav)
       .getAllByRole("link")
       .map((link) => link.textContent?.trim());
     const expected = navItems
@@ -109,8 +110,9 @@ describe("AppShell", () => {
       .map((item) => item.label);
     expect(drawerLinks).toEqual(expected);
     expect(within(dialog).getByText("Modo Assistido")).toBeInTheDocument();
+    expect(within(dialog).getByRole("link", { name: /LinkedIn: Conectado/ })).toBeInTheDocument();
     expect(
-      within(dialog).getByRole("link", { name: "Fontes", current: "page" }),
+      within(drawerNav).getByRole("link", { name: "Fontes", current: "page" }),
     ).toBeInTheDocument();
 
     await userEvent.keyboard("{Escape}");

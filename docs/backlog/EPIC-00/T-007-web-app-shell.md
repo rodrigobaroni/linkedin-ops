@@ -23,9 +23,9 @@ Todas as telas do MVP compartilham layout, navegação e infraestrutura de dados
 
 ## Entregue (2026-10-13)
 
-- `packages/ui`: tokens de `design-tokens.md` como preset CSS do Tailwind v4 (`@linkedin-ops/ui/styles.css`), primitivos no estilo shadcn/ui (Button, Badge, Card, Skeleton, Alert, Separator, Sheet, Breadcrumb), padrões `EmptyState`/`LoadingState`/`ErrorState` e `AutonomyModeBadge` (três modos, ícone + texto).
+- `packages/ui`: tokens de `design-tokens.md` como preset CSS do Tailwind v4 (`@linkedin-ops/ui/styles.css`), primitivos no estilo shadcn/ui (Button, Badge, Card, Skeleton, Alert, Separator, Sheet, Breadcrumb, Tooltip, Popover), padrões `EmptyState`/`LoadingState`/`ErrorState` e `AutonomyModeBadge` (três modos, ícone + texto). Consumido do fonte por `apps/web` (`transpilePackages`), sem etapa de build.
 - `packages/config`: preset ESLint React (`@linkedin-ops/config/eslint/react`: react-hooks + jsx-a11y).
-- `apps/web`: Next.js 16 App Router em PT-BR; skip link, sidebar desktop (256 px, recolhível para 72 px), rail de ícones em tablet, barra inferior + drawer "Mais" no mobile; cabeçalho com breadcrumb, `h1` (foco após navegação), descrição e sino; badge de autonomia sempre visível (sidebar/drawer + cabeçalho) alimentado por provider **mockado**; provider do TanStack Query sem chamadas; 12 rotas placeholder com estados `?estado=vazio|carregando|erro` (prévia oculta em produção); `loading.tsx`, `error.tsx` e `not-found.tsx`; headers de segurança básicos (`nosniff`, `Referrer-Policy`, `X-Frame-Options`, CSP com `frame-ancestors 'none'`).
+- `apps/web`: Next.js 16 App Router em PT-BR; skip link, sidebar desktop (256 px, recolhível para 72 px), rail de ícones em tablet, barra inferior + drawer "Mais" no mobile; cabeçalho com breadcrumb, `h1` (foco após navegação), descrição e sino; badge de autonomia sempre visível (sidebar/drawer + cabeçalho) que abre o popover "Entender o modo" (explicação, janela de cancelamento configurada, exceção de mídia) alimentado por provider **mockado**; rail de ícones com tooltips reais (hover + foco); provider do TanStack Query sem chamadas; 12 rotas placeholder com estados `?estado=vazio|carregando|erro` (prévia oculta em produção); `loading.tsx`, `error.tsx` e `not-found.tsx`; headers de segurança básicos (`nosniff`, `Referrer-Policy`, `X-Frame-Options`, CSP com `frame-ancestors 'none'`).
 
 ## Fora de escopo
 
@@ -39,7 +39,7 @@ Vitest + Testing Library + axe-core (shell, navegação, estados). Playwright sm
 
 - Guard de autenticação/redirect para login (T-015, ADR-0007).
 - Cliente HTTP tipado e enum `AutonomyMode` importado de `@linkedin-ops/contracts` (T-004); hoje o tipo vive em `packages/ui/src/types/autonomy.ts` com os mesmos valores do `data-model.md`.
-- Dados mockados em `apps/web/src/config/mock.ts` (status do LinkedIn, não lidas, nome da conta) e no `AutonomyModeProvider`.
+- Dados mockados em `apps/web/src/config/mock.ts` (status do LinkedIn, não lidas, nome da conta) e no `AutonomyModeProvider` (`mode`, `cancelWindowMinutes = 60`, `mediaRequiresHuman = true`, espelhando `AutonomySettings` de `contracts.md` §3.4).
 - CSP estrita com nonce (T-057).
 - `eslint-plugin-jsx-a11y` declara peer `eslint ≤ 9`; roda em ESLint 10 sem alterações (`strict-peer-dependencies=false`). Trocar quando o upstream ampliar a faixa.
 
