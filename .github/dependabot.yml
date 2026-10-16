@@ -13,6 +13,14 @@ updates:
     commit-message:
       prefix: build
       include: scope
+    ignore:
+      # typescript-eslint (8.x) declares peer typescript <6.1.0; TypeScript 7 (native
+      # compiler) is a tooling change that requires an ADR, not an automatic bump.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
+      # @types/node must follow the runtime pinned in .nvmrc/engines (Node 24), not lead it.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       npm-minor-and-patch:
         patterns: ["*"]
