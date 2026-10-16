@@ -17,7 +17,11 @@ export const user: c.User = {
   updatedAt: AT,
 };
 
+const CSRF = "c".repeat(43);
+
 export const me: c.Me = {
+  csrfToken: CSRF,
+  elevatedUntil: null,
   id: ids.user,
   email: user.email,
   name: user.name,
@@ -628,6 +632,9 @@ export const resourceCases: SchemaCase[] = [
     schema: c.MeSchema,
     valid: me,
     invalid: {
+      "missing csrfToken": drop("csrfToken"),
+      "short csrfToken": set("csrfToken", "abc"),
+      "elevatedUntil with offset": set("elevatedUntil", "2026-10-13T12:00:00+00:00"),
       "unknown role": set("role", "ADMIN"),
       "linkedinConnected as string": set("linkedinConnected", "yes"),
     },
@@ -639,6 +646,35 @@ export const resourceCases: SchemaCase[] = [
     invalid: {
       "opaque id": set("id", "abc"),
       "offset datetime": set("createdAt", "2026-10-13T12:00:00+00:00"),
+    },
+  },
+  {
+    name: "Me (elevated)",
+    schema: c.MeSchema,
+    valid: { ...me, elevatedUntil: LATER },
+    invalid: {
+      "elevatedUntil as number": set("elevatedUntil", 1),
+      "missing elevatedUntil": drop("elevatedUntil"),
+    },
+  },
+  {
+    name: "LoginResponse",
+    schema: c.LoginResponseSchema,
+    valid: { csrfToken: CSRF, elevatedUntil: null },
+    invalid: {
+      "elevated right after login": set("elevatedUntil", LATER),
+      "missing csrfToken": drop("csrfToken"),
+      "short csrfToken": set("csrfToken", "x"),
+    },
+  },
+  {
+    name: "ReauthResponse",
+    schema: c.ReauthResponseSchema,
+    valid: { csrfToken: CSRF, elevatedUntil: LATER },
+    invalid: {
+      "elevatedUntil null": set("elevatedUntil", null),
+      "missing csrfToken": drop("csrfToken"),
+      "bad datetime": set("elevatedUntil", "soon"),
     },
   },
   // integrations
