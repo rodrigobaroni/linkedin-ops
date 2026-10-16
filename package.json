@@ -19,6 +19,13 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "clean": "turbo run clean && rm -rf node_modules/.cache .turbo",
+    "compose": "docker compose --env-file .env -f infra/docker/docker-compose.yml",
+    "compose:dev": "docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml",
+    "dev:infra": "pnpm run compose up -d --wait postgres s3 && pnpm run compose run --rm s3-init",
+    "dev:infra:down": "pnpm run compose down",
+    "dev:infra:logs": "pnpm run compose logs -f postgres s3",
+    "dev:stack": "pnpm run compose:dev up --build",
+    "dev:stack:down": "pnpm run compose:dev down",
     "prepare": "husky"
   },
   "devDependencies": {
