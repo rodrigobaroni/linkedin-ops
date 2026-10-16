@@ -140,6 +140,7 @@ jobs:
             if [ -z "$value" ]; then echo "::error::$name is missing or empty in .env"; status=1; fi
           done
           # Every ${VAR} the Compose files interpolate must be documented in .env.example (T-003 criterion).
+          # shellcheck disable=SC2016 # regex, not a shell expansion
           for name in $(grep -ohE '\$\{[A-Z0-9_]+' infra/docker/docker-compose*.yml | tr -d '${' | sort -u); do
             if ! grep -qE "^${name}=" .env.example; then echo "::error::$name is used by Compose but absent from .env.example"; status=1; fi
           done
