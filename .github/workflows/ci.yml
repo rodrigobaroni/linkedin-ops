@@ -193,14 +193,11 @@ jobs:
           echo "::add-mask::$presigned"
           echo "presigned URL query parameters: $(printf '%s' "$presigned" | sed 's/^[^?]*?//' | tr '&' '\n' | cut -d= -f1 | tr '\n' ' ')"
           # Download via plain HTTP with the presigned URL (curl inside the store container, same network).
-          if ! docker compose exec -T s3 sh -ec "curl -fsS -o /tmp/smoke.bin '$presigned'"; then
-            echo "::group::presigned GET failed: server response (signature redacted)"
-            docker compose exec -T s3 sh -ec "curl -sS -i '$presigned' | head -c 4000" \
-              | sed -E 's/X-Amz-Signature=[0-9a-f]+/X-Amz-Signature=REDACTED/g; s/X-Amz-Credential=[^&" ]+/X-Amz-Credential=REDACTED/g'
-            echo "::endgroup::"
-            echo "::error::presigned GET was rejected by the S3 store"
-            exit 1
-          fi
+          # The inner script always exits 0 and reports the HTTP status, so a rejection prints the S3 error body.
+          get_report="$(docker compose exec -T s3 sh -c "code=\$(curl -sS -o /tmp/smoke.bin -w '%{http_code}' '$presigned'); echo \"status=\$code\"; [ \"\$code\" = 200 ] || head -c 2000 /tmp/smoke.bin" \
+            | sed -E 's/X-Amz-Signature=[0-9a-f]+/X-Amz-Signature=REDACTED/g; s/X-Amz-Credential=[^&" ]+/X-Amz-Credential=REDACTED/g')"
+          echo "presigned GET: $get_report"
+          case "$get_report" in status=200*) ;; *) echo "::error::presigned GET was rejected by the S3 store"; exit 1 ;; esac
           actual="$(docker compose exec -T s3 sh -ec "sha256sum /tmp/smoke.bin | cut -d' ' -f1")"
           if [ "$actual" != "$expected" ]; then echo "::error::sha256 mismatch after presigned GET"; exit 1; fi
           docker compose exec -T s3 sh -ec "curl -fsSI '$presigned' | grep -i '^content-length: 65536'"
