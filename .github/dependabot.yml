@@ -43,3 +43,23 @@ updates:
     groups:
       github-actions:
         patterns: ["*"]
+
+  # Container images referenced by infra/docker/*.yml and apps/*/Dockerfile (tags + digests, TM-21).
+  - package-ecosystem: docker
+    directories:
+      - /infra/docker
+      - /apps/api
+      - /apps/web
+      - /apps/worker
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Sao_Paulo
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      docker-images:
+        patterns: ["*"]
