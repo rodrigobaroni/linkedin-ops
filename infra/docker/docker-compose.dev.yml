@@ -1,0 +1,59 @@
+# Development override (T-003): host ports on 127.0.0.1 and hot reload for the apps.
+#
+#   docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml up
+#
+# Hot reload: the `dev` image stage (apps/*/Dockerfile) already holds node_modules and a first build;
+# only source directories are bind-mounted, so a change in package.json requires `--build`.
+# TODO(T-006, T-008): replace the tsc/node --watch commands with `pnpm --filter <app> dev` once the
+# api and worker define a `dev` script.
+
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+
+  s3:
+    ports:
+      - "127.0.0.1:${S3_PORT:-9000}:9000"
+    # The object-store console stays disabled in dev as well (standard S3 only; use `aws --endpoint-url`
+    # or any S3 client). S3_CONSOLE_PORT is reserved should a future ADR allow it.
+
+  api:
+    build:
+      target: dev
+    command:
+      - sh
+      - -ec
+      - |
+        pnpm --filter @linkedin-ops/api exec tsc -p tsconfig.build.json --watch --preserveWatchOutput &
+        exec node --watch apps/api/dist/index.js
+    volumes:
+      - ../../apps/api/src:/app/apps/api/src
+      - ../../packages/contracts/src:/app/packages/contracts/src
+    ports:
+      - "127.0.0.1:3001:3001"
+
+  worker:
+    build:
+      target: dev
+    command:
+      - sh
+      - -ec
+      - |
+        pnpm --filter @linkedin-ops/worker exec tsc -p tsconfig.build.json --watch --preserveWatchOutput &
+        exec node --watch apps/worker/dist/index.js
+    volumes:
+      - ../../apps/worker/src:/app/apps/worker/src
+      - ../../packages/contracts/src:/app/packages/contracts/src
+
+  web:
+    build:
+      target: dev
+    command: ["pnpm", "--filter", "@linkedin-ops/web", "dev"]
+    environment:
+      NEXT_TELEMETRY_DISABLED: "1"
+    volumes:
+      - ../../apps/web/src:/app/apps/web/src
+      - ../../packages/ui/src:/app/packages/ui/src
+    ports:
+      - "127.0.0.1:3000:3000"
