@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ERROR_CODE_HTTP_STATUS,
   ErrorCodeSchema,
+  ProblemDetailsSchema,
   IanaTimezoneSchema,
   IsoDateTimeSchema,
   LocalDateTimeSchema,
@@ -50,6 +51,36 @@ describe("problem details", () => {
     expect(ERROR_CODE_HTTP_STATUS.LINKEDIN_REAUTH_REQUIRED).toBe(412);
     expect(ERROR_CODE_HTTP_STATUS.SCHEDULE_IN_PAST).toBe(422);
     expect(ERROR_CODE_HTTP_STATUS.RATE_LIMITED).toBe(429);
+  });
+
+  it("rejects incoherent code/status/type/errors combinations (QA68-2)", () => {
+    const base = { title: "Não encontrado", code: "NOT_FOUND", correlationId: "req_1" } as const;
+    const ok = { ...base, status: 404, type: problemTypeFor("NOT_FOUND") };
+    expect(ProblemDetailsSchema.safeParse(ok).success).toBe(true);
+    expect(ProblemDetailsSchema.safeParse({ ...ok, status: 200 }).success).toBe(false);
+    expect(
+      ProblemDetailsSchema.safeParse({ ...ok, type: problemTypeFor("FORBIDDEN") }).success,
+    ).toBe(false);
+    expect(
+      ProblemDetailsSchema.safeParse({ ...ok, errors: [{ path: ["a"], message: "b" }] }).success,
+    ).toBe(false);
+    const validation = {
+      ...base,
+      code: "VALIDATION_FAILED",
+      status: 400,
+      type: problemTypeFor("VALIDATION_FAILED"),
+      errors: [{ path: ["a"], message: "b" }],
+    };
+    expect(ProblemDetailsSchema.safeParse(validation).success).toBe(true);
+    for (const code of ErrorCodeSchema.options) {
+      const coherent = {
+        ...base,
+        code,
+        status: ERROR_CODE_HTTP_STATUS[code],
+        type: problemTypeFor(code),
+      };
+      expect(ProblemDetailsSchema.safeParse(coherent).success, code).toBe(true);
+    }
   });
 
   it("builds the problem type URI from the code", () => {

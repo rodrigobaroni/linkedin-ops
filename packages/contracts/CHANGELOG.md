@@ -7,6 +7,10 @@ versioning: internal SemVer (see `README.md`).
 
 ### Changed
 
+- QA (Crivo, PR #68): `CurationRunDetail` and `OpportunityBatch` enforce invariant I1 — a `SUCCEEDED` run carries
+  exactly five opportunities with distinct ids and ranks 1..5; `OpportunityBatch` gains `status`. `ProblemDetails`
+  rejects incoherent `code`/`status`/`type` triples and allows `errors[]` only with `VALIDATION_FAILED`.
+
 - ADR-0007 N2: `POST /auth/login` → `200 LoginResponse { csrfToken, elevatedUntil: null }` and `POST /auth/reauth` →
   `200 ReauthResponse { csrfToken, elevatedUntil }` (were `204`); `Me` gains `csrfToken` and `elevatedUntil`.
   `csrfToken` is the only `*Token` field any response may carry (contract test); audit snapshots still reject it.

@@ -4,7 +4,7 @@ import { IanaTimezoneSchema, IsoDateTimeSchema } from "../common/datetime.js";
 import { SemverSchema, UuidSchema } from "../common/ids.js";
 import { PaginationQuerySchema } from "../common/pagination.js";
 import { CurationRunStatusSchema, CurationRunTriggerSchema } from "../enums/curation-run.js";
-import { OPPORTUNITIES_PER_RUN, OpportunitySchema } from "./opportunity.js";
+import { OPPORTUNITIES_PER_RUN, OpportunitySchema, refineRunOpportunities } from "./opportunity.js";
 
 const Count = z.int().min(0);
 
@@ -42,10 +42,12 @@ export const CurationRunSchema = z
   .meta({ id: "CurationRun" });
 export type CurationRun = z.infer<typeof CurationRunSchema>;
 
-/** `GET /curation-runs/{id}`: run plus its (up to five) cards. */
+/** `GET /curation-runs/{id}`: run plus its cards; exactly five, ranked 1..5, when `SUCCEEDED` (I1). */
 export const CurationRunDetailSchema = CurationRunSchema.extend({
   opportunities: z.array(OpportunitySchema).max(OPPORTUNITIES_PER_RUN),
-}).meta({ id: "CurationRunDetail" });
+})
+  .superRefine((run, ctx) => refineRunOpportunities(run.status, run.opportunities, ctx))
+  .meta({ id: "CurationRunDetail" });
 export type CurationRunDetail = z.infer<typeof CurationRunDetailSchema>;
 
 export const CurationRunListQuerySchema = PaginationQuerySchema.extend({
