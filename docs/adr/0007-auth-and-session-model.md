@@ -1,8 +1,12 @@
 # ADR-0007: Authentication, session and authorization model
 
-- Status: proposed (revised 2026-10-13 after Sentinela's review: `docs/security/oauth-and-tokens.md` §2, §5, §6, §8; `docs/security/threat-model.md` TM-02, TM-06, TM-14, TM-22, G-03)
-- Date: 2026-10-13
-- Deciders: Atlas (architect); review Sentinela (security); implementation Alicerce (backend), Vitral (web); final say on login model: Rodrigo (open question Q2)
+- Status: **accepted** (2026-10-16). Security sign-off with conditions by Sentinela on 2026-10-13
+  (`docs/security/oauth-and-tokens.md` §2, §5, §6, §8; `docs/security/threat-model.md` TM-02, TM-06, TM-14,
+  TM-22, G-03); the conditions are the normative invariants N1–N4 below. The login model (local credentials,
+  question Q2) remains **open, recommended**: this ADR is accepted on that recommendation and is superseded if
+  Rodrigo chooses a different login model.
+- Date: 2026-10-13 (accepted 2026-10-16)
+- Deciders: Atlas (architect); review Sentinela (security); implementation Alicerce (backend), Vitral (web); final say on login model: Rodrigo (Q2 open, local login recommended)
 
 ## Context
 
@@ -32,6 +36,13 @@ LinkedIn connection as high (TM-02) and silent autonomy elevation as high (TM-22
    LinkedIn, publish now, change password — require an elevated session **and** a CSRF token bound to the
    session (`X-CSRF-Token`, derived with HMAC from `SESSION_SECRET` and the session id). Otherwise
    `401 AUTH_REAUTH_REQUIRED`.
+   **N2 — how the browser obtains and renews the token.** The session cookie is `HttpOnly`, so the client
+   cannot derive the token; the API hands it over: `POST /auth/login` and `POST /auth/reauth` answer
+   `200 { csrfToken, elevatedUntil | null }` (not `204`), `GET /auth/me` always includes the current
+   `csrfToken`, and every response that **rotated** the session (login, reauth, password change, LinkedIn
+   connection, autonomy mode change) carries the new token in the `X-CSRF-Token` response header; after the
+   OAuth callback redirect the web calls `GET /auth/me`. The web keeps the token in memory only (never
+   `localStorage`), and on `403 CSRF_REJECTED` refetches `/auth/me` once before surfacing the error.
 4. **Second factor (TOTP)** is planned but not in the MVP; the schema reserves `users.totp_secret_ciphertext`
    (encrypted per ADR-0004). Passkeys are a later enhancement.
 5. **LinkedIn OAuth is not login.** `POST /integrations/linkedin/connect` is available only to an
@@ -40,17 +51,30 @@ LinkedIn connection as high (TM-02) and silent autonomy elevation as high (TM-22
    invalidates the previous one). PKCE `S256` is used when the registered LinkedIn app accepts it for
    the confidential web flow (Sentinela: proven for native clients, to be verified for our app — G-01);
    the client secret is still sent at token exchange. The callback accepts exactly one of `code`/`error`,
-   requires `state`, verifies the state hash against a non-expired, unused record bound to the current
-   session, exchanges the code immediately with the byte-identical redirect URI, validates the OIDC id
+   requires `state`, exchanges the code immediately with the byte-identical redirect URI, validates the OIDC id
    token (`RS256`, `iss`, `aud`, `exp`, `iat`, `nonce`), stores the credential (ADR-0004) in one
    transaction, deletes state/verifier and rotates the session. Scopes are the minimum for posting
    (`w_member_social` plus `openid profile` for the member URN) — exact product/scopes confirmed in G-01.
+   **N1 — the `state` is claimed atomically before any external call** (`oauth-and-tokens.md` §2.3 step 3):
+   a single conditional `UPDATE oauth_states SET used_at = now() WHERE state_hash = $1 AND used_at IS NULL
+AND expires_at > now() AND session_id = $2 RETURNING ...`; zero rows → the callback is rejected without
+   calling LinkedIn. The claim happens on **both** the `code` and the `error` paths, so an `error` callback
+   also consumes the state. Two concurrent callbacks with the same `state` must yield exactly one exchange;
+   this is a required integration test (G-03).
+   **N3 — G-01 stays open.** PKCE `S256` is enabled only after an end-to-end proof on the real confidential
+   app; the mode is an explicit setting (`LINKEDIN_PKCE = required | disabled`) and a mismatch fails loudly —
+   never a silent fallback from `required` to plain Authorization Code. The implementation validates the OIDC
+   claims **actually returned** by LinkedIn (recorded in G-01, not assumed) and the formation of the Person
+   URN from `sub` is confirmed against that evidence before `linkedin_member_urn` is persisted.
 6. **Startup fail-closed**: `SESSION_SECRET` must be ≥ 32 bytes, non-placeholder, validated with the same
    `validateRuntimeEnv` as `ENCRYPTION_KEY` (ADR-0004 §4, SEC-004).
 
 ### CSRF and browser hardening (TM-02)
 
-7. For every `POST/PUT/PATCH/DELETE`: valid session; `Origin` **exactly** equal to `APP_BASE_URL` (Fetch
+7. **N4.** For every `POST/PUT/PATCH/DELETE`: valid session — with exactly one exception, `POST /auth/login`,
+   which by definition has no session yet but still requires all the other controls below plus the rate
+   limit of item 10 (`/health`, `/ready` are `GET` without side effects; the OAuth callback is covered at the
+   end of this item); `Origin` **exactly** equal to `APP_BASE_URL` (Fetch
    Metadata `Sec-Fetch-Site` as an additional, not sole, check); `Content-Type: application/json`;
    header `X-Requested-With: linkedin-ops`; reject form bodies, `Origin: null` and method override
    headers. 🔐 endpoints add `X-CSRF-Token` + elevated session (item 3). The OAuth callback is the only
@@ -99,7 +123,8 @@ LinkedIn connection as high (TM-02) and silent autonomy elevation as high (TM-22
 
 - **"Sign in with LinkedIn" (OIDC) as the only login.** Rejected (and Sentinela recommends against):
   couples dashboard access to LinkedIn availability, scope approval and token expiry; a revoked token
-  would lock Rodrigo out of his own tool. Rodrigo ratifies (Q2).
+  would lock Rodrigo out of his own tool. Q2 stays **open, recommended**: this ADR is accepted on local
+  login; if Rodrigo picks OIDC login instead, a superseding ADR is required.
 - **Stateless JWT sessions.** Rejected: no server-side revocation, larger cookie, more ways to misuse;
   no scale need.
 - **Auth.js / NextAuth in `web`.** Rejected: it would move authentication (and secrets) into the
@@ -120,11 +145,15 @@ LinkedIn connection as high (TM-02) and silent autonomy elevation as high (TM-22
 - Tests (evidence for G-03 and TM-02): login throttling, cookie flags, CSRF rejection matrix
   (cross-site, form-urlencoded, `Origin: null`, missing custom header, method override, preflight),
   elevated-session expiry, scoping test across repositories, OAuth state wrong/missing/expired/reused,
-  code reused, redirect mismatch, cross-session callback.
+  code reused, redirect mismatch, cross-session callback, **concurrent callbacks with the same state (N1)**,
+  `error` callback consuming the state (N1), CSRF token renewal after each session rotation (N2),
+  PKCE mode mismatch failing loudly (N3).
+- `contracts.md` and `packages/contracts`: `auth.login` and `auth.reauth` return `200 { csrfToken, elevatedUntil }`
+  instead of `204`; `GET /auth/me` gains `csrfToken` (follow-up for Alicerce in T-008).
 
 ## Security / compliance impact
 
 - Minimizes LinkedIn scopes and separates publishing credentials from dashboard access.
 - Session revocation, elevation and audit trail support incident response and address TM-02/TM-22.
-- Sentinela to review Argon2id parameters, the CSRF matrix, PKCE applicability (G-01) and the elevated
-  session design before acceptance; findings go to Alicerce/Vitral.
+- Sentinela signed off on 2026-10-13 with conditions, now normative as N1–N4; Argon2id parameters are
+  checked at implementation review. G-01 (real app scopes, PKCE, OIDC claims) remains the only open gate.
