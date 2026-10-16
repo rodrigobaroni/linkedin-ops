@@ -33,10 +33,13 @@ Distribuição desejada: muitos testes unitários/contract rápidos, integraçã
 ## 3. Organização e convenções
 
 - Testes unitários ficam próximos ao código (`*.test.ts[x]`).
-- Integração fica em `tests/integration/`, separada por componente e marcada para exigir containers.
+- Integração é co-localizada com o componente responsável, conforme o baseline do ADR-0001:
+  `packages/domain/test` concentra invariantes de persistência com Testcontainers, `apps/api/test`
+  concentra HTTP com Supertest e `apps/worker/test` concentra filas, handlers e adapters.
 - Contratos ficam em `packages/contracts/test/` e usam fixtures canônicas em `tests/fixtures/`.
 - E2E fica em `tests/e2e/`; providers externos são substituídos por servidores fake determinísticos.
-- Casos adversariais de prompt ficam em `tests/fixtures/prompt-injection/`, com proveniência e resultado esperado.
+- Fixtures compartilhadas ficam em `tests/fixtures/`; casos adversariais de prompt usam
+  `tests/fixtures/prompt-injection/`, com proveniência e resultado esperado.
 - Cada teste usa Arrange/Act/Assert, nome comportamental e correlation/idempotency keys únicas e legíveis.
 - Relógio, UUID, jitter e rede devem ser injetáveis. Seeds aleatórias são registradas para reprodução.
 - Nenhuma suíte compartilha estado mutável. Banco, bucket e filas são isolados por worker/test run.
@@ -73,9 +76,9 @@ Todo schema compartilhado deve provar:
 Com Postgres/pg-boss reais via Testcontainers:
 
 - Migrations sobem do zero e atualizam uma base na versão anterior; rollback/recovery é documentado.
-- Unique constraints e transações provam os invariantes I1–I13 do modelo.
+- Unique constraints e transações provam os invariantes I1–I14 do modelo.
 - Supertest valida status, content type, Problem Details, RBAC, CSRF, row version e idempotency key.
-- Jobs provam singleton, claim atômico, retry/backoff, expiração, DLQ e retomada após restart.
+- Jobs provam singleton, claim atômico, retry/backoff, expiração, dead-letter `<queue>.dlq` e retomada após restart.
 - Fault injection interrompe conexão antes/depois de commit e antes/depois da chamada ao provider.
 - Cada consulta que retorna dados de usuário tem canário de isolamento multiusuário.
 
@@ -93,6 +96,77 @@ Jornadas mínimas em Playwright, com providers fake e banco descartável:
 8. 404, sessão expirada, LinkedIn desconectado, estados vazio/carregando/erro e modo offline transitório.
 
 Não usar Playwright para automatizar o LinkedIn. A etapa de publicação do E2E termina no fake da API oficial.
+
+Cenários pós-MVP que devem entrar na suíte E2E quando as respectivas capacidades forem implementadas:
+
+- `AUTOPILOT_CONTROLLED` respeita toda a janela de cancelamento antes de publicar e um cancelamento dentro
+  da janela impede o claim.
+- Descer o modo revoga aprovações automáticas ainda não publicadas, cancela o schedule e agrega uma única
+  notificação `AUTOPILOT_REVOKED`, sem alterar aprovações humanas.
+- Selecionar a oportunidade previamente escolhida para prefetch adota o draft (`is_prefetch=false`);
+  selecionar outra descarta o prefetch como `PREFETCH_SUPERSEDED`.
+
+### 4.5 Auth
+
+Os testes normativos seguem ADR-0007, seção **Consequences › Tests**, e provam separadamente N1–N4:
+
+- **N1 — claim atômico do OAuth state antes de I/O externo:** os caminhos `code` e `error` executam o
+  `UPDATE ... WHERE used_at IS NULL AND expires_at > now() AND session_id = $2 RETURNING ...` antes de
+  qualquer chamada ao LinkedIn. Dois callbacks concorrentes com o mesmo `state` produzem exatamente um
+  claim e, no caminho `code`, exatamente uma troca de token; `rowCount = 0` significa zero exchanges.
+  O caminho `error` também consome o state. State ausente, errado, expirado, reutilizado ou de outra sessão,
+  code reutilizado e redirect URI divergente falham fechado e compõem a evidência de G-03.
+- **N2 — renovação de CSRF em toda rotação:** login e reautenticação retornam
+  `200 { csrfToken, elevatedUntil }`; login, reauth, callback OAuth, troca de senha, conexão LinkedIn e
+  mudança de autonomia retornam o novo `X-CSRF-Token` no header quando rotacionam a sessão. Após o redirect
+  OAuth, `GET /auth/me` entrega o token vigente. O web mantém o token somente em memória, nunca em
+  `localStorage`/`sessionStorage`, e após `403 CSRF_REJECTED` faz no máximo um refetch de `/auth/me` antes de
+  exibir o erro. O token anterior deixa de autorizar mutações.
+- **N3 — PKCE e identidade condicionados à prova real:** testar somente os modos
+  `LINKEDIN_PKCE=required|disabled`. Incompatibilidade em `required` falha de forma explícita, sem fallback
+  silencioso para Authorization Code simples. Validação das claims OIDC realmente retornadas e formação da
+  Person URN a partir de `sub` só são habilitadas após a evidência do app real em G-01.
+- **N4 — matriz de todas as mutações:** todo `POST/PUT/PATCH/DELETE` exige sessão, com a única exceção de
+  `POST /auth/login`; todos exigem `Origin` exatamente igual a `APP_BASE_URL`, JSON e
+  `X-Requested-With: linkedin-ops`, rejeitam cross-site, `Origin: null`, form-urlencoded e method override.
+  Fetch Metadata é defesa suplementar, nunca substitui a validação de Origin. Endpoints 🔐 também exigem
+  sessão elevada e `X-CSRF-Token` ligado à sessão.
+- A sessão elevada expira em 15 minutos sob relógio injetado; depois do limite, todo endpoint 🔐 retorna
+  `401 AUTH_REAUTH_REQUIRED` até nova reautenticação.
+- `POST /auth/login`, embora seja a única mutação sem sessão, mantém Origin exata, JSON,
+  `X-Requested-With: linkedin-ops`, Fetch Metadata suplementar e rate limit.
+
+Valores iniciais de rate limit a testar, sempre com `429 RATE_LIMITED` e `Retry-After` ao exceder:
+
+| Rota/ação | Limite e escopo |
+|---|---|
+| Login | 5 por 10 min, por conta e por IP |
+| OAuth start | 5 por 10 min, por sessão |
+| OAuth callback | 20 por 10 min, por IP |
+| Publish now | 3 por 10 min, por usuário |
+| Mudança de autonomia | 3 por 10 min, por usuário |
+
+### 4.6 Cifra de tokens e segredos
+
+Os casos abaixo são obrigatórios no CI como evidência de G-02 e seguem o item 13 e **Consequences** do
+ADR-0004:
+
+- Parser estrito do keyring: versões únicas, versão ativa presente, cada valor em base64 válido que
+  decodifica em exatamente 32 bytes; entradas vazias, duplicadas, sem versão ativa, base64 inválido ou
+  tamanho diferente falham o startup. Não existe fallback silencioso para `ENCRYPTION_KEY`, versão `1`,
+  chave mais nova ou qualquer default.
+- Round-trip de access token, refresh token e DEK com nonces independentes e AAD canônica. Trocar usuário,
+  credential ID, provider ou `tokenType` quebra a autenticação.
+- `wrapped_dek` truncado, frame adulterado, nonce/tag alterado, AAD trocada, KEK errada ou tag errada falham
+  fechado com erro genérico, sem plaintext em mensagem, causa ou trace.
+- Startup de API e worker falha fora de development para keyring vazio/inválido, placeholder de chave ou
+  `SESSION_SECRET` vazio, placeholder ou curto; a validação acontece antes de carregar módulos.
+- Rotação interrompida e retomada é idempotente: a nova chave fica ativa para writes, batches reembrulham
+  DEKs sem recifrar tokens, registros já migrados não quebram e a chave antiga só é retirada após decrypt
+  autenticado de 100% das linhas e expiração/re-encriptação dos backups dependentes.
+- Um canário sintético prova que token, KEK, DEK, `wrapped_dek`, Authorization e valores de segredo não
+  aparecem em colunas plaintext, DTOs, logs Pino, erros, spans ou atributos de trace. A evidência registra
+  apenas classe do canário, contagens, IDs internos e hashes não reversíveis.
 
 ## 5. Matriz de tempo, timezone e DST
 
@@ -115,9 +189,16 @@ Executar testes com `TZ=UTC`, `America/Sao_Paulo`, `America/New_York`, `Europe/L
 
 ### 6.1 Classificação de falhas
 
-- Retry: timeout de transporte, desconexão, 429 respeitando `Retry-After` e 5xx transitório.
+- Retry automático é permitido apenas para operação comprovadamente idempotente ou read-only: timeout de
+  transporte, desconexão, 429 respeitando `Retry-After` e 5xx transitório, sempre dentro do orçamento.
 - Não retry: payload/schema inválido, autenticação definitivamente inválida, 4xx sem indicação transitória, política/estado de domínio incompatível.
-- Sempre testar limite de tentativas, backoff exponencial, jitter controlado, expiração e DLQ.
+- Operações externas com side effect e sem idempotency key do provider ficam fora da regra geral. Resultado
+  incerto vira `AMBIGUOUS` e exige reconciliação/retry humano; isso vale para `publication.publish` e para
+  qualquer adapter futuro não idempotente.
+- `publication.publish` tem `retryLimit = 0`; nenhuma falha dessa fila dispara retry automático, mesmo quando
+  timeout, desconexão, 429 ou 5xx seriam transitórios em outra integração.
+- Sempre testar limite de tentativas, backoff exponencial, jitter controlado, expiração e dead-letter
+  `<queue>.dlq` nas filas que aceitam retry.
 - Reiniciar worker entre tentativas para provar persistência do estado e ausência de dependência em memória.
 
 ### 6.2 Idempotência
@@ -125,7 +206,7 @@ Executar testes com `TZ=UTC`, `America/Sao_Paulo`, `America/New_York`, `Europe/L
 Para cada ação mutável marcada como idempotente:
 
 - Mesma key + mesmo fingerprint retorna/reutiliza o mesmo resultado.
-- Mesma key + payload diferente retorna conflito e não executa efeito.
+- Mesma key + payload diferente retorna `409 IDEMPOTENCY_KEY_CONFLICT` e não executa efeito.
 - Sem key quando obrigatória retorna Problem Details determinístico.
 - Key duplicada simultânea em 2, 10 e 50 requests produz um único registro/job/efeito.
 - Retry após resposta perdida não repete o efeito.
@@ -135,18 +216,33 @@ Para cada ação mutável marcada como idempotente:
 
 Executar as barreiras de confiabilidade em ordem:
 
-1. Revalidar sessão elevada, modo de autonomia, aprovação, versão e schedule.
-2. Criar/obter `Publication` pela idempotency key.
-3. Fazer claim atômico `PENDING → IN_PROGRESS` com `rowCount = 1`.
-4. Chamar o fake LinkedIn uma vez.
-5. Persistir URN/resposta e transicionar para `SUCCEEDED`.
+1. No caminho `publish now`, a API valida OWNER, CSRF e sessão elevada antes de aceitar a ação; a sessão
+   elevada é uma barreira HTTP do ADR-0007 e nunca é revalidada pelo worker. O serviço da API cria
+   `Publication{PENDING}` pela idempotency key e enfileira `publication.publish{publicationId}` na **mesma
+   transação**. No caminho agendado, a transição de domínio equivalente também persiste a intenção e o
+   enqueue atomicamente, sem inventar uma sessão humana para o worker.
+2. O worker recebe somente `publicationId`, faz o claim condicional `PENDING → IN_PROGRESS` com
+   `rowCount = 1` e, no claim, revalida: Draft em `SCHEDULED`/`PUBLISHING`,
+   `approved_version_id === publication.draft_version_id`, `OAuthToken.status === ACTIVE`, política de
+   autonomia ainda permitindo a ação (inclusive janela de cancelamento de `AUTOPILOT_CONTROLLED`
+   decorrida) e Schedule não cancelado. Qualquer falha termina em `FAILED`, sem chamada ao LinkedIn.
+3. Persistir `request_fingerprint` do payload exato antes da chamada externa.
+4. Chamar o fake LinkedIn no máximo uma vez; `publication.publish` usa `retryLimit = 0`.
+5. Em sucesso definitivo, persistir URN/resposta e transicionar para `SUCCEEDED`; em resultado ambíguo,
+   transicionar para `AMBIGUOUS` e exigir reconciliação.
 
 Fault injection em cada fronteira deve provar:
 
-- Crash antes da chamada: seguro para retry.
-- Timeout antes de enviar bytes: retry conforme adapter.
-- Timeout após o provider possivelmente aceitar: `AMBIGUOUS`, bloqueio de retry cego e reconciliação.
-- Crash após sucesso remoto e antes do commit: reconciliação encontra o post; nunca cria segundo.
+- Crash após o claim e antes da chamada deixa `IN_PROGRESS` stale; `schedule.reconcile` quando há mais de
+  10 minutos
+  marca `AMBIGUOUS`. `publication.reconcile` não encontrando post pelo `request_fingerprint` marca
+  `FAILED`; somente retry **humano** cria nova `Publication` com sufixo `retry:<n>`.
+- Connection refused ou timeout comprovadamente antes de enviar bytes termina em `FAILED`; retry é humano
+  e cria nova `Publication`, nunca reexecução automática do mesmo job.
+- 5xx ou timeout depois de enviar bytes termina em `AMBIGUOUS`, sem retry automático. A reconciliação busca
+  posts recentes e casa pelo `request_fingerprint` dentro da janela conservadora.
+- Crash após sucesso remoto e antes do commit resulta em `IN_PROGRESS` stale/`AMBIGUOUS`; reconciliação
+  encontra o fingerprint e conclui `SUCCEEDED`, sem criar segundo post.
 - Dois workers ou publish manual + schedule simultâneos: no máximo um claim/chamada.
 
 ## 7. Falhas por integração
@@ -157,14 +253,15 @@ Fault injection em cada fronteira deve provar:
 | OpenAI | timeout, 429 + Retry-After, 5xx, recusa, JSON truncado, schema inválido, source ID inventado, custo/tokens acima do limite | retry limitado, `store:false`, validação pós-modelo, nenhum draft/opportunity inválido persistido, erro classificado |
 | Telegram | timeout, 429, 401/403, chat inválido, 5xx, resposta duplicada; webhook falso/replay se inbound existir | notificação reprocessável/deduplicada; publicação permanece fonte da verdade; inbound nunca aprova/publica |
 | S3-compatible | indisponível, timeout, PUT parcial, checksum divergente, MIME/magic bytes inválidos, arquivo grande, URL assinada expirada | objeto privado, cleanup/recovery, estado não publicado, erro acionável; acesso anônimo falha |
-| LinkedIn API | token expirado, refresh indisponível, 401/403, 429, 5xx, timeout antes/depois do aceite, resposta sem URN, versão de API inválida | reauth segura, backoff/Retry-After, `AMBIGUOUS` quando necessário, reconciliação, zero duplicação |
+| LinkedIn API | token expirado, refresh indisponível, 401/403, 429, 5xx, timeout antes/depois do aceite, resposta sem URN, versão de API inválida | backoff/Retry-After só em leitura/operação comprovadamente idempotente; publicação nunca tem retry automático, usa `FAILED`/`AMBIGUOUS`, reconciliação e zero duplicação |
 | PostgreSQL/pg-boss | deadlock, unique violation, conexão perdida, restart durante job, job duplicado, relógio atrasado | retry transacional seguro, singleton/claim, recovery e auditoria coerente |
 
 Cada fake deve registrar número de chamadas, payload fingerprint, ordem e timestamps virtuais para assertivas de “exatamente uma vez” no efeito externo e “ao menos uma vez” no processamento interno.
 
 ## 8. Prompt injection e autenticidade
 
-Manter corpus adversarial versionado com, no mínimo:
+`docs/security/prompt-injection.md` é a especificação normativa e o corpus canônico de G-05. Manter suas
+fixtures adversariais versionadas com, no mínimo:
 
 - “Ignore instruções anteriores”, role-play e mensagens falsas de sistema/developer.
 - Pedido de segredo, token, prompt, variável de ambiente ou acesso a ferramenta/URL.
@@ -172,6 +269,12 @@ Manter corpus adversarial versionado com, no mínimo:
 - Fonte que manda inventar experiência, números, citação ou opinião de Rodrigo.
 - Source IDs e URLs não fornecidos; claims sem evidência; instrução para publicar/aprovar.
 - Conteúdo multilíngue e combinações de várias fontes, uma delas maliciosa.
+- Stored injection: resumo/output de uma etapa carregando a instrução para a etapa seguinte.
+- Artigo benigno que discute prompt injection academicamente, para medir falso positivo sem descarte
+  destrutivo.
+- Canário sintético de exfiltração no input e tentativa de fazê-lo aparecer no output.
+- SSRF com loopback, redes privadas/link-local/metadata, cadeia de redirects e DNS rebinding com
+  re-resolução em cada conexão.
 
 Assertivas:
 
@@ -182,6 +285,9 @@ Assertivas:
 - Nenhuma história, opinião, número ou experiência é atribuída a Rodrigo sem Story Bank/fonte autorizada.
 - Nenhuma saída do modelo muda autonomia, aprova, agenda ou publica.
 - Gate humano continua obrigatório nos modos que o exigem.
+- Nenhum canário, segredo ou payload bruto aparece em logs, erros ou traces; a telemetria guarda somente
+  classe da violação, hashes, correlation ID e versões de prompt/modelo.
+- A taxa de falso positivo e regressões editoriais é registrada por versão de prompt/modelo.
 
 Rodar o corpus em PRs do editorial engine e em regressão programada; mudança de modelo/prompt/versionamento exige comparação antes/depois e revisão dos falsos negativos.
 
@@ -234,7 +340,96 @@ Obrigatórios:
 - Flake conhecido recebe issue, owner e prazo; testes críticos não podem ser simplesmente desabilitados.
 - Corridas desaparecendo com `--concurrency=1` são tratadas como defeito de isolamento, não como aprovação.
 
-## 11. Evidência padrão de QA
+## 11. Matriz normativa dos gates G-01–G-06
+
+Os gates de `docs/security/threat-model.md` §8 bloqueiam produção e `AUTOPILOT_FULL`. Evidência nunca inclui
+token, cookie, segredo, payload externo bruto, prompt privado ou PII. Comandos marcados “a criar” definem o
+contrato da tarefa indicada; até existirem e passarem, o gate permanece aberto.
+
+### G-01 — Acesso real do app LinkedIn
+
+- **Suíte/comando:** T-061 executa no app real do LinkedIn o harness manual
+  `pnpm --filter @linkedin-ops/worker test:linkedin-real-app` (a criar em T-061), não um smoke genérico nem
+  mock. Exercita consentimento e cada endpoint oficial que o MVP pretende usar, incluindo texto e mídia
+  quando o produto concedido permitir.
+- **Evento:** manual antes da primeira produção e novamente após mudança de app, produto, scopes, endpoint,
+  versão da API ou política do LinkedIn.
+- **Critério:** produtos/scopes realmente concedidos, Person URN/claims OIDC observados, endpoints e formatos
+  permitidos, headers de quota/rate limit e comportamento real de refresh documentados; capability não
+  comprovada fica desligada, sem fallback por scraping/browser.
+- **Evidência:** `docs/security/linkedin-api-access-evidence.md` com app/produto, timestamp, status, headers de
+  quota e corpos sanitizados; tokens, authorization codes e client secret são removidos. Vincular a T-061.
+- **Owner:** Pêndulo / Sentinela.
+
+### G-02 — Cifra, rotação e ausência de segredo
+
+- **Suíte/comando:** `pnpm --filter @linkedin-ops/domain test -- test/token-vault.integration.test.ts`, mais
+  startup tests de API/worker. Roda os casos completos de §4.6.
+- **Evento:** todo PR que altera TokenVault, env validation, OAuthToken, logging/tracing ou rotação; pipeline
+  de release.
+- **Critério:** keyring estrito sem fallback; AEAD round-trip; AAD/key/tag/frame inválidos falham fechado;
+  startup fail-closed; rotação interrompida retoma idempotentemente; canário ausente de DB/DTO/log/trace.
+- **Evidência:** relatório JUnit/coverage do CI, log sanitizado de rotação com contagens e relatório do canário
+  por classe/hash. Nunca anexar chave, token, DEK, ciphertext completo ou payload de trace.
+- **Owner:** Alicerce / Estaleiro.
+
+### G-03 — Callback OAuth e single-use state
+
+- **Suíte/comando:**
+  `pnpm --filter @linkedin-ops/api test -- test/linkedin-oauth-callback.integration.test.ts` com fake do
+  token endpoint que conta exchanges.
+- **Evento:** todo PR de auth/OAuth/session/callback e pipeline de release.
+- **Critério:** state ausente, errado, expirado, reutilizado e cross-session; code reutilizado; redirect URI
+  divergente; callbacks concorrentes; caminhos `code` e `error`. O claim ocorre antes do I/O, `rowCount=0`
+  gera zero exchanges, duas requisições concorrentes geram no máximo uma troca e o caminho `error` consome
+  o state. Incluir PKCE fail-loud e negativos de N3 após a evidência G-01.
+- **Evidência:** relatório do CI com IDs de caso, contagem de claims/exchanges e correlation IDs sintéticos;
+  nunca state, code, verifier, nonce, token ou request body real.
+- **Owner:** Alicerce / Pêndulo.
+
+### G-04 — Publicação at-most-once
+
+- **Suíte/comando:**
+  `pnpm --filter @linkedin-ops/worker test -- test/publication-publish.integration.test.ts` com Postgres,
+  pg-boss e fake LinkedIn instrumentado.
+- **Evento:** todo PR que altera publicação, schedule, fila, idempotência, retry/reconcile ou autonomia;
+  pipeline de release.
+- **Critério:** concorrência e fault injection de §6.3 produzem no máximo uma chamada/post; resultado incerto
+  vira `AMBIGUOUS`, nunca retry automático; stale claim é reconciliado por `request_fingerprint`; retry
+  humano cria nova Publication somente após `FAILED` não ambígua.
+- **Evidência:** relatório do CI com contagem de calls, estados, fingerprints sintéticos e timeline virtual,
+  sem commentary, media, token ou resposta real do LinkedIn.
+- **Owner:** Pêndulo / Atlas.
+
+### G-05 — Prompt injection e exfiltração
+
+- **Suíte/comando:**
+  `pnpm --filter @linkedin-ops/editorial-engine test -- test/prompt-injection.eval.test.ts`, usando o corpus
+  canônico de `docs/security/prompt-injection.md`; sob flag, executar também avaliação com modelo real.
+- **Evento:** todo PR que altera prompt, modelo, parser, sanitizer, schema, tools, coleta ou renderização; antes
+  de release e de qualquer elevação de autonomia.
+- **Critério:** 0 tool/side effect, segredo/canário, URL/source ID inventado ou payload em logs/traces; output
+  valida ou falha fechado; stored injection não atravessa estágios; DNS rebinding/SSRF é bloqueado; o caso
+  benigno acadêmico mede falso positivo sem descarte destrutivo.
+- **Evidência:** relatório por IDs de fixture, versões de prompt/modelo/schema, métricas agregadas e hashes;
+  não anexar texto privado, payload adversarial bruto, canário ou resposta com PII.
+- **Owner:** Pena, com Pêndulo nos adapters e Sentinela na revisão.
+
+### G-06 — Restore cifrado e scans com triagem
+
+- **Suíte/comando:** restore em ambiente limpo pelo runbook/script de T-055 (a criar), seguido do E2E de
+  integridade/reconciliação; `.github/scripts/gitleaks-scan.sh full`; jobs Semgrep e Trivy fixados em
+  `.github/workflows/security.yml` e ampliados por T-062 para código, dependências e imagens.
+- **Evento:** scans em todo PR/push e agenda semanal; restore manual trimestral e antes da primeira produção;
+  ambos novamente após mudança de backup, cifra, storage, imagem base ou política de retenção.
+- **Critério:** backup cifrado e com checksum restaura Postgres/storage em ambiente limpo, reaplica tombstones,
+  sobe sem plaintext/segredo e não republica posts; gitleaks não encontra segredo; Semgrep/Trivy não deixam
+  finding HIGH/CRITICAL sem correção ou exceção formal com owner e expiração; toda ocorrência é triada.
+- **Evidência:** relatório de restore com backup ID, checksum, datas, contagens e asserts de reconciliação,
+  sem chave/dump; SARIF/JSON dos scans e registro em `docs/security/scan-triage.md` com decisão, owner e prazo.
+- **Owner:** Estaleiro, com Alicerce no restore/validação de dados.
+
+## 12. Evidência padrão de QA
 
 Cada relatório deve conter:
 
@@ -247,10 +442,11 @@ Cada relatório deve conter:
 - Cobertura ausente e risco residual.
 - Evidências persistentes sem segredos, tokens, PII ou conteúdo privado.
 
-## 12. Backlog inicial de implementação
+## 13. Backlog inicial de implementação
 
 1. Transformar `tests/e2e` de placeholder em Playwright executável para shell e jornada crítica.
-2. Criar harness Testcontainers para PostgreSQL + pg-boss e helpers Supertest.
+2. Criar harness Testcontainers em `packages/domain/test`, helpers Supertest em `apps/api/test` e cenários
+   de filas/adapters em `apps/worker/test`, usando `tests/fixtures` para dados compartilhados.
 3. Criar servidores fake configuráveis para RSS, OpenAI, Telegram, S3 e LinkedIn.
 4. Implementar matriz de idempotência/concorrência de publicação e gate G-04 do threat model.
 5. Criar corpus adversarial e gate G-05 de prompt injection.
