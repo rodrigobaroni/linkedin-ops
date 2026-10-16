@@ -97,8 +97,9 @@ jobs:
   # Decision by Rodrigo (2026-10-13): Docker is not available on the local machine, so the Compose stack
   # is validated here. Credentials are generated per run (never committed); required variables are
   # checked fail-closed; postgres and the S3 store must become healthy; an S3 round-trip (PUT ->
-  # presigned GET via curl -> HEAD, sha256 compared) catches S3-implementation divergences (Atlas
-  # condition); the api/web/worker images must build.
+  # presigned GET via curl, sha256 compared -> authenticated HEAD; unsigned and wrong-method requests
+  # must be rejected) catches S3-implementation divergences (Atlas condition); the api/web/worker
+  # images must build.
   compose-smoke:
     name: Compose smoke
     runs-on: ubuntu-latest
@@ -188,7 +189,8 @@ jobs:
             -e KEY="$key" s3-init sh -ec '
               aws configure set default.s3.addressing_style path
               aws s3api put-object --bucket "$S3_BUCKET" --key "$KEY" --body /smoke/payload.bin > /dev/null
-              aws s3api head-object --bucket "$S3_BUCKET" --key "$KEY" --query ContentLength --output text 1>&2
+              length="$(aws s3api head-object --bucket "$S3_BUCKET" --key "$KEY" --query ContentLength --output text)"
+              [ "$length" = 65536 ] || { echo "HEAD returned ContentLength=$length, expected 65536" >&2; exit 1; }
               aws s3 presign "s3://$S3_BUCKET/$KEY" --expires-in 300' | tr -d '\r')"
           echo "::add-mask::$presigned"
           echo "presigned URL query parameters: $(printf '%s' "$presigned" | sed 's/^[^?]*?//' | tr '&' '\n' | cut -d= -f1 | tr '\n' ' ')"
@@ -200,7 +202,9 @@ jobs:
           case "$get_report" in status=200*) ;; *) echo "::error::presigned GET was rejected by the S3 store"; exit 1 ;; esac
           actual="$(docker compose exec -T s3 sh -ec "sha256sum /tmp/smoke.bin | cut -d' ' -f1")"
           if [ "$actual" != "$expected" ]; then echo "::error::sha256 mismatch after presigned GET"; exit 1; fi
-          docker compose exec -T s3 sh -ec "curl -fsSI '$presigned' | grep -i '^content-length: 65536'"
+          # SigV4 signs the HTTP method: a HEAD with a GET-presigned URL must be rejected (same as AWS S3).
+          code="$(docker compose exec -T s3 sh -c "curl -s -o /dev/null -w '%{http_code}' -I '$presigned'")"
+          if [ "$code" != "403" ]; then echo "::error::HEAD with a GET-presigned URL returned $code, expected 403"; exit 1; fi
           # Bucket must be private: an unsigned request is rejected.
           code="$(docker compose exec -T s3 sh -ec "curl -s -o /dev/null -w '%{http_code}' 'http://127.0.0.1:9000/${S3_BUCKET}/${key}'")"
           if [ "$code" != "403" ]; then echo "::error::anonymous GET returned $code, expected 403"; exit 1; fi
