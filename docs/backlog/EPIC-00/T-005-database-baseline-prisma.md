@@ -3,7 +3,7 @@
 - Épico: EPIC-00 Foundation
 - Responsável (papel/agente): Alicerce (backend) · revisão Atlas
 - Branch/floor: `feat/T-005-database-baseline-prisma`
-- Estado: em revisão
+- Estado: review (PR #76)
 - Dependências: T-003, T-004; `docs/architecture/data-model.md` (Atlas)
 
 ## Contexto

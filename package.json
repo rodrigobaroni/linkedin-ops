@@ -2,7 +2,7 @@
   "name": "linkedin-ops",
   "version": "0.0.0",
   "private": true,
-  "description": "LinkedIn Ops \u2014 self-hosted platform to operate the editorial strategy of a LinkedIn profile",
+  "description": "LinkedIn Ops — self-hosted platform to operate the editorial strategy of a LinkedIn profile",
   "license": "UNLICENSED",
   "type": "module",
   "packageManager": "pnpm@10.34.5",
