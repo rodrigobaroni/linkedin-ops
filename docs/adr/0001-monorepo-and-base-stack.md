@@ -23,7 +23,7 @@ makes explicit the responsibilities of each workspace package.
 | API             | NestJS, REST, OpenAPI                                                                                                              |
 | Worker          | Node.js/TypeScript + pg-boss (see ADR-0002)                                                                                        |
 | Database        | PostgreSQL + Prisma                                                                                                                |
-| Files           | S3-compatible object storage (MinIO in dev, OCI Object Storage in prod)                                                            |
+| Files           | S3-compatible object storage (RustFS in dev/CI, OCI Object Storage in prod)                                                        |
 | AI              | OpenAI Responses API with Structured Outputs                                                                                       |
 | Tests           | Vitest, Supertest, Playwright, Testcontainers                                                                                      |
 | Infra           | Docker Compose, Caddy, Oracle Cloud                                                                                                |
@@ -76,6 +76,14 @@ Rationale: the brief forbids business rules in controllers and the worker must p
 transitions as the API (`GENERATING → DRAFT`, `PUBLISHING → PUBLISHED`). Without a shared package the
 options are cross-app imports (`apps/worker` importing `apps/api`) or an internal HTTP API, both worse
 (see Alternatives).
+
+### Amendment (2026-10-16): dev/CI object store
+
+Amendment (2026-10-16): MinIO is no longer distributable (Docker Hub images removed, upstream repository
+archived in 2026-04), so dev/CI/Testcontainers use RustFS (docker.io/rustfs/rustfs:1.0.1, Apache-2.0,
+pinned by tag and digest) as the S3-compatible store; production remains OCI Object Storage. Application
+code depends only on the standard S3 API (SigV4, path-style, presigned URLs) through S3_* variables;
+vendor-specific admin or console APIs are forbidden so the dev store can be replaced without code changes.
 
 ## Alternatives considered
 
