@@ -93,19 +93,125 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: pnpm exec commitlint --from "$BASE_SHA" --to "$HEAD_SHA" --verbose
 
-  # --- compose-smoke (ativado em T-003) -------------------------------------------------------
-  # Decision by Rodrigo (2026-10-13): Docker is not available on the local machine, so T-003
-  # (Docker Compose dev environment) is validated here in CI instead. T-003 uncomments and
-  # completes this job: bring up `infra/docker/docker-compose.yml` (postgres, minio), wait for
-  # the health checks, build the api/web/worker images. Kept commented (not `if: false`) so
-  # actionlint stays clean and no runner minutes are spent before the compose files exist.
-  #
-  # compose-smoke:
-  #   name: Compose smoke
-  #   runs-on: ubuntu-latest
-  #   timeout-minutes: 15
-  #   steps:
-  #     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-  #     - run: docker compose -f infra/docker/docker-compose.yml up -d --wait postgres minio
-  #     - run: docker compose -f infra/docker/docker-compose.yml ps
-  #     - run: docker compose -f infra/docker/docker-compose.yml build api web worker
+  # --- compose-smoke (T-003) ---------------------------------------------------------------------
+  # Decision by Rodrigo (2026-10-13): Docker is not available on the local machine, so the Compose stack
+  # is validated here. Credentials are generated per run (never committed); required variables are
+  # checked fail-closed; postgres and the S3 store must become healthy; an S3 round-trip (PUT ->
+  # presigned GET via curl -> HEAD, sha256 compared) catches S3-implementation divergences (Atlas
+  # condition); the api/web/worker images must build.
+  compose-smoke:
+    name: Compose smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      COMPOSE_FILE: infra/docker/docker-compose.yml
+      COMPOSE_ENV_FILES: .env
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Create .env with random credentials (not committed, masked in logs)
+        run: |
+          set -euo pipefail
+          pg_password="$(openssl rand -hex 24)"
+          s3_access_key="ci$(openssl rand -hex 8)"
+          s3_secret_key="$(openssl rand -hex 32)"
+          echo "::add-mask::$pg_password"
+          echo "::add-mask::$s3_access_key"
+          echo "::add-mask::$s3_secret_key"
+          # Start from the committed template, then replace the dev defaults with per-run secrets.
+          grep -Ev '^(POSTGRES_PASSWORD|DATABASE_URL|S3_ACCESS_KEY_ID|S3_SECRET_ACCESS_KEY)=' .env.example > .env
+          {
+            echo "POSTGRES_PASSWORD=$pg_password"
+            echo "DATABASE_URL=postgresql://linkedin_ops:$pg_password@localhost:5432/linkedin_ops"
+            echo "S3_ACCESS_KEY_ID=$s3_access_key"
+            echo "S3_SECRET_ACCESS_KEY=$s3_secret_key"
+          } >> .env
+
+      - name: Fail closed on missing variables and template coverage
+        run: |
+          set -euo pipefail
+          required="POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB POSTGRES_PORT DATABASE_URL S3_ENDPOINT S3_REGION S3_BUCKET S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY S3_FORCE_PATH_STYLE S3_PORT CADDY_SITE_ADDRESS CADDY_TLS CADDY_BIND_ADDRESS CADDY_HSTS_MAX_AGE"
+          status=0
+          for name in $required; do
+            value="$(grep -E "^${name}=" .env | head -n1 | cut -d= -f2- || true)"
+            if [ -z "$value" ]; then echo "::error::$name is missing or empty in .env"; status=1; fi
+          done
+          # Every ${VAR} the Compose files interpolate must be documented in .env.example (T-003 criterion).
+          for name in $(grep -ohE '\$\{[A-Z0-9_]+' infra/docker/docker-compose*.yml | tr -d '${' | sort -u); do
+            if ! grep -qE "^${name}=" .env.example; then echo "::error::$name is used by Compose but absent from .env.example"; status=1; fi
+          done
+          if grep -qE '^(POSTGRES_PASSWORD|S3_SECRET_ACCESS_KEY)=linkedin_ops' .env; then
+            echo "::error::dev default credentials leaked into the CI .env"; status=1
+          fi
+          exit "$status"
+
+      - name: Validate Compose files and Caddyfile
+        run: |
+          set -euo pipefail
+          docker compose version
+          docker compose config -q
+          docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml config -q
+          docker compose run --rm --no-deps caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
+      - name: Start postgres and s3, wait for health checks
+        run: docker compose up -d --wait postgres s3
+
+      - name: Create the private bucket (s3-init)
+        run: docker compose run --rm s3-init
+
+      - name: Show services
+        run: docker compose ps
+
+      - name: Postgres accepts the DATABASE_URL credentials
+        run: |
+          set -euo pipefail
+          set -a; . ./.env; set +a
+          docker compose exec -T postgres pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+          docker compose exec -T postgres psql "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB}" -tAc 'select 1' | grep -qx 1
+
+      - name: S3 round-trip (PUT -> presigned GET -> HEAD, sha256 compared) and private bucket
+        run: |
+          set -euo pipefail
+          set -a; . ./.env; set +a
+          workdir="$(mktemp -d)"
+          head -c 65536 /dev/urandom > "$workdir/payload.bin"
+          expected="$(sha256sum "$workdir/payload.bin" | cut -d' ' -f1)"
+          key="smoke/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.bin"
+          # Standard S3 only (SigV4, path-style): PUT, presign, HEAD through the AWS CLI. The single-quoted
+          # script is expanded inside the container, on purpose.
+          # shellcheck disable=SC2016
+          presigned="$(docker compose run --rm --no-deps -T --entrypoint "" -v "$workdir:/smoke:ro" \
+            -e KEY="$key" s3-init sh -ec '
+              aws configure set default.s3.addressing_style path
+              aws s3api put-object --bucket "$S3_BUCKET" --key "$KEY" --body /smoke/payload.bin > /dev/null
+              aws s3api head-object --bucket "$S3_BUCKET" --key "$KEY" --query ContentLength --output text 1>&2
+              aws s3 presign "s3://$S3_BUCKET/$KEY" --expires-in 300' | tr -d '\r')"
+          echo "::add-mask::$presigned"
+          # Download via plain HTTP with the presigned URL (curl inside the store container, same network).
+          actual="$(docker compose exec -T s3 sh -ec "curl -fsS -o /tmp/smoke.bin '$presigned' && sha256sum /tmp/smoke.bin | cut -d' ' -f1")"
+          if [ "$actual" != "$expected" ]; then echo "::error::sha256 mismatch after presigned GET"; exit 1; fi
+          docker compose exec -T s3 sh -ec "curl -fsSI '$presigned' | grep -i '^content-length: 65536'"
+          # Bucket must be private: an unsigned request is rejected.
+          code="$(docker compose exec -T s3 sh -ec "curl -s -o /dev/null -w '%{http_code}' 'http://127.0.0.1:9000/${S3_BUCKET}/${key}'")"
+          if [ "$code" != "403" ]; then echo "::error::anonymous GET returned $code, expected 403"; exit 1; fi
+          echo "S3 round-trip OK (sha256 $expected)"
+
+      - name: Build api, web and worker images
+        run: docker compose build api web worker
+
+      - name: Web image serves HTTP
+        run: |
+          set -euo pipefail
+          docker compose up -d --wait web
+          docker compose exec -T web wget -qO- http://127.0.0.1:3000/ | grep -qi '<html'
+
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail=200
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v --remove-orphans
