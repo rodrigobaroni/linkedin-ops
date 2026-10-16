@@ -11,8 +11,10 @@ import { ApprovalSchema } from "../resources/approval.js";
 import { AuditEventQuerySchema, AuditEventSchema } from "../resources/audit-event.js";
 import {
   LoginInputSchema,
+  LoginResponseSchema,
   MeSchema,
   ReauthInputSchema,
+  ReauthResponseSchema,
   SessionSummarySchema,
 } from "../resources/auth.js";
 import {
@@ -130,11 +132,12 @@ export const routesV1 = defineRoutes({
   "auth.login": {
     method: "POST",
     path: "/auth/login",
-    summary: "Login with e-mail and password; sets the session cookie",
+    summary:
+      "Login with e-mail and password; sets the session cookie and returns the CSRF token (ADR-0007 N2)",
     tag: "auth",
     auth: "none",
     body: LoginInputSchema,
-    responses: { 204: null },
+    responses: { 200: LoginResponseSchema },
     rateLimited: true,
   },
   "auth.logout": {
@@ -156,11 +159,12 @@ export const routesV1 = defineRoutes({
   "auth.reauth": {
     method: "POST",
     path: "/auth/reauth",
-    summary: "Re-authenticate: elevates the session for 15 minutes and rotates its id",
+    summary:
+      "Re-authenticate: elevates the session for 15 minutes, rotates its id and returns the new CSRF token",
     tag: "auth",
     auth: "session",
     body: ReauthInputSchema,
-    responses: { 204: null },
+    responses: { 200: ReauthResponseSchema },
     rateLimited: true,
   },
   "auth.me": {
