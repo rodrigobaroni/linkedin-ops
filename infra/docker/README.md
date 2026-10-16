@@ -5,15 +5,15 @@ produção (T-056); `docker-compose.dev.yml` acrescenta portas locais e hot relo
 
 ## Serviços
 
-| Serviço    | Imagem                                                  | Papel                                                                  | Porta no host (só dev)         |
-| ---------- | ------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------ |
-| `postgres` | `postgres:17.11-alpine`                                 | Banco da aplicação e do pg-boss (ADR-0002)                             | `127.0.0.1:${POSTGRES_PORT}`   |
-| `s3`       | `rustfs/rustfs:1.0.1@sha256:1803fa…` (digest multiarch) | Object storage S3-compatible para dev/CI (ADR-0001, emenda 2026-10-16) | `127.0.0.1:${S3_PORT}`         |
-| `s3-init`  | `amazon/aws-cli:2.38.1@sha256:733d5b…`                  | One-shot: cria o bucket privado via S3 padrão e sai                    | —                              |
-| `api`      | build `apps/api/Dockerfile`                             | API NestJS (placeholder até T-008)                                     | `127.0.0.1:3001`               |
-| `worker`   | build `apps/worker/Dockerfile`                          | Worker pg-boss (placeholder até T-006)                                 | —                              |
-| `web`      | build `apps/web/Dockerfile`                             | Dashboard Next.js                                                      | `127.0.0.1:3000`               |
-| `caddy`    | `caddy:2.11.7-alpine`                                   | Borda TLS, `/api/*` → api, `/` → web (`infra/caddy`)                   | `${CADDY_BIND_ADDRESS}:80/443` |
+| Serviço    | Imagem                                                               | Papel                                                                  | Porta no host (só dev)         |
+| ---------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------ |
+| `postgres` | `postgres:17-alpine@sha256:b0f956…` (mesmo digest do Testcontainers) | Banco da aplicação e do pg-boss (ADR-0002)                             | `127.0.0.1:${POSTGRES_PORT}`   |
+| `s3`       | `rustfs/rustfs:1.0.1@sha256:1803fa…` (digest multiarch)              | Object storage S3-compatible para dev/CI (ADR-0001, emenda 2026-10-16) | `127.0.0.1:${S3_PORT}`         |
+| `s3-init`  | `amazon/aws-cli:2.38.1@sha256:733d5b…`                               | One-shot: cria o bucket privado via S3 padrão e sai                    | —                              |
+| `api`      | build `apps/api/Dockerfile`                                          | API NestJS (placeholder até T-008)                                     | `127.0.0.1:3001`               |
+| `worker`   | build `apps/worker/Dockerfile`                                       | Worker pg-boss (placeholder até T-006)                                 | —                              |
+| `web`      | build `apps/web/Dockerfile`                                          | Dashboard Next.js                                                      | `127.0.0.1:3000`               |
+| `caddy`    | `caddy:2.11.7-alpine`                                                | Borda TLS, `/api/*` → api, `/` → web (`infra/caddy`)                   | `${CADDY_BIND_ADDRESS}:80/443` |
 
 Volumes nomeados: `pg-data`, `s3-data`, `caddy-data`, `caddy-config`. Rede única `internal`; no arquivo
 base só o Caddy publica portas (em `127.0.0.1` por padrão; produção define `CADDY_BIND_ADDRESS=0.0.0.0`).
@@ -66,5 +66,5 @@ para `api` e `worker`; `web` não recebe `env_file` nem segredos (ADR-0001).
 `apps/*/Dockerfile` são multi-stage (`deps` → `build` → `prod-deps` → `runtime`, mais `dev` para hot
 reload), base `node:24.22.0-alpine`, pnpm na versão de `package.json#packageManager`, runtime não-root
 (`node`). Nesta fase api e worker são placeholders que encerram logo após iniciar; os health checks HTTP
-chegam com T-008 (api, `GET /health`) e T-006 (worker). Digests para as imagens oficiais (`postgres`,
+chegam com T-008 (api, `GET /health`) e T-006 (worker). Digests para as imagens oficiais restantes (
 `caddy`, `node`) e scan de imagem entram em T-062.
