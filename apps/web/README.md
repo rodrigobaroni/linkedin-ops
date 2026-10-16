@@ -26,3 +26,10 @@ src/i18n/pt-br.ts           Chrome strings (no i18n framework)
 ```
 
 Design tokens come from `@linkedin-ops/ui/styles.css` (imported in `src/app/globals.css`); the component package is consumed from source via `transpilePackages`, so the scripts above work in a clean clone right after `pnpm install`. Routes are typed (`typedRoutes`), so every `href` must exist. Security headers live in `next.config.ts`; a nonce-based CSP arrives with T-057.
+
+## Turborepo
+
+`apps/web/turbo.json` makes `build` depend on `typecheck`: both `next build` and `next typegen` write
+`.next/types`, so running them concurrently (the default when `turbo lint typecheck test build` schedules
+unrelated tasks) races and fails with `ENOENT .next/types/routes.d.ts`. Typecheck stays fast and
+independent; build simply waits for it.
