@@ -191,8 +191,17 @@ jobs:
               aws s3api head-object --bucket "$S3_BUCKET" --key "$KEY" --query ContentLength --output text 1>&2
               aws s3 presign "s3://$S3_BUCKET/$KEY" --expires-in 300' | tr -d '\r')"
           echo "::add-mask::$presigned"
+          echo "presigned URL query parameters: $(printf '%s' "$presigned" | sed 's/^[^?]*?//' | tr '&' '\n' | cut -d= -f1 | tr '\n' ' ')"
           # Download via plain HTTP with the presigned URL (curl inside the store container, same network).
-          actual="$(docker compose exec -T s3 sh -ec "curl -fsS -o /tmp/smoke.bin '$presigned' && sha256sum /tmp/smoke.bin | cut -d' ' -f1")"
+          if ! docker compose exec -T s3 sh -ec "curl -fsS -o /tmp/smoke.bin '$presigned'"; then
+            echo "::group::presigned GET failed: server response (signature redacted)"
+            docker compose exec -T s3 sh -ec "curl -sS -i '$presigned' | head -c 4000" \
+              | sed -E 's/X-Amz-Signature=[0-9a-f]+/X-Amz-Signature=REDACTED/g; s/X-Amz-Credential=[^&" ]+/X-Amz-Credential=REDACTED/g'
+            echo "::endgroup::"
+            echo "::error::presigned GET was rejected by the S3 store"
+            exit 1
+          fi
+          actual="$(docker compose exec -T s3 sh -ec "sha256sum /tmp/smoke.bin | cut -d' ' -f1")"
           if [ "$actual" != "$expected" ]; then echo "::error::sha256 mismatch after presigned GET"; exit 1; fi
           docker compose exec -T s3 sh -ec "curl -fsSI '$presigned' | grep -i '^content-length: 65536'"
           # Bucket must be private: an unsigned request is rejected.
