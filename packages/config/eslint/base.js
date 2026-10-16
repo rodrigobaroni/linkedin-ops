@@ -16,6 +16,48 @@ export const ignores = [
   "upstream/**", // ADR-0006: vendored linkedin-skills snapshot (packages/editorial-engine/upstream) is read-only reference material
 ];
 
+const APPS_MESSAGE = "Nothing may depend on apps/* (ADR-0001).";
+const UI_MESSAGE =
+  "@linkedin-ops/ui is browser-only (React, Radix) and is consumed from source: only apps/web and packages/ui may import it (ADR-0001). It would type-check elsewhere and fail at runtime in Node.";
+
+/**
+ * `no-restricted-imports` options enforcing the dependency direction of ADR-0001.
+ * Nothing imports from apps/*; `@linkedin-ops/ui` is allowed only where `allowUi` is set
+ * (apps/web and packages/ui, via `allowUiImports`). Refined per-package rules land with T-004/T-021.
+ * @param {{ allowUi?: boolean }} [options]
+ * @returns {import("eslint").Linter.RuleEntry}
+ */
+export function noRestrictedImports({ allowUi = false } = {}) {
+  const paths = [
+    { name: "@linkedin-ops/api", message: APPS_MESSAGE },
+    { name: "@linkedin-ops/web", message: APPS_MESSAGE },
+    { name: "@linkedin-ops/worker", message: APPS_MESSAGE },
+  ];
+  const patterns = [
+    {
+      group: [
+        "**/apps/*",
+        "**/apps/**",
+        "@linkedin-ops/api/*",
+        "@linkedin-ops/web/*",
+        "@linkedin-ops/worker/*",
+      ],
+      message: APPS_MESSAGE,
+    },
+  ];
+  if (!allowUi) {
+    paths.push({ name: "@linkedin-ops/ui", message: UI_MESSAGE });
+    patterns.push({ group: ["@linkedin-ops/ui/*"], message: UI_MESSAGE });
+  }
+  return ["error", { paths, patterns }];
+}
+
+/** Append to `config(...)` in apps/web and packages/ui to allow importing `@linkedin-ops/ui`. */
+export const allowUiImports = {
+  name: "linkedin-ops/allow-ui-imports",
+  rules: { "no-restricted-imports": noRestrictedImports({ allowUi: true }) },
+};
+
 /**
  * Build the flat config for a workspace.
  * @param {import("typescript-eslint").InfiniteDepthConfigWithExtends[]} extra additional config objects appended at the end
@@ -42,29 +84,8 @@ export function config(...extra) {
           "error",
           { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" },
         ],
-        // Dependency direction (ADR-0001): nothing imports from apps/*; refined per-package rules land with T-004/T-021.
-        "no-restricted-imports": [
-          "error",
-          {
-            paths: [
-              { name: "@linkedin-ops/api", message: "Nothing may depend on apps/* (ADR-0001)." },
-              { name: "@linkedin-ops/web", message: "Nothing may depend on apps/* (ADR-0001)." },
-              { name: "@linkedin-ops/worker", message: "Nothing may depend on apps/* (ADR-0001)." },
-            ],
-            patterns: [
-              {
-                group: [
-                  "**/apps/*",
-                  "**/apps/**",
-                  "@linkedin-ops/api/*",
-                  "@linkedin-ops/web/*",
-                  "@linkedin-ops/worker/*",
-                ],
-                message: "Nothing may depend on apps/* (ADR-0001).",
-              },
-            ],
-          },
-        ],
+        // Dependency direction (ADR-0001); see `noRestrictedImports` below.
+        "no-restricted-imports": noRestrictedImports(),
       },
     },
     ...extra,

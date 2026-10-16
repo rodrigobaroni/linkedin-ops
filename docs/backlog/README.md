@@ -53,7 +53,7 @@ Referências de produto: `docs/product/prd.md`, `docs/product/user-journeys.md`,
 | [T-004](EPIC-00/T-004-contracts-package.md) | EPIC-00 | Pacote `contracts` (schemas Zod + tipos compartilhados) | Alicerce (backend) | review | T-001 |
 | [T-005](EPIC-00/T-005-database-baseline-prisma.md) | EPIC-00 | Banco de dados base (PostgreSQL + Prisma + migrations) | Alicerce (backend) | todo | T-003, T-004 |
 | [T-006](EPIC-00/T-006-worker-baseline-pg-boss.md) | EPIC-00 | Worker base (pg-boss, retries, DLQ, agendador com timezone) | Pêndulo (automação/integrações) | todo | T-003, T-005 |
-| [T-007](EPIC-00/T-007-web-app-shell.md) | EPIC-00 | Shell do dashboard (Next.js App Router + shadcn/ui) | Vitral (frontend) | todo | T-001, T-011, T-014 |
+| [T-007](EPIC-00/T-007-web-app-shell.md) | EPIC-00 | Shell do dashboard (Next.js App Router + shadcn/ui) | Vitral (frontend) | review | T-001, T-011, T-014 |
 | [T-008](EPIC-00/T-008-api-baseline-nestjs.md) | EPIC-00 | API base (NestJS, OpenAPI, erros, config) | Alicerce (backend) | todo | T-004, T-005 |
 | [T-009](EPIC-01/T-009-prd-journeys-mvp-scope.md) | EPIC-01 | PRD, jornadas e mapa de escopo do MVP | Farol (produto) | review | — |
 | [T-010](EPIC-01/T-010-initial-backlog.md) | EPIC-01 | Backlog inicial do MVP | Farol (produto) | review | T-009 |
