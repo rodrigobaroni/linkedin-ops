@@ -25,7 +25,7 @@ entre este documento e `packages/contracts`, o pacote vence e este documento dev
 | Ações                 | verbos de domínio como sub-recursos `POST /drafts/{id}/approve` (não `PATCH status`) — mantém a state machine no domínio                                                                                                                                                                                                              |
 | Assíncrono            | ações que enfileiram job respondem `202 Accepted` com `Location` do recurso. Corpo base `AsyncAccepted { id, status, jobId }` (`id` = recurso principal, `status` = estado atual); cada ação **estende** esse base com ids nomeados (`draftId`, `publicationId`, `opportunityId`) para o cliente ter um tipo comum e nomes explícitos |
 | Concorrência          | recursos mutáveis expõem `rowVersion`; **todas** as mutações de `Draft` (incl. `submit-review`, `reject`, `discard`) exigem `expectedRowVersion` no corpo → `409 ROW_VERSION_MISMATCH` se divergir. `AutonomySettings` não tem `rowVersion` (o `PUT` substitui o documento inteiro)                                                   |
-| Validação | inputs, queries e path params são `z.strictObject` (chave desconhecida → `400 VALIDATION_FAILED`); DTOs de resposta e dados lidos do banco usam `strip` (campos desconhecidos ignorados, compatibilidade aditiva). Envelope de job também strict |
+| Validação             | inputs, queries e path params são `z.strictObject` (chave desconhecida → `400 VALIDATION_FAILED`); DTOs de resposta e dados lidos do banco usam `strip` (campos desconhecidos ignorados, compatibilidade aditiva). Envelope de job também strict                                                                                      |
 | Idempotência de ações | header opcional `Idempotency-Key` (UUID) em `POST` de ação; a api guarda (userId, key, hash do corpo) por 24 h e devolve a mesma resposta. Obrigatório em `publish` e `schedule`                                                                                                                                                      |
 | Autenticação          | cookie de sessão `__Host-session` (ADR-0007). Sem Bearer tokens no MVP                                                                                                                                                                                                                                                                |
 | CSRF                  | mutações exigem `Origin` igual a `APP_BASE_URL`, `Content-Type: application/json` **e** header `X-Requested-With: linkedin-ops` (ver `system-overview.md` §3.1). Endpoints 🔐 exigem ainda `X-CSRF-Token` ligado à sessão **e** sessão elevada (`/auth/reauth` nos últimos 15 min)                                                    |
@@ -47,15 +47,15 @@ Legenda: 🔒 = autenticado; ⚡ = assíncrono (202 + job); 🧾 = exige `Idempo
 
 ### 2.2 Auth e sessão
 
-| Verbo  | Rota                     | Corpo / resposta                                                                                              |
-| ------ | ------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| POST   | `/auth/login`            | `{ email, password }` → `204` + cookie. Erros genéricos (`AUTH_INVALID_CREDENTIALS`), rate-limited            |
-| POST   | `/auth/logout` 🔒        | `204`; revoga a sessão                                                                                        |
-| POST   | `/auth/logout-all` 🔒    | `204`; revoga todas as sessões do usuário                                                                     |
-| POST   | `/auth/reauth` 🔒        | `{ password }` → `204`; **eleva** a sessão por 15 min e rotaciona o id. Exigido pelos endpoints 🔐 (ADR-0007) |
-| GET    | `/auth/me` 🔒            | `{ id, email, name, role, locale, timezone, linkedinConnected: boolean }`                                     |
-| GET    | `/auth/sessions` 🔒      | lista de sessões ativas (`id, createdAt, lastSeenAt, ip, userAgent, current`)                                 |
-| DELETE | `/auth/sessions/{id}` 🔒 | revoga outra sessão                                                                                           |
+| Verbo  | Rota                     | Corpo / resposta                                                                                                                                                                                                         |
+| ------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| POST   | `/auth/login`            | `{ email, password }` → `200 { csrfToken, elevatedUntil: null }` + cookie (ADR-0007 N2). Única mutação sem sessão; mantém Origin/JSON/`X-Requested-With` e rate limit (N4). Erros genéricos (`AUTH_INVALID_CREDENTIALS`) |
+| POST   | `/auth/logout` 🔒        | `204`; revoga a sessão                                                                                                                                                                                                   |
+| POST   | `/auth/logout-all` 🔒    | `204`; revoga todas as sessões do usuário                                                                                                                                                                                |
+| POST   | `/auth/reauth` 🔒        | `{ password }` → `200 { csrfToken, elevatedUntil }`; **eleva** a sessão por 15 min e rotaciona o id (novo token no corpo e no header `X-CSRF-Token`). Exigido pelos endpoints 🔐 (ADR-0007 N2)                           |
+| GET    | `/auth/me` 🔒            | `{ id, email, name, role, locale, timezone, linkedinConnected: boolean, csrfToken, elevatedUntil: string \| null }` — fonte do `X-CSRF-Token` após qualquer rotação de sessão (ADR-0007 N2)                              |
+| GET    | `/auth/sessions` 🔒      | lista de sessões ativas (`id, createdAt, lastSeenAt, ip, userAgent, current`)                                                                                                                                            |
+| DELETE | `/auth/sessions/{id}` 🔒 | revoga outra sessão                                                                                                                                                                                                      |
 
 Bootstrap do primeiro usuário: **comando CLI** (`pnpm --filter api cli user:create`), não endpoint público.
 
