@@ -3,11 +3,17 @@ import { z } from "zod";
 /** Base of the `type` URI for Problem Details. The slug is the kebab-case error code. */
 export const PROBLEM_TYPE_BASE = "https://linkedin-ops.local/errors/";
 
-/** Stable error codes the web client maps to PT-BR messages (contracts.md §4). */
+/**
+ * Stable error codes the web client maps to PT-BR messages (contracts.md §4). Idempotency (contracts.md §1):
+ * the key is scoped by (userId, route) for 24 h with a sha256 of the canonical body; same key + same body
+ * replays the response, same key + different body → `409 IDEMPOTENCY_KEY_CONFLICT`, missing key where
+ * required → `400 IDEMPOTENCY_KEY_REQUIRED`.
+ */
 export const ErrorCodeSchema = z
   .enum([
     "VALIDATION_FAILED",
     "IDEMPOTENCY_KEY_REQUIRED",
+    "IDEMPOTENCY_KEY_CONFLICT",
     "AUTH_REQUIRED",
     "AUTH_INVALID_CREDENTIALS",
     "AUTH_REAUTH_REQUIRED",
@@ -42,6 +48,7 @@ export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
 export const ERROR_CODE_HTTP_STATUS: Readonly<Record<ErrorCode, number>> = {
   VALIDATION_FAILED: 400,
   IDEMPOTENCY_KEY_REQUIRED: 400,
+  IDEMPOTENCY_KEY_CONFLICT: 409,
   AUTH_REQUIRED: 401,
   AUTH_INVALID_CREDENTIALS: 401,
   AUTH_REAUTH_REQUIRED: 401,

@@ -564,6 +564,27 @@ export const resourceCases: SchemaCase[] = [
     },
   },
   {
+    name: "ProblemDetails (409 IDEMPOTENCY_KEY_CONFLICT)",
+    schema: c.ProblemDetailsSchema,
+    valid: {
+      type: "https://linkedin-ops.local/errors/idempotency-key-conflict",
+      title: "Idempotency-Key reutilizada com corpo diferente",
+      status: 409,
+      detail: "A chave já foi usada nesta rota com outro corpo nas últimas 24 h",
+      instance: "/api/v1/drafts/7f/publish",
+      code: "IDEMPOTENCY_KEY_CONFLICT",
+      correlationId: "req_01K",
+    },
+    invalid: {
+      "served as 400": set("status", 400),
+      "type of the required variant": set(
+        "type",
+        "https://linkedin-ops.local/errors/idempotency-key-required",
+      ),
+      "errors[] not allowed": set("errors", [{ path: ["Idempotency-Key"], message: "x" }]),
+    },
+  },
+  {
     name: "AsyncAccepted",
     schema: c.AsyncAcceptedSchema,
     valid: { id: ids.draft, status: "GENERATING", jobId: "job-1" },
