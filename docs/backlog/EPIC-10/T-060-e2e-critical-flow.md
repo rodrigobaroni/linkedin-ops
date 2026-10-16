@@ -20,6 +20,8 @@ Playwright + Compose (api, web, worker, postgres, minio, fakes): cenário A assi
 - [ ] Cenário B prova exatamente 1 post no fake após falha + retry.
 - [ ] Tempo total ≤ 15 min.
 - [ ] Qualquer falha indica o passo e o `correlationId`.
+- [ ] Suíte roda em browser real (Playwright + Chromium, não jsdom); `@axe-core/playwright` executa nas telas do fluxo A e inclui a regra de contraste (`color-contrast`), que o axe em jsdom não cobre (Crivo).
+- [ ] O placeholder `echo` de `tests/e2e` foi substituído; CI falha se a suíte não encontrar testes.
 
 ## Fora de escopo
 
@@ -32,3 +34,8 @@ Teste com LinkedIn real (manual, documentado em T-056).
 ## Riscos de segurança / compliance
 
 Fakes nunca apontam para APIs reais em CI.
+
+## Ressalvas (Crivo, 2026-10-16)
+
+- Até esta tarefa, `tests/e2e` só ecoa uma mensagem; o check verde do workspace não é evidência de E2E.
+- Verificações de acessibilidade com contraste só valem em browser real; jsdom (T-007/T-014 unit) não as cobre.

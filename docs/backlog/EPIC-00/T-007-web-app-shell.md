@@ -3,7 +3,7 @@
 - Épico: EPIC-00 Foundation
 - Responsável (papel/agente): Vitral (frontend) · revisão Aurora
 - Branch/floor: `feat/T-007-web-app-shell`
-- Estado: review
+- Estado: done (integrada em `main` via PR #67, merge commit `1130009`; revisões de Atlas, Sentinela, Aurora e Crivo concluídas)
 - Dependências: T-001, T-011 (mapa de navegação), T-014 (tokens)
 
 ## Contexto
