@@ -24,7 +24,7 @@ reconciliation for the ambiguous window.**
 2. **Database guards** (see `data-model.md` I8/I9):
    - partial unique index: one `Publication` per `draft_id` with `status IN ('IN_PROGRESS','SUCCEEDED')`;
    - the worker **claims** the record with `UPDATE publications SET status='IN_PROGRESS', attempt=attempt+1,
-     started_at=now() WHERE id=$1 AND status='PENDING'`; if `rowCount = 0` the handler exits (already
+started_at=now() WHERE id=$1 AND status='PENDING'`; if `rowCount = 0` the handler exits (already
      claimed, succeeded or cancelled). Only after a successful claim is any LinkedIn call made.
 3. **Preconditions re-checked at claim time**, inside the domain: draft is `SCHEDULED`/`PUBLISHING`,
    `approved_version_id = publication.draft_version_id`, `OAuthToken.status = ACTIVE`, autonomy policy
@@ -47,7 +47,7 @@ reconciliation for the ambiguous window.**
    time window; if found → `SUCCEEDED` (store URN); if not found after a conservative window →
    `FAILED` and the user may retry. Stale `IN_PROGRESS` records (> 10 min) are treated as ambiguous by
    `schedule.reconcile`.
-7. **Media** is uploaded to LinkedIn (`media.upload-linkedin`) *before* the publish job, storing
+7. **Media** is uploaded to LinkedIn (`media.upload-linkedin`) _before_ the publish job, storing
    `linkedin_asset_urn` on the `MediaAsset`; the publish payload references URNs only, so a media retry
    never creates a post.
 8. **Audit**: every transition writes an `AuditEvent` with the fingerprint and external ids, never the token.

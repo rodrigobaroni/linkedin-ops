@@ -8,7 +8,7 @@
 
 ## Contexto
 
-PRD §6 v0.2 (semântica de `data-model.md` §2.1: `ASSISTED | AUTOPILOT_CONTROLLED | AUTOPILOT_FULL`, decisão provisória §13.11). Padrão Assistido. O motor decide seleção automática (modos piloto), aprovação automática por política (`Approval.actor = SYSTEM`) nos dois modos piloto, agendamento automático, janela de cancelamento (`cancel_window_minutes`) no controlado, trava de mídia (`require_human_for_media`), revogação ao descer de modo, opção `assistedPrefetchDraft` no Assistido, e grava a razão de cada decisão automática.
+PRD §6 v0.2 (semântica de `data-model.md` §2.1: `ASSISTED | AUTOPILOT_CONTROLLED | AUTOPILOT_FULL`, ratificada em 2026-10-13, §13.11). Padrão Assistido. O motor decide seleção automática (modos piloto), aprovação automática por política (`Approval.actor = SYSTEM`) nos dois modos piloto, agendamento automático, janela de cancelamento (`cancel_window_minutes`) no controlado, trava de mídia (`require_human_for_media`), revogação ao descer de modo, opção `assistedPrefetchDraft` no Assistido, e grava a razão de cada decisão automática.
 
 ## Resultado esperado
 

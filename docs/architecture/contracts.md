@@ -12,157 +12,159 @@ entre este documento e `packages/contracts`, o pacote vence e este documento dev
 
 ## 1. Convenções gerais
 
-| Tema | Regra |
-|---|---|
-| Base path | `/api/v1` (servido pela `api` atrás do Caddy, mesma origem do `web`) |
-| Formato | JSON UTF-8; `Content-Type: application/json` obrigatório em requisições com corpo |
-| Ids | UUID (v7) como string |
-| Datas | ISO 8601 em UTC com sufixo `Z` nas respostas. Entradas de agendamento usam **`localDateTime` + `timezone` IANA** (nunca offset solto) |
-| Nomes | `camelCase` nos payloads; enums em `SCREAMING_SNAKE` (`ASSISTED`, `IN_REVIEW`), exceto os valores do contrato §13 do briefing, que são expostos em minúsculas (`candidate`, `code-card`) para fidelidade ao briefing |
-| Paginação | cursor: `?limit=20&cursor=<opaque>` → `{ items: [...], nextCursor: string \| null }` |
-| Filtros | query params simples (`?status=candidate&runId=`); sem DSL |
-| Ordenação | fixa por recurso (documentada); `?sort=` só onde houver caso de uso |
-| Ações | verbos de domínio como sub-recursos `POST /drafts/{id}/approve` (não `PATCH status`) — mantém a state machine no domínio |
-| Assíncrono | ações que enfileiram job respondem `202 Accepted` com `Location` do recurso e corpo `{ id, status, jobId }` |
-| Concorrência | recursos mutáveis expõem `rowVersion`; mutações exigem `expectedRowVersion` no corpo → `409 CONFLICT` se divergir |
-| Idempotência de ações | header opcional `Idempotency-Key` (UUID) em `POST` de ação; a api guarda (userId, key, hash do corpo) por 24 h e devolve a mesma resposta. Obrigatório em `publish` e `schedule` |
-| Autenticação | cookie de sessão `__Host-session` (ADR-0007). Sem Bearer tokens no MVP |
-| CSRF | mutações exigem `Origin` igual a `APP_BASE_URL`, `Content-Type: application/json` **e** header `X-Requested-With: linkedin-ops` (ver `system-overview.md` §3.1). Endpoints 🔐 exigem ainda `X-CSRF-Token` ligado à sessão **e** sessão elevada (`/auth/reauth` nos últimos 15 min) |
-| Rate limit | por sessão/IP em `/auth/*` e em ações que chamam serviços externos (`publish`, `regenerate`, `curation-runs`) |
-| Segredos | nunca aparecem em resposta: tokens OAuth, chaves, `passwordHash`. DTOs não têm esses campos por construção |
+| Tema                  | Regra                                                                                                                                                                                                                                                                                                                                 |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Base path             | `/api/v1` (servido pela `api` atrás do Caddy, mesma origem do `web`)                                                                                                                                                                                                                                                                  |
+| Formato               | JSON UTF-8; `Content-Type: application/json` obrigatório em requisições com corpo                                                                                                                                                                                                                                                     |
+| Ids                   | UUID (v7) como string                                                                                                                                                                                                                                                                                                                 |
+| Datas                 | ISO 8601 em UTC com sufixo `Z` nas respostas. Entradas de agendamento usam **`localDateTime` + `timezone` IANA** (nunca offset solto)                                                                                                                                                                                                 |
+| Nomes                 | `camelCase` nos payloads; enums em `SCREAMING_SNAKE` (`ASSISTED`, `IN_REVIEW`), exceto os valores do contrato §13 do briefing, que são expostos em minúsculas (`candidate`, `code-card`) para fidelidade ao briefing                                                                                                                  |
+| Paginação             | cursor: `?limit=20&cursor=<opaque>` → `{ items: [...], nextCursor: string \| null }`                                                                                                                                                                                                                                                  |
+| Filtros               | query params simples (`?status=candidate&runId=`); sem DSL                                                                                                                                                                                                                                                                            |
+| Ordenação             | fixa por recurso (documentada); `?sort=` só onde houver caso de uso                                                                                                                                                                                                                                                                   |
+| Ações                 | verbos de domínio como sub-recursos `POST /drafts/{id}/approve` (não `PATCH status`) — mantém a state machine no domínio                                                                                                                                                                                                              |
+| Assíncrono            | ações que enfileiram job respondem `202 Accepted` com `Location` do recurso. Corpo base `AsyncAccepted { id, status, jobId }` (`id` = recurso principal, `status` = estado atual); cada ação **estende** esse base com ids nomeados (`draftId`, `publicationId`, `opportunityId`) para o cliente ter um tipo comum e nomes explícitos |
+| Concorrência          | recursos mutáveis expõem `rowVersion`; **todas** as mutações de `Draft` (incl. `submit-review`, `reject`, `discard`) exigem `expectedRowVersion` no corpo → `409 ROW_VERSION_MISMATCH` se divergir. `AutonomySettings` não tem `rowVersion` (o `PUT` substitui o documento inteiro)                                                   |
+| Validação             | inputs, queries e path params são `z.strictObject` (chave desconhecida → `400 VALIDATION_FAILED`); DTOs de resposta e dados lidos do banco usam `strip` (campos desconhecidos ignorados, compatibilidade aditiva). Envelope de job também strict                                                                                      |
+| Idempotência de ações | header opcional `Idempotency-Key` (UUID) em `POST` de ação; a api guarda (userId, key, hash do corpo) por 24 h e devolve a mesma resposta. Obrigatório em `publish` e `schedule`                                                                                                                                                      |
+| Autenticação          | cookie de sessão `__Host-session` (ADR-0007). Sem Bearer tokens no MVP                                                                                                                                                                                                                                                                |
+| CSRF                  | mutações exigem `Origin` igual a `APP_BASE_URL`, `Content-Type: application/json` **e** header `X-Requested-With: linkedin-ops` (ver `system-overview.md` §3.1). Endpoints 🔐 exigem ainda `X-CSRF-Token` ligado à sessão **e** sessão elevada (`/auth/reauth` nos últimos 15 min)                                                    |
+| Rate limit            | por sessão/IP em `/auth/*` e em ações que chamam serviços externos (`publish`, `regenerate`, `curation-runs`)                                                                                                                                                                                                                         |
+| Segredos              | nunca aparecem em resposta: tokens OAuth, chaves, `passwordHash`. DTOs não têm esses campos por construção                                                                                                                                                                                                                            |
 
 ---
 
 ## 2. Recursos e verbos
 
-Legenda: 🔒 = autenticado; ⚡ = assíncrono (202 + job); 🧾 = exige `Idempotency-Key`; 🔐 = alto risco: exige sessão elevada + `X-CSRF-Token` (ADR-0007, threat model TM-02/TM-22).
+Legenda: 🔒 = autenticado; ⚡ = assíncrono (202 + job); 🧾 = exige `Idempotency-Key`; 🔐 = alto risco: exige sessão elevada + `X-CSRF-Token` e role OWNER (ADR-0007, threat model TM-02/TM-22).
 
 ### 2.1 Saúde
 
-| Verbo | Rota | Descrição |
-|---|---|---|
-| GET | `/health` | liveness (sem auth) |
-| GET | `/ready` | readiness: DB + pg-boss (sem auth) |
+| Verbo | Rota      | Descrição                          |
+| ----- | --------- | ---------------------------------- |
+| GET   | `/health` | liveness (sem auth)                |
+| GET   | `/ready`  | readiness: DB + pg-boss (sem auth) |
 
 ### 2.2 Auth e sessão
 
-| Verbo | Rota | Corpo / resposta |
-|---|---|---|
-| POST | `/auth/login` | `{ email, password }` → `204` + cookie. Erros genéricos (`AUTH_INVALID_CREDENTIALS`), rate-limited |
-| POST | `/auth/logout` 🔒 | `204`; revoga a sessão |
-| POST | `/auth/logout-all` 🔒 | `204`; revoga todas as sessões do usuário |
-| POST | `/auth/reauth` 🔒 | `{ password }` → `204`; **eleva** a sessão por 15 min e rotaciona o id. Exigido pelos endpoints 🔐 (ADR-0007) |
-| GET | `/auth/me` 🔒 | `{ id, email, name, role, locale, timezone, linkedinConnected: boolean }` |
-| GET | `/auth/sessions` 🔒 | lista de sessões ativas (`id, createdAt, lastSeenAt, ip, userAgent, current`) |
-| DELETE | `/auth/sessions/{id}` 🔒 | revoga outra sessão |
+| Verbo  | Rota                     | Corpo / resposta                                                                                                                                                                                                         |
+| ------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| POST   | `/auth/login`            | `{ email, password }` → `200 { csrfToken, elevatedUntil: null }` + cookie (ADR-0007 N2). Única mutação sem sessão; mantém Origin/JSON/`X-Requested-With` e rate limit (N4). Erros genéricos (`AUTH_INVALID_CREDENTIALS`) |
+| POST   | `/auth/logout` 🔒        | `204`; revoga a sessão                                                                                                                                                                                                   |
+| POST   | `/auth/logout-all` 🔒    | `204`; revoga todas as sessões do usuário                                                                                                                                                                                |
+| POST   | `/auth/reauth` 🔒        | `{ password }` → `200 { csrfToken, elevatedUntil }`; **eleva** a sessão por 15 min e rotaciona o id (novo token no corpo e no header `X-CSRF-Token`). Exigido pelos endpoints 🔐 (ADR-0007 N2)                           |
+| GET    | `/auth/me` 🔒            | `{ id, email, name, role, locale, timezone, linkedinConnected: boolean, csrfToken, elevatedUntil: string \| null }` — fonte do `X-CSRF-Token` após qualquer rotação de sessão (ADR-0007 N2)                              |
+| GET    | `/auth/sessions` 🔒      | lista de sessões ativas (`id, createdAt, lastSeenAt, ip, userAgent, current`)                                                                                                                                            |
+| DELETE | `/auth/sessions/{id}` 🔒 | revoga outra sessão                                                                                                                                                                                                      |
 
 Bootstrap do primeiro usuário: **comando CLI** (`pnpm --filter api cli user:create`), não endpoint público.
 
 ### 2.3 Integração LinkedIn (OAuth)
 
-| Verbo | Rota | Descrição |
-|---|---|---|
-| GET | `/integrations/linkedin` 🔒 | `{ status: "DISCONNECTED"\|"ACTIVE"\|"EXPIRED"\|"REAUTH_REQUIRED", scopes, accessExpiresAt, memberUrn }` — **nunca** o token |
-| POST | `/integrations/linkedin/connect` 🔒 🔐 | gera `state` (CSPRNG ≥ 256 bits, só o hash persistido, ligado à sessão, 10 min, uso único; um state ativo por sessão) e PKCE S256 quando o app suportar; → `{ authorizeUrl }` |
-| GET | `/integrations/linkedin/callback` | recebe `code`+`state`; troca por token no servidor; cifra e grava; redireciona para `APP_BASE_URL/settings/integrations?result=ok\|error` |
-| DELETE | `/integrations/linkedin` 🔒 🔐 | revoga/remove token (`AuditEvent`) |
+| Verbo  | Rota                                   | Descrição                                                                                                                                                                     |
+| ------ | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/integrations/linkedin` 🔒            | `{ status: "DISCONNECTED"\|"ACTIVE"\|"EXPIRED"\|"REAUTH_REQUIRED", scopes, accessExpiresAt, memberUrn }` — **nunca** o token                                                  |
+| POST   | `/integrations/linkedin/connect` 🔒 🔐 | gera `state` (CSPRNG ≥ 256 bits, só o hash persistido, ligado à sessão, 10 min, uso único; um state ativo por sessão) e PKCE S256 quando o app suportar; → `{ authorizeUrl }` |
+| GET    | `/integrations/linkedin/callback`      | recebe `code`+`state`; troca por token no servidor; cifra e grava; redireciona para `APP_BASE_URL/settings/integrations?result=ok\|error`                                     |
+| DELETE | `/integrations/linkedin` 🔒 🔐         | revoga/remove token (`AuditEvent`)                                                                                                                                            |
 
 ### 2.4 Settings
 
-| Verbo | Rota | Corpo |
-|---|---|---|
-| GET | `/settings/autonomy` 🔒 | `AutonomySettings` |
-| PUT | `/settings/autonomy` 🔒 🔐 | `AutonomySettingsInput` (completo, inclui `assistedPrefetchDraft`; gera `AuditEvent` com before/after). **Descer de modo** revoga aprovações automáticas pendentes (drafts voltam a `IN_REVIEW`, schedules cancelados) e responde `200 { settings, revokedDraftIds[] }` + `Notification{AUTOPILOT_REVOKED}`. `mode = AUTOPILOT_FULL` só é aceito se a flag operacional `AUTOPILOT_FULL_ENABLED=true` (padrão false até fechar os gates G-01..G-06 do threat model); caso contrário `422 AUTONOMY_MODE_NOT_ENABLED` |
-| GET | `/settings/notifications` 🔒 | canais ativos (Telegram ligado/desligado; `chatId` nunca exposto inteiro) |
-| PUT | `/settings/notifications` 🔒 | |
+| Verbo | Rota                         | Corpo                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ----- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| GET   | `/settings/autonomy` 🔒      | `AutonomySettings`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| PUT   | `/settings/autonomy` 🔒 🔐   | `AutonomySettingsInput` (completo, inclui `assistedPrefetchDraft`; gera `AuditEvent` com before/after). **Descer de modo** revoga aprovações automáticas pendentes (drafts voltam a `IN_REVIEW`, schedules cancelados) e responde `200 { settings, revokedDraftIds[] }` + `Notification{AUTOPILOT_REVOKED}`. `mode = AUTOPILOT_FULL` só é aceito se a flag operacional `AUTOPILOT_FULL_ENABLED=true` (padrão false até fechar os gates G-01..G-06 do threat model); caso contrário `422 AUTONOMY_MODE_NOT_ENABLED` |
+| GET   | `/settings/notifications` 🔒 | canais ativos (Telegram ligado/desligado; `chatId` nunca exposto inteiro)                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| PUT   | `/settings/notifications` 🔒 |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 ### 2.5 Memória editorial
 
-| Verbo | Rota | Notas |
-|---|---|---|
-| GET | `/voice-profile` 🔒 | versão ativa |
-| GET | `/voice-profile/versions` 🔒 | histórico |
-| POST | `/voice-profile/versions` 🔒 | cria nova versão e ativa (`VoiceProfileInput`) |
-| GET/POST | `/story-bank` 🔒 | lista (filtro `tag`, `pillarId`, `status`) / cria `StoryBankEntryInput` |
-| GET/PATCH/DELETE | `/story-bank/{id}` 🔒 | `DELETE` = arquiva (soft) |
-| GET/POST | `/content-pillars` 🔒 | |
-| GET/PATCH/DELETE | `/content-pillars/{id}` 🔒 | `DELETE` bloqueado se houver oportunidade/draft ativo (409) |
+| Verbo            | Rota                         | Notas                                                                   |
+| ---------------- | ---------------------------- | ----------------------------------------------------------------------- |
+| GET              | `/voice-profile` 🔒          | versão ativa                                                            |
+| GET              | `/voice-profile/versions` 🔒 | histórico                                                               |
+| POST             | `/voice-profile/versions` 🔒 | cria nova versão e ativa (`VoiceProfileInput`)                          |
+| GET/POST         | `/story-bank` 🔒             | lista (filtro `tag`, `pillarId`, `status`) / cria `StoryBankEntryInput` |
+| GET/PATCH/DELETE | `/story-bank/{id}` 🔒        | `DELETE` = arquiva (soft)                                               |
+| GET/POST         | `/content-pillars` 🔒        |                                                                         |
+| GET/PATCH/DELETE | `/content-pillars/{id}` 🔒   | `DELETE` bloqueado se houver oportunidade/draft ativo (409)             |
 
 ### 2.6 Fontes e watchlists
 
-| Verbo | Rota | Notas |
-|---|---|---|
-| GET/POST | `/sources` 🔒 | `SourceInput { type, name, url, trustLevel, pillarHints[], fetchIntervalMinutes }`; URL validada (https, allowlist, sem IP privado) |
-| GET/PATCH/DELETE | `/sources/{id}` 🔒 | |
-| POST | `/sources/{id}/test` 🔒 ⚡ | enfileira `source.fetch` em modo dry-run; `GET /sources/{id}` mostra `lastStatus` |
-| GET | `/sources/{id}/items` 🔒 | `SourceItem` paginado (somente leitura; marcado `untrusted: true` no DTO) |
-| GET/POST | `/watchlists` 🔒 | |
-| GET/PATCH/DELETE | `/watchlists/{id}` 🔒 | |
+| Verbo            | Rota                       | Notas                                                                                                                               |
+| ---------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| GET/POST         | `/sources` 🔒              | `SourceInput { type, name, url, trustLevel, pillarHints[], fetchIntervalMinutes }`; URL validada (https, allowlist, sem IP privado) |
+| GET/PATCH/DELETE | `/sources/{id}` 🔒         |                                                                                                                                     |
+| POST             | `/sources/{id}/test` 🔒 ⚡ | enfileira `source.fetch` em modo dry-run; `GET /sources/{id}` mostra `lastStatus`                                                   |
+| GET              | `/sources/{id}/items` 🔒   | `SourceItem` paginado (somente leitura; marcado `untrusted: true` no DTO)                                                           |
+| GET/POST         | `/watchlists` 🔒           |                                                                                                                                     |
+| GET/PATCH/DELETE | `/watchlists/{id}` 🔒      |                                                                                                                                     |
 
 ### 2.7 Curadoria e oportunidades
 
-| Verbo | Rota | Notas |
-|---|---|---|
-| GET | `/curation-runs` 🔒 | paginado, mais recente primeiro |
-| POST | `/curation-runs` 🔒 ⚡ 🧾 | gatilho manual (`trigger = MANUAL`); 409 se já houver run `QUEUED/RUNNING` |
-| GET | `/curation-runs/{id}` 🔒 | inclui `stats` e `opportunities[]` (5 cards) |
-| GET | `/opportunities` 🔒 | filtros `runId`, `status`, `pillar`; padrão: run mais recente |
-| GET | `/opportunities/{id}` 🔒 | `Opportunity` (§3.1) + `sourceItems[]` resumidos |
-| POST | `/opportunities/{id}/select` 🔒 ⚡ 🧾 | cria `Draft{GENERATING}` e enfileira `draft.generate` → `202 { draftId, jobId }`. Se existir `Draft{isPrefetch}` desta oportunidade, **adota-o** (`200 { draftId }`, sem novo job); prefetch de outra oportunidade do mesmo run é descartado |
-| POST | `/opportunities/{id}/dismiss` 🔒 | `{ reason? }` |
-| POST | `/opportunities/manual` 🔒 ⚡ 🧾 | entrada manual de assunto `{ title, summary?, contentPillar, suggestedFormat?, sourceUrls[]? }` → cria opportunity `origin=MANUAL, status=selected` + draft `GENERATING` |
+| Verbo | Rota                                  | Notas                                                                                                                                                                                                                                        |
+| ----- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET   | `/curation-runs` 🔒                   | paginado, mais recente primeiro                                                                                                                                                                                                              |
+| POST  | `/curation-runs` 🔒 ⚡ 🧾             | gatilho manual (`trigger = MANUAL`); 409 se já houver run `QUEUED/RUNNING`                                                                                                                                                                   |
+| GET   | `/curation-runs/{id}` 🔒              | inclui `stats` e `opportunities[]` (5 cards)                                                                                                                                                                                                 |
+| GET   | `/opportunities` 🔒                   | filtros `runId`, `status`, `pillar`; padrão: run mais recente                                                                                                                                                                                |
+| GET   | `/opportunities/{id}` 🔒              | `Opportunity` (§3.1) + `sourceItems[]` resumidos                                                                                                                                                                                             |
+| POST  | `/opportunities/{id}/select` 🔒 ⚡ 🧾 | cria `Draft{GENERATING}` e enfileira `draft.generate` → `202 { draftId, jobId }`. Se existir `Draft{isPrefetch}` desta oportunidade, **adota-o** (`200 { draftId }`, sem novo job); prefetch de outra oportunidade do mesmo run é descartado |
+| POST  | `/opportunities/{id}/dismiss` 🔒      | `{ reason? }`                                                                                                                                                                                                                                |
+| POST  | `/opportunities/manual` 🔒 ⚡ 🧾      | entrada manual de assunto `{ title, summary?, contentPillar, suggestedFormat?, sourceUrls[]? }` → cria opportunity `origin=MANUAL, status=selected` + draft `GENERATING`                                                                     |
 
 ### 2.8 Rascunhos
 
-| Verbo | Rota | Notas |
-|---|---|---|
-| GET | `/drafts` 🔒 | filtros `status`, `from`, `to`; inclui `currentVersion` resumida |
-| GET | `/drafts/{id}` 🔒 | `Draft` + `currentVersion` + `approvedVersion` + `schedule` + `lastPublication` |
-| GET | `/drafts/{id}/versions` 🔒 | todas as `DraftVersion` (sem `generation.usage` para VIEWER) |
-| GET | `/drafts/{id}/versions/{versionId}` 🔒 | |
-| POST | `/drafts/{id}/versions` 🔒 | **edição manual** → nova versão `author=USER`: `{ body, hooks: { text, formula?, rationale? }[], mediaSuggestion?, citations[], expectedRowVersion }` |
-| POST | `/drafts/{id}/regenerate` 🔒 ⚡ 🧾 | `{ instructions?, keepHooks?, expectedRowVersion }` → job `draft.regenerate` |
-| POST | `/drafts/{id}/submit-review` 🔒 | |
-| POST | `/drafts/{id}/approve` 🔒 | `{ versionId, expectedRowVersion }` → cria `Approval{USER}` |
-| POST | `/drafts/{id}/reject` 🔒 | `{ versionId, reason }` |
-| POST | `/drafts/{id}/schedule` 🔒 🧾 | `{ versionId, localDateTime: "2026-10-15T09:00", timezone: "America/Sao_Paulo", expectedRowVersion }` → `201 Schedule` |
-| POST | `/drafts/{id}/publish` 🔒 🔐 ⚡ 🧾 | publicar agora: `{ versionId, expectedRowVersion }` → `202 { publicationId, jobId }` |
-| POST | `/drafts/{id}/retry-publication` 🔒 ⚡ 🧾 | só se última `Publication` = `FAILED` não ambígua |
-| POST | `/drafts/{id}/discard` 🔒 | `{ reason? }` |
-| GET | `/drafts/{id}/audit` 🔒 | `AuditEvent[]` do draft e suas publicações |
+| Verbo | Rota                                         | Notas                                                                                                                                                      |
+| ----- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET   | `/drafts` 🔒                                 | filtros `status`, `from`, `to`; inclui `currentVersion` resumida                                                                                           |
+| GET   | `/drafts/{id}` 🔒                            | `Draft` + `currentVersion` + `approvedVersion` + `schedule` + `lastPublication`                                                                            |
+| GET   | `/drafts/{id}/versions` 🔒                   | todas as `DraftVersion` (sem `generation.usage` para VIEWER)                                                                                               |
+| GET   | `/drafts/{id}/versions/{versionId}` 🔒       |                                                                                                                                                            |
+| POST  | `/drafts/{id}/versions` 🔒                   | **edição manual** → nova versão `author=USER`: `{ body, hooks: { text, formula?, rationale? }[], mediaSuggestion?, citations[], expectedRowVersion }`      |
+| POST  | `/drafts/{id}/regenerate` 🔒 ⚡ 🧾           | `{ instructions?, keepHooks?, expectedRowVersion }` → job `draft.regenerate`                                                                               |
+| POST  | `/drafts/{id}/submit-review` 🔒              |                                                                                                                                                            |
+| POST  | `/drafts/{id}/approve` 🔒                    | `{ versionId, expectedRowVersion }` → cria `Approval{USER}`                                                                                                |
+| POST  | `/drafts/{id}/reject` 🔒                     | `{ versionId, reason }`                                                                                                                                    |
+| POST  | `/drafts/{id}/schedule` 🔒 🧾                | `{ versionId, localDateTime: "2026-10-15T09:00", timezone: "America/Sao_Paulo", expectedRowVersion }` → `201 Schedule`                                     |
+| POST  | `/drafts/{id}/publish` 🔒 🔐 ⚡ 🧾           | publicar agora: `{ versionId, expectedRowVersion }` → `202 { publicationId, jobId }`                                                                       |
+| POST  | `/drafts/{id}/retry-publication` 🔒 🔐 ⚡ 🧾 | `{ expectedRowVersion }`; só se última `Publication` = `FAILED` não ambígua (`412 PUBLICATION_NOT_RETRYABLE`). Mesmo risco do publish now → sessão elevada |
+| POST  | `/drafts/{id}/discard` 🔒                    | `{ reason? }`                                                                                                                                              |
+| GET   | `/drafts/{id}/approvals` 🔒                  | `Approval[]` do draft (histórico de decisões, humanas e automáticas)                                                                                       |
+| GET   | `/drafts/{id}/audit` 🔒                      | `AuditEvent[]` do draft e suas publicações                                                                                                                 |
 
 ### 2.9 Agenda e publicações
 
-| Verbo | Rota | Notas |
-|---|---|---|
-| GET | `/schedules?from&to` 🔒 | calendário; retorna `scheduledAt` (UTC) + `timezone` + `requestedLocalTime` |
-| DELETE | `/schedules/{id}` 🔒 | cancela (draft volta a `APPROVED`) |
-| GET | `/publications` 🔒 | histórico |
-| GET | `/publications/{id}` 🔒 | status, `externalPostId`, `externalUrl`, `error` (sem token) |
-| POST | `/publications/{id}/reconcile` 🔒 ⚡ | para `AMBIGUOUS`: consulta LinkedIn e resolve (ADR-0003) |
+| Verbo  | Rota                                 | Notas                                                                       |
+| ------ | ------------------------------------ | --------------------------------------------------------------------------- |
+| GET    | `/schedules?from&to` 🔒              | calendário; retorna `scheduledAt` (UTC) + `timezone` + `requestedLocalTime` |
+| DELETE | `/schedules/{id}` 🔒                 | cancela (draft volta a `APPROVED`)                                          |
+| GET    | `/publications` 🔒                   | histórico                                                                   |
+| GET    | `/publications/{id}` 🔒              | status, `externalPostId`, `externalUrl`, `error` (sem token)                |
+| POST   | `/publications/{id}/reconcile` 🔒 ⚡ | para `AMBIGUOUS`: consulta LinkedIn e resolve (ADR-0003)                    |
 
 ### 2.10 Mídia
 
-| Verbo | Rota | Notas |
-|---|---|---|
-| POST | `/media` 🔒 | `multipart/form-data` (limites: tipo/tamanho) → `MediaAsset` |
-| POST | `/media/render` 🔒 ⚡ | `{ kind: "CODE_CARD", spec: { language, code, title?, theme? } }` → job `media.render` |
-| GET | `/media/{id}` 🔒 | metadados + `signedUrl` (expira em minutos) |
-| DELETE | `/media/{id}` 🔒 | 409 se anexado a versão publicada |
+| Verbo  | Rota                  | Notas                                                                                  |
+| ------ | --------------------- | -------------------------------------------------------------------------------------- |
+| POST   | `/media` 🔒           | `multipart/form-data` (limites: tipo/tamanho) → `MediaAsset`                           |
+| POST   | `/media/render` 🔒 ⚡ | `{ kind: "CODE_CARD", spec: { language, code, title?, theme? } }` → job `media.render` |
+| GET    | `/media/{id}` 🔒      | metadados + `signedUrl` (expira em minutos)                                            |
+| DELETE | `/media/{id}` 🔒      | 409 se anexado a versão publicada                                                      |
 
 ### 2.11 Notificações e auditoria
 
-| Verbo | Rota | Notas |
-|---|---|---|
-| GET | `/notifications` 🔒 | in-app, paginado. `kind` ∈ `NotificationKind` = `CURATION_READY \| DRAFT_READY \| DRAFT_PREFETCHED \| APPROVAL_NEEDED \| AUTOPILOT_WILL_PUBLISH \| AUTOPILOT_PUBLISHED \| AUTOPILOT_REVOKED \| PUBLISHED \| PUBLICATION_FAILED \| PUBLICATION_AMBIGUOUS \| TOKEN_EXPIRING \| REAUTH_REQUIRED \| RUN_FAILED` (`DRAFT_PREFETCHED`, `AUTOPILOT_REVOKED` adicionados 2026-10-13, PRD v0.2 §6) |
-| POST | `/notifications/{id}/read` 🔒 | |
-| GET | `/audit-events?entityType&entityId&from&to` 🔒 | somente OWNER |
+| Verbo | Rota                                           | Notas                                                                                                                                                                                                                                                                                                                                                                                     |
+| ----- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET   | `/notifications` 🔒                            | in-app, paginado. `kind` ∈ `NotificationKind` = `CURATION_READY \| DRAFT_READY \| DRAFT_PREFETCHED \| APPROVAL_NEEDED \| AUTOPILOT_WILL_PUBLISH \| AUTOPILOT_PUBLISHED \| AUTOPILOT_REVOKED \| PUBLISHED \| PUBLICATION_FAILED \| PUBLICATION_AMBIGUOUS \| TOKEN_EXPIRING \| REAUTH_REQUIRED \| RUN_FAILED` (`DRAFT_PREFETCHED`, `AUTOPILOT_REVOKED` adicionados 2026-10-13, PRD v0.2 §6) |
+| POST  | `/notifications/{id}/read` 🔒                  |                                                                                                                                                                                                                                                                                                                                                                                           |
+| GET   | `/audit-events?entityType&entityId&from&to` 🔒 | somente OWNER                                                                                                                                                                                                                                                                                                                                                                             |
 
 ### 2.12 Webhooks
 
-| Verbo | Rota | Notas |
-|---|---|---|
-| POST | `/webhooks/telegram` | **desligado no MVP** (pergunta Q3). Se ligado: exige `X-Telegram-Bot-Api-Secret-Token` = `TELEGRAM_WEBHOOK_SECRET`; só comandos de leitura/ack |
+| Verbo | Rota                 | Notas                                                                                                                                          |
+| ----- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| POST  | `/webhooks/telegram` | **desligado no MVP** (pergunta Q3). Se ligado: exige `X-Telegram-Bot-Api-Secret-Token` = `TELEGRAM_WEBHOOK_SECRET`; só comandos de leitura/ack |
 
 ---
 
@@ -175,24 +177,32 @@ Bootstrap do primeiro usuário: **comando CLI** (`pnpm --filter api cli user:cre
   "id": "uuid",
   "title": "string",
   "summary": "string",
-  "sourceIds": ["uuid"],                 // ids de SourceItem
+  "sourceIds": ["uuid"], // ids de SourceItem
   "publishedAt": "2026-10-13T11:00:00Z", // ou null
-  "contentPillar": "string",             // slug do ContentPillar
+  "contentPillar": "string", // slug do ContentPillar
   "targetAudience": "string",
   "relevanceReason": "string",
   "suggestedAngle": "string",
-  "suggestedFormat": "text",             // text | code-card | image | carousel
-  "score": 87.5,                         // 0–100
-  "status": "candidate",                 // candidate | selected | dismissed | expired
+  "suggestedFormat": "text", // text | code-card | image | carousel
+  "score": 87.5, // 0–100
+  "status": "candidate", // candidate | selected | dismissed | expired
   // internos (opcionais no DTO)
   "rank": 1,
   "curationRunId": "uuid",
   "origin": "CURATION",
-  "scoreBreakdown": { "recency": 0.9, "pillarFit": 0.8, "audienceFit": 0.9, "novelty": 0.7, "sourceTrust": 0.8, "voiceFit": 0.6, "risk": 0.1 },
+  "scoreBreakdown": {
+    "recency": 0.9,
+    "pillarFit": 0.8,
+    "audienceFit": 0.9,
+    "novelty": 0.7,
+    "sourceTrust": 0.8,
+    "voiceFit": 0.6,
+    "risk": 0.1,
+  },
   // voiceFit = Rodrigo tem material próprio (Story Bank) para o tema; risk = polêmica/incerteza factual (0–1, menor é melhor).
   // Alinhamento 2026-10-13 (Atlas): aceitas as propostas de Pena (docs/editorial/structured-outputs.md §1.2); o engine mapeia freshness→recency, sourceQuality→sourceTrust, relevance→pillarFit+audienceFit; novelty vem do dedupe/histórico, não do modelo.
   "expiresAt": "2026-10-15T12:00:00Z",
-  "draftId": null
+  "draftId": null,
 }
 ```
 
@@ -221,16 +231,26 @@ Bootstrap do primeiro usuário: **comando CLI** (`pnpm --filter api cli user:cre
   "draftId": "uuid",
   "versionNumber": 2,
   "parentVersionId": "uuid",
-  "authorType": "SYSTEM",                // SYSTEM | USER
+  "authorType": "SYSTEM", // SYSTEM | USER
   "body": "string",
-  "hooks": [{ "text": "string", "formula": "H07", "rationale": "string" }],   // formula: HookFormula (string | null); rationale: string | null — alinhamento 2026-10-13, aceita proposta de Pena
-  "mediaSuggestion": { "format": "code-card", "description": "string", "altText": "string", "codeSnippet": "string|null" },   // null quando o post é só texto; altText OBRIGATÓRIO (≤ 300 chars) sempre que mediaSuggestion ≠ null — alinhamento 2026-10-13, acessibilidade
+  "hooks": [{ "text": "string", "formula": "H07", "rationale": "string" }], // formula: HookFormula (string | null); rationale: string | null — alinhamento 2026-10-13, aceita proposta de Pena
+  "mediaSuggestion": {
+    "format": "code-card",
+    "description": "string",
+    "altText": "string",
+    "codeSnippet": "string|null",
+  }, // null quando o post é só texto; altText OBRIGATÓRIO (≤ 300 chars) sempre que mediaSuggestion ≠ null — alinhamento 2026-10-13, acessibilidade
   "citations": [{ "sourceItemId": "uuid", "url": "https://...", "claim": "string", "quote": "string" }],
   "storyEntryIds": ["uuid"],
   "mediaAssetIds": ["uuid"],
-  "generation": { "promptId": "draft-writer", "promptVersion": "1.2.0", "model": "string", "engineVersion": "0.3.0" },
+  "generation": {
+    "promptId": "draft-writer",
+    "promptVersion": "1.2.0",
+    "model": "string",
+    "engineVersion": "0.3.0",
+  },
   "eval": { "clicheScore": 0.1, "voiceMatch": 0.9, "unsupportedClaims": [] },
-  "createdAt": "2026-10-13T12:00:00Z"
+  "createdAt": "2026-10-13T12:00:00Z",
 }
 ```
 
@@ -259,9 +279,16 @@ Bootstrap do primeiro usuário: **comando CLI** (`pnpm --filter api cli user:cre
 ### 3.4 `AutonomySettings`
 
 ```jsonc
-{ "mode": "ASSISTED", "autoApproveMinScore": null, "allowedPillarIds": [],
-  "maxAutoPostsPerWeek": 3, "cancelWindowMinutes": 60, "mediaRequiresHuman": true, "assistedPrefetchDraft": false,
-  "quietHours": { "start": "22:00", "end": "07:00", "timezone": "America/Sao_Paulo" } }
+{
+  "mode": "ASSISTED",
+  "autoApproveMinScore": null,
+  "allowedPillarIds": [],
+  "maxAutoPostsPerWeek": 3,
+  "cancelWindowMinutes": 60,
+  "mediaRequiresHuman": true,
+  "assistedPrefetchDraft": false,
+  "quietHours": { "start": "22:00", "end": "07:00", "timezone": "America/Sao_Paulo" },
+}
 ```
 
 ---
@@ -279,22 +306,22 @@ Formato **RFC 9457 Problem Details** (`Content-Type: application/problem+json`),
   "instance": "/api/v1/drafts/7f.../schedule",
   "code": "DRAFT_INVALID_TRANSITION",
   "correlationId": "req_01J...",
-  "errors": [ { "path": ["timezone"], "message": "IANA timezone obrigatório" } ]   // só em 400
+  "errors": [{ "path": ["timezone"], "message": "IANA timezone obrigatório" }], // só em 400
 }
 ```
 
-| HTTP | `code` (exemplos) | Quando |
-|---|---|---|
-| 400 | `VALIDATION_FAILED` | Zod falhou (`errors[]` por campo) |
-| 401 | `AUTH_REQUIRED`, `AUTH_INVALID_CREDENTIALS`, `AUTH_REAUTH_REQUIRED` | sem sessão / login inválido / endpoint 🔐 sem sessão elevada |
-| 403 | `FORBIDDEN`, `CSRF_REJECTED` | role insuficiente / origem inválida |
-| 404 | `NOT_FOUND` | recurso inexistente **ou de outro usuário** (não vazar existência) |
-| 409 | `DRAFT_INVALID_TRANSITION`, `ROW_VERSION_MISMATCH`, `CURATION_RUN_IN_PROGRESS`, `PUBLICATION_ALREADY_EXISTS`, `SCHEDULE_ALREADY_PENDING` | conflito de estado |
-| 412 | `LINKEDIN_REAUTH_REQUIRED`, `APPROVED_VERSION_REQUIRED` | pré-condição de domínio |
-| 422 | `SOURCE_URL_NOT_ALLOWED`, `SCHEDULE_IN_PAST`, `TIMEZONE_INVALID` | semanticamente inválido |
-| 429 | `RATE_LIMITED` | com `Retry-After` |
-| 502/503 | `UPSTREAM_UNAVAILABLE` | OpenAI/LinkedIn/S3 indisponível em chamada síncrona (rara) |
-| 500 | `INTERNAL` | sem detalhes internos; `correlationId` para o log |
+| HTTP | `code` (exemplos)                                                                                                                                                                                                   | Quando                                                                           |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| 400  | `VALIDATION_FAILED`, `IDEMPOTENCY_KEY_REQUIRED`                                                                                                                                                                     | Zod falhou (`errors[]` por campo) / ação 🧾 sem header                           |
+| 401  | `AUTH_REQUIRED`, `AUTH_INVALID_CREDENTIALS`, `AUTH_REAUTH_REQUIRED`                                                                                                                                                 | sem sessão / login inválido / endpoint 🔐 sem sessão elevada                     |
+| 403  | `FORBIDDEN`, `CSRF_REJECTED`                                                                                                                                                                                        | role insuficiente / origem inválida                                              |
+| 404  | `NOT_FOUND`                                                                                                                                                                                                         | recurso inexistente **ou de outro usuário** (não vazar existência)               |
+| 409  | `DRAFT_INVALID_TRANSITION`, `OPPORTUNITY_INVALID_TRANSITION`, `ROW_VERSION_MISMATCH`, `CURATION_RUN_IN_PROGRESS`, `PUBLICATION_ALREADY_EXISTS`, `SCHEDULE_ALREADY_PENDING`, `CONTENT_PILLAR_IN_USE`, `MEDIA_IN_USE` | conflito de estado ou recurso em uso                                             |
+| 412  | `LINKEDIN_REAUTH_REQUIRED`, `APPROVED_VERSION_REQUIRED`, `PUBLICATION_NOT_RETRYABLE`                                                                                                                                | pré-condição de domínio                                                          |
+| 422  | `SOURCE_URL_NOT_ALLOWED`, `SCHEDULE_IN_PAST`, `TIMEZONE_INVALID`                                                                                                                                                    | semanticamente inválido                                                          |
+| 429  | `RATE_LIMITED`                                                                                                                                                                                                      | com `Retry-After`                                                                |
+| 503  | `UPSTREAM_UNAVAILABLE`, `SERVICE_NOT_READY`                                                                                                                                                                         | OpenAI/LinkedIn/S3 indisponível em chamada síncrona (rara) / `GET /ready` falhou |
+| 500  | `INTERNAL`                                                                                                                                                                                                          | sem detalhes internos; `correlationId` para o log                                |
 
 O `web` mapeia `code` → mensagem PT-BR; nunca interpreta `detail` para tomar decisão.
 
@@ -317,9 +344,12 @@ O `web` mapeia `code` → mensagem PT-BR; nunca interpreta `detail` para tomar d
 
 ## 6. `packages/contracts`
 
-Pacote TypeScript **sem dependências de runtime além de `zod`** (e `@asteasolutions/zod-to-openapi` como
-devDependency para gerar a spec). Consumido por `web`, `api`, `worker`, `editorial-engine` e `domain`.
-Não contém lógica de negócio; só forma.
+Pacote TypeScript **sem dependências de runtime além de `zod` (v4)**. JSON Schema e OpenAPI são gerados com
+`z.toJSONSchema` nativo (`common/json-schema.ts`: `toJsonSchema`, `toOpenApiSchema`, `toStructuredOutputSchema`,
+`findStrictModeViolations`); nenhuma biblioteca extra. Consumido por `web`, `api`, `worker`, `editorial-engine`
+e `domain`. Não contém lógica de negócio; só forma. A tabela de transições do conteúdo (`state/content-transitions.ts`)
+é **dado** (`CONTENT_TRANSITIONS`, `canTransition`, `resolveTransition`), sem guardas: a state machine com guardas,
+efeitos e auditoria fica em `packages/domain`.
 
 ```text
 packages/contracts/
@@ -347,28 +377,41 @@ Regras:
 3. **`jobs/queues.ts`** define, por fila: `name`, `payload` (Zod), `retryLimit`, `retryBackoff`,
    `expireInSeconds`, `singletonKeyFrom(payload)`, `deadLetter`. api e worker usam a mesma definição.
 4. **Enums são `z.enum` únicos**; o Prisma `enum` espelha; teste garante paridade.
-5. Datas: `z.string().datetime({ offset: false })` + sufixo `Z` nas respostas; `IanaTimezone` validado
-   com `Intl.supportedValuesOf('timeZone')`; `LocalDateTime` = `YYYY-MM-DDTHH:mm` sem offset.
+5. Datas: `z.iso.datetime({ offset: false, local: false })` + sufixo `Z` nas respostas; `IanaTimezone` validado
+   com `Intl.supportedValuesOf('timeZone')` **mais `UTC`** (o Node não lista `UTC`); `LocalDateTime` = `YYYY-MM-DDTHH:mm` sem offset.
 6. Nenhum schema de resposta contém campo de segredo. Teste de contrato percorre os schemas e falha se
    encontrar `/token|secret|password|apiKey/i`.
 7. Mudança em `contracts` que quebre `web`/`worker` exige PR tocando os consumidores (monorepo) e revisão de Atlas.
+8. Dead-letter de cada fila chama-se `<queue>.dlq`. Validação de allowlist de host e de IP privado em `Source.url`
+   é da api (precisa de DNS); o schema garante só `https` + hostname válido.
+9. `DraftVersion.eval.quality` tipa o DTO com o `QualityEvaluation` (schemaVersion do modelo, Pena). Um bump de
+   schema do modelo é mudança de API: só aditiva (campo novo nullable, nunca remover) ou versionada; registrar no CHANGELOG.
+10. `AuditEvent.before/after` são validados por `RedactedJsonObjectSchema` (JSON recursivo que rejeita chaves
+    `/token|secret|password|apiKey|ciphertext/i` em qualquer profundidade) **antes** de persistir; ações 🔐 exigem role
+    OWNER (`OWNER_ONLY`) além de sessão elevada; callback OAuth aceita exatamente um de `code`/`error`.
+
+**Ratificação T-004 (2026-10-13, Atlas):** o pacote `@linkedin-ops/contracts@0.1.0` (PR #68, Alicerce) é a fonte de
+verdade; as divergências registradas no PR foram aceitas e incorporadas acima (zod 4 nativo; `openapi/v1.json` + teste
+de drift em T-008; `GET /drafts/{id}/approvals`; códigos de erro adicionais; `expectedRowVersion` em todas as mutações de
+draft; `OPPORTUNITY` do §13 = `CANDIDATE`; `discard` também de `GENERATING`/`SCHEDULED`; `Draft.needsReconciliation`;
+nomes de Pena nos Structured Outputs e de `contracts` nos DTOs, ADR-0005 §9; `<queue>.dlq`).
 
 ### 6.1 Filas (nomes e payloads mínimos)
 
-| Fila | Payload | Singleton | Retry | Produtor → consumidor |
-|---|---|---|---|---|
-| `source.fetch` | `{ sourceId, dryRun }` | `sourceId` | 3, backoff | worker (cron/curation) → worker |
-| `curation.run` | `{ curationRunId }` | `curationRunId` | 2 | cron/api → worker |
-| `curation.expire` | `{ userId }` | `userId` | 1 | cron → worker |
-| `draft.generate` | `{ draftId, opportunityId }` | `draftId` | 2 (só erros transientes) | api → worker |
-| `draft.regenerate` | `{ draftId, instructions? }` | `draftId` | 2 | api → worker |
-| `media.render` | `{ mediaAssetId }` | `mediaAssetId` | 2 | api → worker |
-| `media.upload-linkedin` | `{ mediaAssetId, publicationId }` | `mediaAssetId` | 3 | worker → worker |
-| `publication.publish` | `{ publicationId }` | `publicationId` | **0 automático** (ADR-0003) | api/worker → worker |
-| `schedule.reconcile` | `{}` | fixed | 1 | cron (5 min) → worker |
-| `publication.reconcile` | `{ publicationId }` | `publicationId` | 3 | api/alerta → worker |
-| `notification.send` | `{ notificationId }` | `notificationId` | 5, backoff | worker/api → worker |
-| `linkedin.token-refresh` | `{ userId }` | `userId` | 3 | cron diário → worker |
+| Fila                     | Payload                           | Singleton        | Retry                       | Produtor → consumidor           |
+| ------------------------ | --------------------------------- | ---------------- | --------------------------- | ------------------------------- |
+| `source.fetch`           | `{ sourceId, dryRun }`            | `sourceId`       | 3, backoff                  | worker (cron/curation) → worker |
+| `curation.run`           | `{ curationRunId }`               | `curationRunId`  | 2                           | cron/api → worker               |
+| `curation.expire`        | `{ userId }`                      | `userId`         | 1                           | cron → worker                   |
+| `draft.generate`         | `{ draftId, opportunityId }`      | `draftId`        | 2 (só erros transientes)    | api → worker                    |
+| `draft.regenerate`       | `{ draftId, instructions? }`      | `draftId`        | 2                           | api → worker                    |
+| `media.render`           | `{ mediaAssetId }`                | `mediaAssetId`   | 2                           | api → worker                    |
+| `media.upload-linkedin`  | `{ mediaAssetId, publicationId }` | `mediaAssetId`   | 3                           | worker → worker                 |
+| `publication.publish`    | `{ publicationId }`               | `publicationId`  | **0 automático** (ADR-0003) | api/worker → worker             |
+| `schedule.reconcile`     | `{}`                              | fixed            | 1                           | cron (5 min) → worker           |
+| `publication.reconcile`  | `{ publicationId }`               | `publicationId`  | 3                           | api/alerta → worker             |
+| `notification.send`      | `{ notificationId }`              | `notificationId` | 5, backoff                  | worker/api → worker             |
+| `linkedin.token-refresh` | `{ userId }`                      | `userId`         | 3                           | cron diário → worker            |
 
 Todos os payloads carregam `schemaVersion`, `correlationId` e `requestedBy` (`{ type: USER\|SYSTEM, id }`).
 
@@ -376,8 +419,8 @@ Todos os payloads carregam `schemaVersion`, `correlationId` e `requestedBy` (`{ 
 
 ## 7. Perguntas abertas
 
-| # | Pergunta | Hipótese adotada |
-|---|---|---|
+| #   | Pergunta                                                                                     | Hipótese adotada                                                       |
+| --- | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | Q10 | Gerar controllers a partir de `routes/v1.ts` (ex.: ts-rest/nestjs-zod) ou só testar paridade | Só paridade no MVP (menos magia); Alicerce decide ferramenta com Atlas |
-| Q11 | Cliente web gerado de OpenAPI (`openapi-fetch`) ou do registry Zod | Registry Zod (tipos já existem; sem passo de geração) |
-| Q12 | Expor `generation.usage` (tokens/custo) na API | Sim para OWNER, para analytics de custo |
+| Q11 | Cliente web gerado de OpenAPI (`openapi-fetch`) ou do registry Zod                           | Registry Zod (tipos já existem; sem passo de geração)                  |
+| Q12 | Expor `generation.usage` (tokens/custo) na API                                               | Sim para OWNER, para analytics de custo                                |
