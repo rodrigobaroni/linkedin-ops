@@ -3,6 +3,7 @@ import { AsyncAcceptedSchema } from "../common/async.js";
 import { IsoDateTimeSchema } from "../common/datetime.js";
 import { HttpsUrlSchema, SlugSchema, UuidSchema } from "../common/ids.js";
 import { PaginationQuerySchema } from "../common/pagination.js";
+import { CurationRunStatusSchema, type CurationRunStatus } from "../enums/curation-run.js";
 import {
   OpportunityOriginSchema,
   OpportunityStatusSchema,
@@ -69,13 +70,65 @@ export type OpportunityDetail = z.infer<typeof OpportunityDetailSchema>;
 
 export const OPPORTUNITIES_PER_RUN = 5;
 
-/** The five cards of one curation run. */
+/**
+ * Invariant I1 (data-model.md §2.4, §4): a `SUCCEEDED` run has exactly five opportunities with distinct
+ * ranks 1..5 and distinct ids. Other run statuses (`PARTIAL`, `FAILED`, …) may carry fewer cards, but ranks,
+ * when present, are still distinct. The service enforces it on write; the DTO refuses to carry a violation.
+ */
+export function refineRunOpportunities(
+  status: CurationRunStatus,
+  opportunities: readonly Opportunity[],
+  ctx: z.RefinementCtx,
+  path: readonly (string | number)[] = ["opportunities"],
+): void {
+  const ids = opportunities.map((opportunity) => opportunity.id);
+  if (new Set(ids).size !== ids.length) {
+    ctx.addIssue({
+      code: "custom",
+      path: [...path],
+      message: "Opportunity ids must be distinct within a run",
+    });
+  }
+  const presentRanks = opportunities
+    .map((opportunity) => opportunity.rank ?? null)
+    .filter((rank): rank is number => rank !== null);
+  if (new Set(presentRanks).size !== presentRanks.length) {
+    ctx.addIssue({
+      code: "custom",
+      path: [...path],
+      message: "Opportunity ranks must be distinct within a run",
+    });
+  }
+  if (status !== "SUCCEEDED") return;
+  if (opportunities.length !== OPPORTUNITIES_PER_RUN) {
+    ctx.addIssue({
+      code: "custom",
+      path: [...path],
+      message: `A SUCCEEDED run has exactly ${OPPORTUNITIES_PER_RUN} opportunities (I1)`,
+    });
+    return;
+  }
+  const sorted = [...presentRanks].sort((a, b) => a - b);
+  const isOneToFive =
+    sorted.length === OPPORTUNITIES_PER_RUN && sorted.every((rank, index) => rank === index + 1);
+  if (!isOneToFive) {
+    ctx.addIssue({
+      code: "custom",
+      path: [...path],
+      message: "A SUCCEEDED run ranks its opportunities 1..5 without gaps or repeats (I1)",
+    });
+  }
+}
+
+/** The cards of one curation run. `status` is the run status, so I1 applies when it is `SUCCEEDED`. */
 export const OpportunityBatchSchema = z
   .object({
     curationRunId: UuidSchema,
+    status: CurationRunStatusSchema,
     generatedAt: IsoDateTimeSchema,
     opportunities: z.array(OpportunitySchema).max(OPPORTUNITIES_PER_RUN),
   })
+  .superRefine((batch, ctx) => refineRunOpportunities(batch.status, batch.opportunities, ctx))
   .meta({ id: "OpportunityBatch" });
 export type OpportunityBatch = z.infer<typeof OpportunityBatchSchema>;
 

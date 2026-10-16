@@ -232,10 +232,19 @@ export const opportunityDetail: c.OpportunityDetail = {
   sourceItems: [sourceItemSummary],
 };
 
+/** Five distinct cards ranked 1..5 (invariant I1). */
+export const fiveOpportunities: c.Opportunity[] = Array.from({ length: 5 }, (_, index) => ({
+  ...opportunity,
+  id: `018f6b1e-7c2a-7b3c-9d4e-00000000010${index + 1}`,
+  rank: index + 1,
+  title: `${opportunity.title} #${index + 1}`,
+}));
+
 export const opportunityBatch: c.OpportunityBatch = {
   curationRunId: ids.run,
+  status: "SUCCEEDED",
   generatedAt: AT,
-  opportunities: [opportunity],
+  opportunities: fiveOpportunities,
 };
 
 export const manualOpportunityInput: c.ManualOpportunityInput = {
@@ -272,7 +281,13 @@ export const curationRun: c.CurationRun = {
 
 export const curationRunDetail: c.CurationRunDetail = {
   ...curationRun,
-  opportunities: [opportunity],
+  opportunities: fiveOpportunities,
+};
+
+export const partialCurationRunDetail: c.CurationRunDetail = {
+  ...curationRun,
+  status: "PARTIAL",
+  opportunities: fiveOpportunities.slice(0, 2),
 };
 
 export const hook: c.Hook = {
@@ -526,6 +541,11 @@ export const resourceCases: SchemaCase[] = [
       "unknown code": set("code", "SOMETHING_ELSE"),
       "status 99": set("status", 99),
       "missing correlationId": drop("correlationId"),
+      "status does not match code": set("status", 200),
+      "type does not match code": set("type", "https://linkedin-ops.local/errors/not-found"),
+      "errors[] on a non-validation code": set("errors", [{ path: ["x"], message: "y" }]),
+      "NOT_FOUND served as 409": (v) =>
+        patch(patch(v, "code", "NOT_FOUND"), "type", "https://linkedin-ops.local/errors/not-found"),
     },
   },
   {
@@ -533,6 +553,7 @@ export const resourceCases: SchemaCase[] = [
     schema: c.ProblemDetailsSchema,
     valid: {
       ...problemDetails,
+      type: "https://linkedin-ops.local/errors/validation-failed",
       status: 400,
       code: "VALIDATION_FAILED",
       errors: [{ path: ["timezone"], message: "IANA timezone obrigatório" }],
@@ -910,12 +931,30 @@ export const resourceCases: SchemaCase[] = [
     },
   },
   {
-    name: "CurationRunDetail",
+    name: "CurationRunDetail (SUCCEEDED, I1)",
     schema: c.CurationRunDetailSchema,
     valid: curationRunDetail,
     invalid: {
       "six opportunities": set("opportunities", Array(6).fill(opportunity)),
       "opportunities not array": set("opportunities", opportunity),
+      "SUCCEEDED with one opportunity": set("opportunities", [opportunity]),
+      "SUCCEEDED with four opportunities": set("opportunities", fiveOpportunities.slice(0, 4)),
+      "five ranks all 1": set(
+        "opportunities",
+        fiveOpportunities.map((o) => ({ ...o, rank: 1 })),
+      ),
+      "ranks 1..4 plus 6": set("opportunities.4.rank", 6),
+      "rank missing": set("opportunities.2.rank", null),
+      "duplicate id": set("opportunities.1.id", fiveOpportunities[0]?.id),
+    },
+  },
+  {
+    name: "CurationRunDetail (PARTIAL)",
+    schema: c.CurationRunDetailSchema,
+    valid: partialCurationRunDetail,
+    invalid: {
+      "duplicate ranks even when PARTIAL": set("opportunities.1.rank", 1),
+      "duplicate ids even when PARTIAL": set("opportunities.1.id", fiveOpportunities[0]?.id),
     },
   },
   // opportunities (briefing §13)
@@ -956,6 +995,21 @@ export const resourceCases: SchemaCase[] = [
     invalid: {
       "six opportunities": set("opportunities", Array(6).fill(opportunity)),
       "bad run id": set("curationRunId", "run-1"),
+      "missing status": drop("status"),
+      "SUCCEEDED with one opportunity": set("opportunities", [opportunity]),
+      "five ranks all 1": set(
+        "opportunities",
+        fiveOpportunities.map((o) => ({ ...o, rank: 1 })),
+      ),
+    },
+  },
+  {
+    name: "OpportunityBatch (PARTIAL with two cards)",
+    schema: c.OpportunityBatchSchema,
+    valid: { ...opportunityBatch, status: "PARTIAL", opportunities: fiveOpportunities.slice(0, 2) },
+    invalid: {
+      "duplicate rank": set("opportunities.1.rank", 1),
+      "unknown status": set("status", "DONE"),
     },
   },
   {

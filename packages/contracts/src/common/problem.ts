@@ -74,6 +74,11 @@ export function problemTypeFor(code: ErrorCode): string {
   return `${PROBLEM_TYPE_BASE}${code.toLowerCase().replaceAll("_", "-")}`;
 }
 
+/** Codes whose Problem may carry `errors[]` (contracts.md §4: field issues only on 400). */
+export const ERROR_CODES_WITH_FIELD_ISSUES: ReadonlySet<ErrorCode> = new Set<ErrorCode>([
+  "VALIDATION_FAILED",
+]);
+
 /** One field-level issue, present only on `VALIDATION_FAILED`. */
 export const ValidationIssueSchema = z
   .object({
@@ -83,7 +88,10 @@ export const ValidationIssueSchema = z
   .meta({ id: "ValidationIssue" });
 export type ValidationIssue = z.infer<typeof ValidationIssueSchema>;
 
-/** RFC 9457 Problem Details with a stable `code` and `correlationId` (contracts.md §4). */
+/**
+ * RFC 9457 Problem Details with a stable `code` and `correlationId` (contracts.md §4). `status` and `type`
+ * are derived from `code` (`ERROR_CODE_HTTP_STATUS`, `problemTypeFor`); an incoherent triple is rejected.
+ */
 export const ProblemDetailsSchema = z
   .object({
     type: z.url().describe("Problem type URI"),
@@ -100,6 +108,30 @@ export const ProblemDetailsSchema = z
       .array(ValidationIssueSchema)
       .optional()
       .describe("Field issues; only with VALIDATION_FAILED"),
+  })
+  .superRefine((problem, ctx) => {
+    const expectedStatus = ERROR_CODE_HTTP_STATUS[problem.code];
+    if (problem.status !== expectedStatus) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["status"],
+        message: `${problem.code} is served with HTTP ${expectedStatus}`,
+      });
+    }
+    if (problem.type !== problemTypeFor(problem.code)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["type"],
+        message: `type must be ${problemTypeFor(problem.code)}`,
+      });
+    }
+    if (problem.errors !== undefined && !ERROR_CODES_WITH_FIELD_ISSUES.has(problem.code)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["errors"],
+        message: "errors[] is only allowed with VALIDATION_FAILED",
+      });
+    }
   })
   .meta({ id: "ProblemDetails" });
 export type ProblemDetails = z.infer<typeof ProblemDetailsSchema>;
