@@ -1,7 +1,7 @@
 import { Slot } from "radix-ui";
 import { cva, type VariantProps } from "class-variance-authority";
 import type { ComponentProps } from "react";
-import { cn } from "../lib/cn.js";
+import { cn } from "../lib/cn";
 
 /** Variants follow design-tokens.md "Botões": one `default` action per region; 40 px tall by default. */
 const buttonVariants = cva(

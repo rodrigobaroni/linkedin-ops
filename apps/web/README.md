@@ -25,4 +25,4 @@ src/providers/              TanStack Query provider; AutonomyModeProvider (mocke
 src/i18n/pt-br.ts           Chrome strings (no i18n framework)
 ```
 
-Design tokens come from `@linkedin-ops/ui/styles.css` (imported in `src/app/globals.css`). Routes are typed (`typedRoutes`), so every `href` must exist. Security headers live in `next.config.ts`; a nonce-based CSP arrives with T-057.
+Design tokens come from `@linkedin-ops/ui/styles.css` (imported in `src/app/globals.css`); the component package is consumed from source via `transpilePackages`, so the scripts above work in a clean clone right after `pnpm install`. Routes are typed (`typedRoutes`), so every `href` must exist. Security headers live in `next.config.ts`; a nonce-based CSP arrives with T-057.

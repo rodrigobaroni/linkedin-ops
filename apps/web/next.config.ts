@@ -17,6 +17,9 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // @linkedin-ops/ui ships TypeScript source; Next compiles it so `pnpm --filter @linkedin-ops/web <script>`
+  // works without building dependencies first (Aurora P0 on PR #67).
+  transpilePackages: ["@linkedin-ops/ui"],
   poweredByHeader: false,
   typedRoutes: true,
   // Do not generate apps/web/AGENTS.md: agent guidance lives in the repo docs and CLAUDE.md.

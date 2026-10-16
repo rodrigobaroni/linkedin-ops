@@ -1,5 +1,5 @@
 import type { ComponentProps } from "react";
-import { cn } from "../lib/cn.js";
+import { cn } from "../lib/cn";
 
 export type SeparatorProps = ComponentProps<"div"> & {
   orientation?: "horizontal" | "vertical";

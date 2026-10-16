@@ -1,7 +1,7 @@
 import { Slot } from "radix-ui";
 import { cva, type VariantProps } from "class-variance-authority";
 import type { ComponentProps } from "react";
-import { cn } from "../lib/cn.js";
+import { cn } from "../lib/cn";
 
 /**
  * Status badge: icon + text label, non-interactive (design-tokens.md "Badges e chips").

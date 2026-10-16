@@ -1,6 +1,6 @@
 import { cva, type VariantProps } from "class-variance-authority";
 import type { ComponentProps } from "react";
-import { cn } from "../lib/cn.js";
+import { cn } from "../lib/cn";
 
 /** Inline alert / page banner. Severity follows screen-states.md "Severidade de feedback". */
 const alertVariants = cva(

@@ -1,5 +1,5 @@
 import type { ComponentProps } from "react";
-import { cn } from "../lib/cn.js";
+import { cn } from "../lib/cn";
 
 /** Skeleton block; pulse animation is disabled under `prefers-reduced-motion` (design-tokens.md). */
 export function Skeleton({ className, ...props }: ComponentProps<"div">) {

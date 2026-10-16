@@ -1,10 +1,10 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { formatViolations, runAxe } from "../test/axe.js";
-import { Button } from "./button.js";
-import { EmptyState } from "./empty-state.js";
-import { ErrorState } from "./error-state.js";
-import { LoadingState } from "./loading-state.js";
+import { formatViolations, runAxe } from "../test/axe";
+import { Button } from "./button";
+import { EmptyState } from "./empty-state";
+import { ErrorState } from "./error-state";
+import { LoadingState } from "./loading-state";
 
 describe("screen states", () => {
   it("EmptyState has a heading, description and actions", async () => {

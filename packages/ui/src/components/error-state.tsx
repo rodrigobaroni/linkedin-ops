@@ -1,6 +1,6 @@
 import { AlertCircleIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
-import { cn } from "../lib/cn.js";
+import { cn } from "../lib/cn";
 
 export type ErrorStateProps = Omit<ComponentProps<"section">, "title"> & {
   /** Plain-language title, e.g. "Não foi possível carregar o histórico". */

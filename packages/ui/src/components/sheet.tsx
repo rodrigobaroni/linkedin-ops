@@ -3,7 +3,7 @@
 import { Dialog as SheetPrimitive } from "radix-ui";
 import { XIcon } from "lucide-react";
 import type { ComponentProps } from "react";
-import { cn } from "../lib/cn.js";
+import { cn } from "../lib/cn";
 
 /**
  * Sheet/Drawer built on Radix Dialog: focus trap, Escape to close, focus returned to the trigger

@@ -1,7 +1,7 @@
 import { Slot } from "radix-ui";
 import { ChevronRightIcon } from "lucide-react";
 import type { ComponentProps } from "react";
-import { cn } from "../lib/cn.js";
+import { cn } from "../lib/cn";
 
 /** Breadcrumb landmarks: `nav[aria-label]` + ordered list; the current page uses `aria-current="page"`. */
 export function Breadcrumb({ className, ...props }: ComponentProps<"nav">) {

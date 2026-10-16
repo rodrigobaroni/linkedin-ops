@@ -1,5 +1,5 @@
 import type { ComponentProps, ReactNode } from "react";
-import { cn } from "../lib/cn.js";
+import { cn } from "../lib/cn";
 
 export type EmptyStateProps = Omit<ComponentProps<"section">, "title"> & {
   /** Heading of the empty state (screen-states.md: "Empty não é erro"). */

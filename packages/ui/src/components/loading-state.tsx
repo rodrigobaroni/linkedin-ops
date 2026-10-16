@@ -1,6 +1,6 @@
 import type { ComponentProps } from "react";
-import { cn } from "../lib/cn.js";
-import { Skeleton } from "./skeleton.js";
+import { cn } from "../lib/cn";
+import { Skeleton } from "./skeleton";
 
 export type LoadingStateProps = ComponentProps<"div"> & {
   /** Text announced to assistive technology and available as a static alternative to the animation. */

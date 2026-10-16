@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { AUTONOMY_MODES } from "../types/autonomy.js";
-import { AUTONOMY_MODE_PRESENTATION, AutonomyModeBadge } from "./autonomy-mode-badge.js";
+import { AUTONOMY_MODES } from "../types/autonomy";
+import { AUTONOMY_MODE_PRESENTATION, AutonomyModeBadge } from "./autonomy-mode-badge";
 
 describe("AutonomyModeBadge", () => {
   it.each(AUTONOMY_MODES)("shows the textual label for %s", (mode) => {
