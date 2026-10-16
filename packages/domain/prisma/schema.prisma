@@ -8,7 +8,7 @@
 //   repository (ADR-0007 §12, invariant I14). Join tables are not entities and carry no owner.
 // - Enums mirror `packages/contracts` (`z.enum`) value by value; where the contract exposes lowercase
 //   values (briefing §13: `candidate`, `code-card`, `pt-BR`) the Prisma name is SCREAMING_SNAKE and the
-//   database value is `@map`ped to the contract value. `src/enums/contracts-parity.test.ts` enforces it.
+//   database value is `@map`ped to the contract value. `test/enums-parity.test.ts` enforces it.
 // - What Prisma cannot express lives in hand-written SQL inside the migration (clearly marked block):
 //   `CREATE EXTENSION citext`, partial unique indexes (I7, I8, active voice profile), CHECK constraints
 //   (I5, untrusted flag) and the append-only triggers on draft_versions, approvals and audit_events (I3, I11).
@@ -287,8 +287,11 @@ model User {
   timezone             String   @default("America/Sao_Paulo")
   /// `urn:li:person:...`, filled when the LinkedIn OAuth connection is made.
   linkedinMemberUrn    String?  @map("linkedin_member_urn")
-  /// Reserved for TOTP (ADR-0007 §4); encrypted per ADR-0004 when the feature lands. Never plaintext.
+  /// Reserved for TOTP (ADR-0007 §4). Same envelope as OAuthToken (ADR-0004): ciphertext, wrapped DEK
+  /// and KEK version are all null or all set (`CHECK` in the migration). Encryption itself: T-052.
   totpSecretCiphertext Bytes?   @map("totp_secret_ciphertext")
+  totpWrappedDek       Bytes?   @map("totp_wrapped_dek")
+  totpKeyVersion       String?  @map("totp_key_version")
   createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt            DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -355,7 +358,10 @@ model OAuthState {
   /// SHA-256 of the OIDC `nonce`, when `openid` is requested.
   nonceHash              String?       @map("nonce_hash")
   /// PKCE `code_verifier`, encrypted at rest (ADR-0004 framing); null when PKCE is disabled.
+  /// Set together with `code_verifier_key_version` (`CHECK` all-or-none in the migration); rows live at
+  /// most 10 minutes (`expires_at`, indexed) and are purged by the retention job (T-052 inherits this).
   codeVerifierCiphertext Bytes?        @map("code_verifier_ciphertext")
+  codeVerifierKeyVersion String?       @map("code_verifier_key_version")
   scopes                 String[]
   /// Allowlisted logical UI route to return to (enum-like, never a raw URL).
   returnTo               String?       @map("return_to")
@@ -367,6 +373,7 @@ model OAuthState {
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
+  @@index([userId])
   @@index([sessionId])
   @@index([expiresAt])
   @@map("oauth_states")
@@ -436,7 +443,8 @@ model VoiceProfile {
   id            String   @id @db.Uuid
   userId        String   @map("user_id") @db.Uuid
   version       Int
-  isActive      Boolean  @default(true) @map("is_active")
+  /// Activation is an explicit service step (deactivate the previous version in the same transaction).
+  isActive      Boolean  @default(false) @map("is_active")
   language      Language @default(PT_BR)
   tone          String
   /// What to do.
@@ -605,6 +613,7 @@ model SourceItem {
   @@unique([sourceId, externalId])
   @@index([userId, contentHash])
   @@index([sourceId, publishedAt])
+  @@index([fetchedAt])
   @@map("source_items")
 }
 
@@ -612,7 +621,7 @@ model SourceItem {
 
 /// One curation execution (cron Mon/Wed/Fri 09:00 America/Sao_Paulo, or manual).
 /// I13 (cron idempotency): unique `(user_id, scheduled_for, trigger)` — `trigger` added in T-005 so a
-/// MANUAL run never collides with the CRON run of the same instant (Atlas to confirm on review).
+/// MANUAL run never collides with the CRON run of the same instant.
 model CurationRun {
   id            String             @id @db.Uuid
   userId        String             @map("user_id") @db.Uuid
@@ -885,7 +894,8 @@ model Schedule {
 }
 
 /// One attempt to publish a version (ADR-0003). I8: unique `idempotency_key` plus partial unique
-/// `(draft_id) WHERE status IN ('IN_PROGRESS','SUCCEEDED')` (migration). I9: claim is a conditional UPDATE.
+/// `(draft_id) WHERE status IN ('IN_PROGRESS','SUCCEEDED','AMBIGUOUS')` (migration): an ambiguous
+/// outcome also blocks a second post until reconciled (ADR-0003). I9: claim is a conditional UPDATE.
 model Publication {
   id                 String            @id @db.Uuid
   userId             String            @map("user_id") @db.Uuid

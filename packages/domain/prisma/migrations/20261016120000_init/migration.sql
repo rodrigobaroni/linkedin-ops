@@ -107,6 +107,8 @@ CREATE TABLE "users" (
     "timezone" TEXT NOT NULL DEFAULT 'America/Sao_Paulo',
     "linkedin_member_urn" TEXT,
     "totp_secret_ciphertext" BYTEA,
+    "totp_wrapped_dek" BYTEA,
+    "totp_key_version" TEXT,
     "created_at" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ(3) NOT NULL,
 
@@ -138,6 +140,7 @@ CREATE TABLE "oauth_states" (
     "state_hash" TEXT NOT NULL,
     "nonce_hash" TEXT,
     "code_verifier_ciphertext" BYTEA,
+    "code_verifier_key_version" TEXT,
     "scopes" TEXT[],
     "return_to" TEXT,
     "created_at" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -191,7 +194,7 @@ CREATE TABLE "voice_profiles" (
     "id" UUID NOT NULL,
     "user_id" UUID NOT NULL,
     "version" INTEGER NOT NULL,
-    "is_active" BOOLEAN NOT NULL DEFAULT true,
+    "is_active" BOOLEAN NOT NULL DEFAULT false,
     "language" "language" NOT NULL DEFAULT 'pt-BR',
     "tone" TEXT NOT NULL,
     "principles" TEXT[],
@@ -590,6 +593,9 @@ CREATE INDEX "sessions_expires_at_idx" ON "sessions"("expires_at");
 CREATE UNIQUE INDEX "oauth_states_state_hash_key" ON "oauth_states"("state_hash");
 
 -- CreateIndex
+CREATE INDEX "oauth_states_user_id_idx" ON "oauth_states"("user_id");
+
+-- CreateIndex
 CREATE INDEX "oauth_states_session_id_idx" ON "oauth_states"("session_id");
 
 -- CreateIndex
@@ -618,6 +624,9 @@ CREATE INDEX "source_items_user_id_content_hash_idx" ON "source_items"("user_id"
 
 -- CreateIndex
 CREATE INDEX "source_items_source_id_published_at_idx" ON "source_items"("source_id", "published_at");
+
+-- CreateIndex
+CREATE INDEX "source_items_fetched_at_idx" ON "source_items"("fetched_at");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "source_items_source_id_external_id_key" ON "source_items"("source_id", "external_id");
@@ -855,8 +864,9 @@ ALTER TABLE "idempotency_keys" ADD CONSTRAINT "idempotency_keys_user_id_fkey" FO
 CREATE UNIQUE INDEX "voice_profiles_user_id_active_key" ON "voice_profiles"("user_id") WHERE "is_active";
 -- I7: at most one PENDING schedule per draft.
 CREATE UNIQUE INDEX "schedules_draft_id_pending_key" ON "schedules"("draft_id") WHERE "status" = 'PENDING';
--- I8: never two posts of the same draft — one Publication IN_PROGRESS or SUCCEEDED per draft.
-CREATE UNIQUE INDEX "publications_draft_id_active_key" ON "publications"("draft_id") WHERE "status" IN ('IN_PROGRESS', 'SUCCEEDED');
+-- I8: never two posts of the same draft — one Publication IN_PROGRESS, SUCCEEDED or AMBIGUOUS per draft
+-- (an ambiguous outcome blocks a second attempt until reconciled, ADR-0003 §5-6).
+CREATE UNIQUE INDEX "publications_draft_id_active_key" ON "publications"("draft_id") WHERE "status" IN ('IN_PROGRESS', 'SUCCEEDED', 'AMBIGUOUS');
 
 -- CHECK constraints
 -- I5: automatic approvals carry a reason and the policy that authorized them.
@@ -865,6 +875,12 @@ ALTER TABLE "approvals" ADD CONSTRAINT "approvals_system_requires_reason_and_pol
 -- Human approvals identify the human (contracts `ApprovalSchema` refinement).
 ALTER TABLE "approvals" ADD CONSTRAINT "approvals_user_requires_actor_check"
   CHECK ("actor_type" <> 'USER' OR "actor_user_id" IS NOT NULL);
+-- Encrypted-at-rest envelopes are all-or-none (ADR-0004 framing; cipher itself lands in T-052).
+ALTER TABLE "users" ADD CONSTRAINT "users_totp_envelope_all_or_none_check"
+  CHECK (("totp_secret_ciphertext" IS NULL) = ("totp_wrapped_dek" IS NULL)
+     AND ("totp_secret_ciphertext" IS NULL) = ("totp_key_version" IS NULL));
+ALTER TABLE "oauth_states" ADD CONSTRAINT "oauth_states_code_verifier_all_or_none_check"
+  CHECK (("code_verifier_ciphertext" IS NULL) = ("code_verifier_key_version" IS NULL));
 -- I12: collected content is always untrusted; the flag is a constant.
 ALTER TABLE "source_items" ADD CONSTRAINT "source_items_untrusted_check" CHECK ("untrusted");
 -- Source fetch interval minimum (data-model.md §2.3, contracts SOURCE_MIN_FETCH_INTERVAL_MINUTES).

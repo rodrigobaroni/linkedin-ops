@@ -331,4 +331,7 @@ DROP TYPE "public"."notification_status";
 
 
 -- ───────────────────────────── Section 2: extensions ─────────────────────────────
+-- Optional. Dropping the extension needs the privilege that created it and would break any other
+-- schema/database object in a shared cluster that still uses citext. Keep it unless this database is
+-- dedicated to LinkedIn Ops and being decommissioned.
 DROP EXTENSION IF EXISTS citext;
