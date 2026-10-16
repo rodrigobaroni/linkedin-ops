@@ -7,6 +7,8 @@ coverage
 pnpm-lock.yaml
 CHANGELOG.md
 packages/editorial-engine/upstream
+packages/domain/src/generated
+packages/domain/prisma/migrations
 .maestri
 # docs/** is owned by product/architecture/security roles and is not Prettier-clean yet (31 files on
 # 2026-10-13). Kept out of `format:check` in T-002; each owner reformats their docs in their own task,

@@ -60,3 +60,6 @@ Thumbs.db
 
 # Next.js generated types (apps/web: `next typegen` / `next build`)
 next-env.d.ts
+
+# Prisma Client output (packages/domain: `pnpm --filter @linkedin-ops/domain generate`)
+packages/domain/src/generated/
