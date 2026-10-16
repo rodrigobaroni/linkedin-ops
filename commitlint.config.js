@@ -1,4 +1,4 @@
-// Conventional Commits (see CONTRIBUTING.md). Enforced locally by husky `commit-msg`; CI check arrives in T-002.
+// Conventional Commits (see CONTRIBUTING.md). Enforced locally by husky `commit-msg` and in CI by the `commitlint` job (.github/workflows/ci.yml).
 export default {
   extends: ["@commitlint/config-conventional"],
   rules: {

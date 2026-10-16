@@ -73,7 +73,7 @@ Barra lateral fixa de 256 px, recolhível para 72 px. Ordem:
 
 No rodapé da barra lateral:
 
-- modo atual: `Assistido`, `Controlado` ou `Completo`;
+- modo atual: `Assistido`, `Piloto automático controlado` ou `Piloto automático completo`;
 - conexão LinkedIn: `Conectado`, `Atenção` ou `Desconectado`;
 - menu do usuário.
 
@@ -134,29 +134,28 @@ Usa barra lateral recolhida (ícone + tooltip) e o mesmo conteúdo responsivo do
 
 Não há atalho “gerar todas”. Selecionar uma oportunidade cria apenas o rascunho correspondente. Voltar à Curadoria preserva o progresso dos demais cards.
 
-### 2. Modo controlado
+### 2. Piloto automático controlado
 
 ```text
-Sistema seleciona + gera + propõe horário
-  → /hoje mostra “1 aprovação pendente”
-  → /estudio/:id mostra versão e horário proposto
-  → “Aprovar e manter horário”
-  → /calendario confirma o agendamento
+Sistema seleciona + gera + aprova automaticamente + agenda
+  → /hoje mostra “Publicação automática agendada”
+  → /estudio/:id explica a aprovação e o horário
+  → janela de cancelamento de cancel_window_minutes (padrão: 60 min)
+  → Rodrigo pode Cancelar, Editar ou Reagendar antes do fim da janela
 ```
 
-Sem aprovação humana até o slot, a publicação não ocorre. A tela explica “Horário perdido; escolha um novo horário”.
+O sistema notifica a decisão automática e o limite para cancelamento. Conteúdo com mídia sempre exige aprovação humana e não segue para publicação automática.
 
-### 3. Modo completo
+### 3. Piloto automático completo
 
 ```text
 Sistema seleciona + gera + aprova por política + agenda
-  → /hoje e notificação mostram contagem regressiva da janela de veto
+  → /hoje e notificação mostram a decisão automática e o horário
   → /estudio/:id explica gates e razão da aprovação
-  → Rodrigo pode Editar, Reagendar ou Descartar
-  → publicação no fim da janela, se nada mudar
+  → publicação segue sem janela de cancelamento
 ```
 
-Qualquer gate reprovado termina em `IN_REVIEW`, nunca em publicação forçada.
+Qualquer gate bloqueante reprovado termina em `IN_REVIEW`, nunca em publicação forçada. Conteúdo com mídia sempre exige aprovação humana, inclusive neste modo.
 
 ### 4. Recuperação de falha de publicação
 
@@ -190,6 +189,5 @@ Alerta global / Notificação
 
 - **[DECISÃO RODRIGO]** Quando houver menos de cinco candidatos acima do limiar, prefere ver cinco cards com os inferiores claramente marcados ou somente os aprovados pelo limiar?
 - **[DECISÃO RODRIGO]** É permitido selecionar mais de uma oportunidade do mesmo lote? A hipótese atual é “sim”, com aviso de cadência.
-- **[DECISÃO RODRIGO]** Qual é a janela padrão de veto no modo completo? A hipótese visual usa 60 minutos, respeitando mínimo de 15 minutos.
 - **[DECISÃO RODRIGO]** Se a permissão oficial de publicação atrasar, haverá fallback “copiar e marcar como publicado manualmente”? A navegação não inclui esse caminho até decisão.
 

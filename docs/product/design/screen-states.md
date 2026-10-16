@@ -63,9 +63,9 @@ DRAFT → IN_REVIEW → APPROVED → SCHEDULED → PUBLISHING → PUBLISHED
 | Estado | Rótulo PT-BR | Definição visível | Ações principais | Restrições e avisos |
 |---|---|---|---|---|
 | `DRAFT` | **Rascunho** | primeira ou nova versão existe, ainda não entrou em revisão formal | `Abrir no Estúdio`, `Regenerar`, `Descartar` | geração completa; nenhuma publicação possível |
-| `IN_REVIEW` | **Em revisão** | versão está sendo editada/revisada ou requer intervenção humana | `Editar`, `Regenerar`, `Aprovar esta versão`, `Descartar` | mostrar gates; bloqueios explicam correção; no controlado, horário proposto pode expirar |
+| `IN_REVIEW` | **Em revisão** | versão está sendo editada/revisada ou requer intervenção humana | `Editar`, `Regenerar`, `Aprovar esta versão`, `Descartar` | mostrar gates; bloqueios explicam correção; mídia sempre exige aprovação humana em qualquer modo |
 | `APPROVED` | **Aprovado** | uma versão específica foi aprovada por Rodrigo ou por política | `Agendar`, `Publicar agora` quando permitido, `Editar`, `Descartar` | mostrar `Aprovado por` e razão; editar revoga aprovação após confirmação |
-| `SCHEDULED` | **Agendado** | versão aprovada tem data/hora e timezone explícito | `Reagendar`, `Desagendar`, `Editar`, `Descartar` | mostrar horário local + timezone; editar revoga e desagenda; veto visível no modo completo |
+| `SCHEDULED` | **Agendado** | versão aprovada tem data/hora e timezone explícito | `Reagendar`, `Desagendar`, `Editar`, `Descartar` | mostrar horário local + timezone; editar revoga e desagenda; no Piloto automático controlado, mostrar prazo de cancelamento; no Piloto automático completo, informar que não há janela |
 | `PUBLISHING` | **Publicando** | envio/reconciliação com LinkedIn em andamento | `Acompanhar`; nenhuma ação duplicada | texto: “Não tente publicar novamente”; mostrar tentativas sem expor segredo |
 | `PUBLISHED` | **Publicado** | LinkedIn confirmou e a referência da publicação foi salva | `Ver no LinkedIn`, `Copiar link`, `Ver auditoria` | estado terminal no MVP; não prometer exclusão remota |
 | `FAILED` | **Falha na publicação** | retries terminaram ou uma correção humana é necessária | varia: `Reconectar`, `Editar`, `Reagendar`, `Tentar novamente`, `Descartar` | causa legível, versão preservada e garantia explícita contra duplicação; retry só após reconciliação |
@@ -95,29 +95,30 @@ O modo aparece:
 1. no rodapé da sidebar desktop e no drawer mobile;
 2. no cabeçalho de Hoje, Curadoria e Estúdio;
 3. em qualquer decisão automática registrada na linha do tempo;
-4. em alertas da janela de veto;
+4. nos alertas da janela de cancelamento do piloto automático controlado;
 5. na confirmação de ação cujo comportamento muda pelo modo.
 
 Formato do badge: ícone + rótulo textual. Cores são apoio, nunca o único identificador.
 
 | Modo | Badge | Mensagem curta | O que a UI enfatiza |
 |---|---|---|---|
-| Assistido | `◉ Assistido` | “Você seleciona, aprova e agenda.” | ações manuais primárias; sugestões não parecem decisões tomadas |
-| Controlado | `◐ Controlado` | “O sistema seleciona e propõe; você aprova.” | prazo da aprovação, horário proposto e consequência de perder o slot |
-| Completo | `◆ Completo` | “O sistema pode aprovar e agendar se todos os guardrails passarem.” | razão da política, janela de veto, contagem regressiva e ações `Editar`, `Reagendar`, `Descartar` |
+| Assistido | `◉ Assistido` | “Você aprova todas as etapas.” | ações humanas primárias; sugestões não parecem decisões tomadas |
+| Piloto automático controlado | `◐ Controlado` | “O sistema aprova e agenda; você pode cancelar antes do prazo.” | razão da política, horário, notificação e contagem de `cancel_window_minutes` (padrão: 60) |
+| Piloto automático completo | `◆ Completo` | “O sistema aprova e agenda sem janela de cancelamento.” | razão da política e indicação explícita de que não há prazo de cancelamento; mídia continua humana |
 
 ### Faixas contextuais
 
-- **Controlado / aguardando aprovação:** “Horário proposto: qua, 14 out, 10:00. Aprove até 09:45 para manter este slot.”
-- **Controlado / slot perdido:** “O horário proposto passou sem aprovação. Nada foi publicado.” + `Escolher novo horário`.
-- **Completo / veto ativo:** “Publicação automática em 54 min, às 10:00. Veto disponível até 09:45.” A contagem é complemento; data/hora absoluta permanece.
-- **Completo / gate falhou:** “A automação parou: 1 afirmação está sem fonte. Nada será publicado até sua revisão.”
+- **Piloto automático controlado / cancelamento disponível:** “Publicação automática às 10:00. Você pode cancelar até 09:00 (60 min).” A contagem é complemento; data/hora absoluta permanece.
+- **Piloto automático controlado / prazo encerrado:** “A janela de cancelamento terminou. A publicação automática está sendo processada.”
+- **Piloto automático completo / agendado automaticamente:** “Publicação automática às 10:00, sem janela de cancelamento.”
+- **Piloto automático / gate falhou:** “A automação parou: 1 afirmação está sem fonte. Nada será publicado até sua revisão.”
+- **Qualquer modo / mídia:** “Esta publicação inclui mídia e exige sua aprovação antes de agendar ou publicar.”
 - **Modo rebaixado:** “3 aprovações automáticas foram revogadas e voltaram para revisão.” + lista de itens.
 
 ### Alteração de modo
 
 - Subir de nível exige diálogo com diferenças concretas, confirmação e reautenticação definida por Segurança.
-- O botão final nomeia a consequência: `Ativar modo controlado` / `Ativar modo completo`.
+- O botão final nomeia a consequência: `Ativar Piloto automático controlado` / `Ativar Piloto automático completo`.
 - Descer é imediato após confirmação simples e apresenta itens afetados antes de concluir quando possível.
 - Itens existentes não são promovidos retroativamente ao subir.
 - A interface não usa toggle binário para uma decisão de três níveis.
@@ -134,7 +135,6 @@ Formato do badge: ícone + rótulo textual. Cores são apoio, nunca o único ide
 
 ## Perguntas abertas
 
-- **[DECISÃO RODRIGO]** Qual é a duração padrão da janela de veto do modo completo? Esta especificação usa 60 minutos como hipótese.
 - **[DECISÃO RODRIGO]** Quando há menos de cinco candidatos acima do limiar, mostrar cards abaixo do limiar ou menos de cinco? Os estados cobrem ambos; a Curadoria assume a primeira opção.
 - **[DECISÃO RODRIGO]** Permitir “marcar como publicado manualmente” caso OAuth não esteja disponível? Sem decisão, `PUBLISHED` exige confirmação da API oficial.
 

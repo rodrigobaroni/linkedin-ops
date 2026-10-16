@@ -10,7 +10,7 @@ The brief mandates using `https://github.com/sergebulaev/linkedin-skills` (MIT) 
 evaluation reference, recording the analysed commit/tag, preserving attribution, adapting the concepts
 into `packages/editorial-engine`, and keeping a traceability document in
 `docs/editorial/upstream-mapping.md`. The application must not depend on Claude Code, Codex or `SKILL.md`
-files at runtime. We need a reproducible way to know *which* upstream revision each adaptation came
+files at runtime. We need a reproducible way to know _which_ upstream revision each adaptation came
 from, to diff future upstream changes, and to review adaptations against the original — without
 introducing a runtime or build dependency. Pena's audit found that most derived material comes from the
 upstream `references/` folder, and that the full repository (~3 MB, images, Python, generated packages,
@@ -52,7 +52,7 @@ symlinked `.claude/skills`) is noise.
 ## Alternatives considered
 
 - **Git submodule.** Reproducible and small, but adds friction for agents and CI (recursive clone,
-  detached HEAD confusion), pins the *entire* repo, and makes partial vendoring impossible. Rejected.
+  detached HEAD confusion), pins the _entire_ repo, and makes partial vendoring impossible. Rejected.
 - **Git subtree.** Keeps history in-repo, but pulls ~3 MB including images, Python, generated packages
   and symlinks; squash merges pollute `main`; conflicts are hard for a multi-agent team; tempts the team
   to "use the lib". Rejected.

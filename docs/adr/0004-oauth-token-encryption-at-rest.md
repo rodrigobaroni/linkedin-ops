@@ -1,6 +1,6 @@
 # ADR-0004: OAuth token encryption at rest
 
-- Status: proposed (revised 2026-10-13 after Sentinela's review: `docs/security/oauth-and-tokens.md` §3, `docs/security/threat-model.md` SEC-004, TM-14, G-02)
+- Status: **accepted** (2026-10-16). Security sign-off by Sentinela on 2026-10-13 (`docs/security/oauth-and-tokens.md` §3, `docs/security/threat-model.md` SEC-004, TM-14, G-02), with the implementation-review conditions recorded in item 13.
 - Date: 2026-10-13
 - Deciders: Atlas (architect); review Sentinela (security); implementation Alicerce (backend), Pêndulo (automation); gate G-02 Alicerce/Estaleiro
 
@@ -19,14 +19,16 @@ separation of database roles.
    refresh tokens are encrypted **separately** with AES-256-GCM using the DEK, a fresh random 96-bit
    nonce per operation and a 128-bit tag. The DEK is wrapped with the active KEK (AES-256-GCM key wrap
    with its own nonce). Persisted columns: `access_token_ciphertext`, `refresh_token_ciphertext`
-   (each `bytea` = `schemaVersion(1) || nonce(12) || ciphertext || tag(16)`), `wrapped_dek` (`bytea`),
-   `key_version` (`text`). No plaintext column exists.
+   (each `bytea` = `schemaVersion(1) || nonce(12) || ciphertext || tag(16)`), `wrapped_dek` (`bytea`, same
+   authenticated framing: `schemaVersion(1) || nonce(12) || wrappedKey(32) || tag(16)`, AAD with
+   `tokenType = dek`), `key_version` (`text`). No plaintext column exists.
 2. **Canonical AAD** = `"<schemaVersion>|<provider>|<userId>|<credentialId>|<tokenType>"` (`tokenType` ∈
    `access | refresh`; DEK wrap uses `tokenType = dek`). A ciphertext cannot be moved between rows,
    columns or users.
 3. **KEK material**: `ENCRYPTION_KEY` (base64 of exactly 32 bytes, CSPRNG) from the runtime environment
    (Docker secret / `.env` on the host), never in Git, images, database, logs, frontend or ordinary
-   backups. Key ring: `ENCRYPTION_KEYS="<version>:<base64>,..."` + `ENCRYPTION_ACTIVE_KEY_VERSION`; a
+   backups. Key ring: the variable `ENCRYPTION_KEYS` holds comma-separated `<version>:<base64>` pairs, and
+   `ENCRYPTION_ACTIVE_KEY_VERSION` selects the write key; a
    single `ENCRYPTION_KEY` is shorthand for version `1`.
 4. **Startup fail-closed (SEC-004).** Outside `NODE_ENV=development`, `api` and `worker` refuse to start
    when `ENCRYPTION_KEY`/`ENCRYPTION_KEYS` is empty, equals a placeholder (`change-me*`, the `.env.example`
@@ -63,6 +65,13 @@ separation of database roles.
     deletes ciphertexts, wrapped DEK and any pending `state`/verifier; the `AuditEvent` keeps metadata only.
 12. **Other secrets** (OpenAI key, Telegram token, S3 keys, LinkedIn client secret, session secret) are
     runtime environment variables consumed only by `api`/`worker`, never persisted in the database.
+13. **Implementation-review conditions (Sentinela sign-off, 2026-10-13).** The PR that implements
+    `TokenVault` is only approved when: (a) the key ring is parsed **strictly** — versions unique, the active
+    version present in the ring, every key exactly 32 bytes after base64 decoding, no duplicate or empty
+    entries; any violation fails startup; there is **no silent fallback** (not to `ENCRYPTION_KEY`, not to
+    version `1`, not to the newest key); (b) `wrapped_dek` uses the authenticated framing of item 1 (nonce
+    and tag stored and verified, AAD bound to the credential) and a tampered or truncated frame fails
+    closed; (c) the tests listed under Consequences exist and run in CI as evidence for gate G-02.
 
 ## Alternatives considered
 
@@ -90,4 +99,5 @@ separation of database roles.
 - Meets "tokens cifrados em repouso" and "nunca em logs/frontend/prompts"; addresses SEC-004, TM-14,
   G-02 from the threat model.
 - Reduces blast radius of a database leak to ciphertext + wrapped DEKs; rotation does not touch tokens.
-- Sentinela to confirm AAD composition, the fail-closed matrix and the rotation procedure before acceptance.
+- Sentinela confirmed AAD composition, the fail-closed matrix and the rotation procedure on 2026-10-13
+  (sign-off); the remaining conditions are implementation-review gates (item 13), not open design points.

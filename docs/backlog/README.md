@@ -1,6 +1,6 @@
 # Backlog
 
-Índice de épicos e tarefas. Enquanto não houver remote GitHub, as tarefas vivem aqui como arquivos
+Índice de épicos e tarefas. As tarefas vivem aqui como arquivos (espelhadas em GitHub Issues, ver seção GitHub)
 `docs/backlog/<EPIC>/<T-NNN>-<slug>.md`. Cada tarefa segue o template em `docs/backlog/_template-task.md`.
 
 Regras: numeração global `T-001…`; uma tarefa por branch/floor; estado atualizado pelo responsável
@@ -48,7 +48,7 @@ Referências de produto: `docs/product/prd.md`, `docs/product/user-journeys.md`,
 | ID | Épico | Título | Responsável | Estado | Dependências |
 |---|---|---|---|---|---|
 | [T-001](EPIC-00/T-001-monorepo-bootstrap.md) | EPIC-00 | Bootstrap do monorepo (pnpm + Turborepo) | Estaleiro (plataforma) | done | — |
-| [T-002](EPIC-00/T-002-ci-pipeline.md) | EPIC-00 | Pipeline de CI (GitHub Actions) | Estaleiro (plataforma) | todo | T-001 |
+| [T-002](EPIC-00/T-002-ci-pipeline.md) | EPIC-00 | Pipeline de CI (GitHub Actions) | Estaleiro (plataforma) | review | T-001 |
 | [T-003](EPIC-00/T-003-docker-compose-dev.md) | EPIC-00 | Ambiente de desenvolvimento com Docker Compose | Estaleiro (plataforma) | todo | T-001 |
 | [T-004](EPIC-00/T-004-contracts-package.md) | EPIC-00 | Pacote `contracts` (schemas Zod + tipos compartilhados) | Alicerce (backend) | review | T-001 |
 | [T-005](EPIC-00/T-005-database-baseline-prisma.md) | EPIC-00 | Banco de dados base (PostgreSQL + Prisma + migrations) | Alicerce (backend) | todo | T-003, T-004 |
@@ -110,3 +110,73 @@ Referências de produto: `docs/product/prd.md`, `docs/product/user-journeys.md`,
 | [T-060](EPIC-10/T-060-e2e-critical-flow.md) | EPIC-10 | E2E do fluxo crítico (curadoria → publicação) com fakes | Crivo (QA) | todo | T-059, T-030, T-036, T-043, T-039, T-047, T-044 |
 | [T-062](EPIC-10/T-062-security-scans-ci-triage.md) | EPIC-10 | Scans de segurança em CI (Semgrep, Trivy, gitleaks) com triagem documentada (gate G-06) | Estaleiro (plataforma) | todo | T-002, T-003 |
 | [T-063](EPIC-10/T-063-data-retention-export-deletion.md) | EPIC-10 | Retenção, exportação e exclusão de dados (LGPD) | Alicerce (backend) | todo | T-005, T-025, T-053 |
+
+## GitHub
+
+Repositório: <https://github.com/rodrigobaroni/linkedin-ops> (privado). Milestones = épicos; uma issue por tarefa (criadas em 2026-10-13). O arquivo da tarefa continua sendo a fonte de verdade; a issue é o espelho para PRs (`Closes #n`).
+
+| Tarefa | Issue |
+|---|---|
+| T-001 | [#1](https://github.com/rodrigobaroni/linkedin-ops/issues/1) |
+| T-002 | [#2](https://github.com/rodrigobaroni/linkedin-ops/issues/2) |
+| T-003 | [#3](https://github.com/rodrigobaroni/linkedin-ops/issues/3) |
+| T-004 | [#4](https://github.com/rodrigobaroni/linkedin-ops/issues/4) |
+| T-005 | [#5](https://github.com/rodrigobaroni/linkedin-ops/issues/5) |
+| T-006 | [#6](https://github.com/rodrigobaroni/linkedin-ops/issues/6) |
+| T-007 | [#7](https://github.com/rodrigobaroni/linkedin-ops/issues/7) |
+| T-008 | [#8](https://github.com/rodrigobaroni/linkedin-ops/issues/8) |
+| T-009 | [#9](https://github.com/rodrigobaroni/linkedin-ops/issues/9) |
+| T-010 | [#10](https://github.com/rodrigobaroni/linkedin-ops/issues/10) |
+| T-011 | [#11](https://github.com/rodrigobaroni/linkedin-ops/issues/11) |
+| T-012 | [#12](https://github.com/rodrigobaroni/linkedin-ops/issues/12) |
+| T-013 | [#13](https://github.com/rodrigobaroni/linkedin-ops/issues/13) |
+| T-014 | [#14](https://github.com/rodrigobaroni/linkedin-ops/issues/14) |
+| T-015 | [#15](https://github.com/rodrigobaroni/linkedin-ops/issues/15) |
+| T-016 | [#16](https://github.com/rodrigobaroni/linkedin-ops/issues/16) |
+| T-017 | [#17](https://github.com/rodrigobaroni/linkedin-ops/issues/17) |
+| T-018 | [#18](https://github.com/rodrigobaroni/linkedin-ops/issues/18) |
+| T-019 | [#19](https://github.com/rodrigobaroni/linkedin-ops/issues/19) |
+| T-020 | [#20](https://github.com/rodrigobaroni/linkedin-ops/issues/20) |
+| T-021 | [#21](https://github.com/rodrigobaroni/linkedin-ops/issues/21) |
+| T-022 | [#22](https://github.com/rodrigobaroni/linkedin-ops/issues/22) |
+| T-023 | [#23](https://github.com/rodrigobaroni/linkedin-ops/issues/23) |
+| T-024 | [#24](https://github.com/rodrigobaroni/linkedin-ops/issues/24) |
+| T-025 | [#25](https://github.com/rodrigobaroni/linkedin-ops/issues/25) |
+| T-026 | [#26](https://github.com/rodrigobaroni/linkedin-ops/issues/26) |
+| T-027 | [#27](https://github.com/rodrigobaroni/linkedin-ops/issues/27) |
+| T-028 | [#28](https://github.com/rodrigobaroni/linkedin-ops/issues/28) |
+| T-029 | [#29](https://github.com/rodrigobaroni/linkedin-ops/issues/29) |
+| T-030 | [#30](https://github.com/rodrigobaroni/linkedin-ops/issues/30) |
+| T-031 | [#31](https://github.com/rodrigobaroni/linkedin-ops/issues/31) |
+| T-032 | [#32](https://github.com/rodrigobaroni/linkedin-ops/issues/32) |
+| T-033 | [#33](https://github.com/rodrigobaroni/linkedin-ops/issues/33) |
+| T-034 | [#34](https://github.com/rodrigobaroni/linkedin-ops/issues/34) |
+| T-035 | [#35](https://github.com/rodrigobaroni/linkedin-ops/issues/35) |
+| T-036 | [#36](https://github.com/rodrigobaroni/linkedin-ops/issues/36) |
+| T-037 | [#37](https://github.com/rodrigobaroni/linkedin-ops/issues/37) |
+| T-038 | [#38](https://github.com/rodrigobaroni/linkedin-ops/issues/38) |
+| T-039 | [#39](https://github.com/rodrigobaroni/linkedin-ops/issues/39) |
+| T-040 | [#40](https://github.com/rodrigobaroni/linkedin-ops/issues/40) |
+| T-041 | [#41](https://github.com/rodrigobaroni/linkedin-ops/issues/41) |
+| T-042 | [#42](https://github.com/rodrigobaroni/linkedin-ops/issues/42) |
+| T-043 | [#43](https://github.com/rodrigobaroni/linkedin-ops/issues/43) |
+| T-044 | [#44](https://github.com/rodrigobaroni/linkedin-ops/issues/44) |
+| T-045 | [#45](https://github.com/rodrigobaroni/linkedin-ops/issues/45) |
+| T-046 | [#47](https://github.com/rodrigobaroni/linkedin-ops/issues/47) |
+| T-047 | [#48](https://github.com/rodrigobaroni/linkedin-ops/issues/48) |
+| T-048 | [#49](https://github.com/rodrigobaroni/linkedin-ops/issues/49) |
+| T-049 | [#50](https://github.com/rodrigobaroni/linkedin-ops/issues/50) |
+| T-050 | [#51](https://github.com/rodrigobaroni/linkedin-ops/issues/51) |
+| T-051 | [#52](https://github.com/rodrigobaroni/linkedin-ops/issues/52) |
+| T-052 | [#53](https://github.com/rodrigobaroni/linkedin-ops/issues/53) |
+| T-053 | [#54](https://github.com/rodrigobaroni/linkedin-ops/issues/54) |
+| T-054 | [#55](https://github.com/rodrigobaroni/linkedin-ops/issues/55) |
+| T-055 | [#56](https://github.com/rodrigobaroni/linkedin-ops/issues/56) |
+| T-056 | [#57](https://github.com/rodrigobaroni/linkedin-ops/issues/57) |
+| T-057 | [#58](https://github.com/rodrigobaroni/linkedin-ops/issues/58) |
+| T-058 | [#59](https://github.com/rodrigobaroni/linkedin-ops/issues/59) |
+| T-059 | [#60](https://github.com/rodrigobaroni/linkedin-ops/issues/60) |
+| T-060 | [#61](https://github.com/rodrigobaroni/linkedin-ops/issues/61) |
+| T-061 | [#46](https://github.com/rodrigobaroni/linkedin-ops/issues/46) |
+| T-062 | [#62](https://github.com/rodrigobaroni/linkedin-ops/issues/62) |
+| T-063 | [#63](https://github.com/rodrigobaroni/linkedin-ops/issues/63) |

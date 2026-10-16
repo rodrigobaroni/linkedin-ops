@@ -4,6 +4,24 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+catalogs:
+  default:
+    '@types/node':
+      specifier: ^24.0.0
+      version: 24.19.2
+    eslint:
+      specifier: ^10.12.0
+      version: 10.12.0
+    prettier:
+      specifier: ^3.9.10
+      version: 3.9.10
+    typescript:
+      specifier: ~5.9.3
+      version: 5.9.3
+    vitest:
+      specifier: ^5.0.4
+      version: 5.0.4
+
 importers:
 
   .:
@@ -21,13 +39,13 @@ importers:
         specifier: ^9.1.7
         version: 9.1.7
       prettier:
-        specifier: ^3.9.10
+        specifier: 'catalog:'
         version: 3.9.10
       turbo:
         specifier: ^2.11.7
         version: 2.11.7
       typescript:
-        specifier: ~5.9.3
+        specifier: 'catalog:'
         version: 5.9.3
 
   apps/api:
@@ -40,16 +58,16 @@ importers:
         specifier: workspace:*
         version: link:../../packages/config
       '@types/node':
-        specifier: ^24.0.0
+        specifier: 'catalog:'
         version: 24.19.2
       eslint:
-        specifier: ^10.12.0
+        specifier: 'catalog:'
         version: 10.12.0(jiti@2.6.1)
       typescript:
-        specifier: ~5.9.3
+        specifier: 'catalog:'
         version: 5.9.3
       vitest:
-        specifier: ^5.0.4
+        specifier: 'catalog:'
         version: 5.0.4(@types/node@24.19.2)(vite@8.3.4(@types/node@24.19.2)(jiti@2.6.1))
 
   apps/web:
@@ -62,16 +80,16 @@ importers:
         specifier: workspace:*
         version: link:../../packages/config
       '@types/node':
-        specifier: ^24.0.0
+        specifier: 'catalog:'
         version: 24.19.2
       eslint:
-        specifier: ^10.12.0
+        specifier: 'catalog:'
         version: 10.12.0(jiti@2.6.1)
       typescript:
-        specifier: ~5.9.3
+        specifier: 'catalog:'
         version: 5.9.3
       vitest:
-        specifier: ^5.0.4
+        specifier: 'catalog:'
         version: 5.0.4(@types/node@24.19.2)(vite@8.3.4(@types/node@24.19.2)(jiti@2.6.1))
 
   apps/worker:
@@ -84,16 +102,16 @@ importers:
         specifier: workspace:*
         version: link:../../packages/config
       '@types/node':
-        specifier: ^24.0.0
+        specifier: 'catalog:'
         version: 24.19.2
       eslint:
-        specifier: ^10.12.0
+        specifier: 'catalog:'
         version: 10.12.0(jiti@2.6.1)
       typescript:
-        specifier: ~5.9.3
+        specifier: 'catalog:'
         version: 5.9.3
       vitest:
-        specifier: ^5.0.4
+        specifier: 'catalog:'
         version: 5.0.4(@types/node@24.19.2)(vite@8.3.4(@types/node@24.19.2)(jiti@2.6.1))
 
   packages/config:
@@ -112,19 +130,19 @@ importers:
         version: 8.71.2(eslint@10.12.0(jiti@2.6.1))(typescript@5.9.3)
     devDependencies:
       '@types/node':
-        specifier: ^24.0.0
+        specifier: 'catalog:'
         version: 24.19.2
       eslint:
-        specifier: ^10.12.0
+        specifier: 'catalog:'
         version: 10.12.0(jiti@2.6.1)
       prettier:
-        specifier: ^3.9.10
+        specifier: 'catalog:'
         version: 3.9.10
       typescript:
-        specifier: ~5.9.3
+        specifier: 'catalog:'
         version: 5.9.3
       vitest:
-        specifier: ^5.0.4
+        specifier: 'catalog:'
         version: 5.0.4(@types/node@24.19.2)(vite@8.3.4(@types/node@24.19.2)(jiti@2.6.1))
 
   packages/contracts:
@@ -137,16 +155,16 @@ importers:
         specifier: workspace:*
         version: link:../config
       '@types/node':
-        specifier: ^24.0.0
+        specifier: 'catalog:'
         version: 24.19.2
       eslint:
-        specifier: ^10.12.0
+        specifier: 'catalog:'
         version: 10.12.0(jiti@2.6.1)
       typescript:
-        specifier: ~5.9.3
+        specifier: 'catalog:'
         version: 5.9.3
       vitest:
-        specifier: ^5.0.4
+        specifier: 'catalog:'
         version: 5.0.4(@types/node@24.19.2)(vite@8.3.4(@types/node@24.19.2)(jiti@2.6.1))
 
   packages/domain:
@@ -155,16 +173,16 @@ importers:
         specifier: workspace:*
         version: link:../config
       '@types/node':
-        specifier: ^24.0.0
+        specifier: 'catalog:'
         version: 24.19.2
       eslint:
-        specifier: ^10.12.0
+        specifier: 'catalog:'
         version: 10.12.0(jiti@2.6.1)
       typescript:
-        specifier: ~5.9.3
+        specifier: 'catalog:'
         version: 5.9.3
       vitest:
-        specifier: ^5.0.4
+        specifier: 'catalog:'
         version: 5.0.4(@types/node@24.19.2)(vite@8.3.4(@types/node@24.19.2)(jiti@2.6.1))
 
   packages/editorial-engine:
@@ -173,16 +191,16 @@ importers:
         specifier: workspace:*
         version: link:../config
       '@types/node':
-        specifier: ^24.0.0
+        specifier: 'catalog:'
         version: 24.19.2
       eslint:
-        specifier: ^10.12.0
+        specifier: 'catalog:'
         version: 10.12.0(jiti@2.6.1)
       typescript:
-        specifier: ~5.9.3
+        specifier: 'catalog:'
         version: 5.9.3
       vitest:
-        specifier: ^5.0.4
+        specifier: 'catalog:'
         version: 5.0.4(@types/node@24.19.2)(vite@8.3.4(@types/node@24.19.2)(jiti@2.6.1))
 
   packages/ui:
@@ -191,16 +209,16 @@ importers:
         specifier: workspace:*
         version: link:../config
       '@types/node':
-        specifier: ^24.0.0
+        specifier: 'catalog:'
         version: 24.19.2
       eslint:
-        specifier: ^10.12.0
+        specifier: 'catalog:'
         version: 10.12.0(jiti@2.6.1)
       typescript:
-        specifier: ~5.9.3
+        specifier: 'catalog:'
         version: 5.9.3
       vitest:
-        specifier: ^5.0.4
+        specifier: 'catalog:'
         version: 5.0.4(@types/node@24.19.2)(vite@8.3.4(@types/node@24.19.2)(jiti@2.6.1))
 
   tests/e2e:
@@ -209,13 +227,13 @@ importers:
         specifier: workspace:*
         version: link:../../packages/config
       '@types/node':
-        specifier: ^24.0.0
+        specifier: 'catalog:'
         version: 24.19.2
       eslint:
-        specifier: ^10.12.0
+        specifier: 'catalog:'
         version: 10.12.0(jiti@2.6.1)
       typescript:
-        specifier: ~5.9.3
+        specifier: 'catalog:'
         version: 5.9.3
 
 packages:
