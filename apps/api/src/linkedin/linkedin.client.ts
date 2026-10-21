@@ -62,7 +62,7 @@ export type LinkedInPostOutcome =
  * access token is a parameter only; it is never logged, stored or put into an error.
  */
 @Injectable()
-export class LinkedInClient {
+export class LinkedInApiClient {
   constructor(
     @Inject(LINKEDIN_FETCH) private readonly fetch: FetchLike,
     @Inject(LINKEDIN_CONFIG) private readonly config: LinkedInClientConfig | null,

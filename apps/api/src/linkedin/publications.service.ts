@@ -20,7 +20,7 @@ import { API_LOGGER } from "../logging/logger.js";
 import { PRISMA_CLIENT } from "../prisma/prisma.module.js";
 import type { AuthenticatedSession } from "../session/session.service.js";
 import { FixedWindowLimiter } from "./fixed-window-limiter.js";
-import { LinkedInClient, textPostPayload, type LinkedInPostOutcome } from "./linkedin.client.js";
+import { LinkedInApiClient, textPostPayload, type LinkedInPostOutcome } from "./linkedin.client.js";
 import { linkedinPostUrl } from "./linkedin.constants.js";
 import { personUrn, PUBLISH_SCOPE, TOKEN_VAULT } from "./linkedin-oauth.service.js";
 
@@ -55,7 +55,7 @@ export class PublicationsService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly prisma: PrismaClient,
     @Inject(TOKEN_VAULT) private readonly vault: TokenVault,
-    @Inject(LinkedInClient) private readonly client: LinkedInClient,
+    @Inject(LinkedInApiClient) private readonly client: LinkedInApiClient,
     @Inject(API_LOGGER) private readonly logger: Logger,
   ) {}
 

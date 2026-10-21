@@ -10,3 +10,7 @@ docs/backlog/README.md:generic-api-key:43
 # Runtime env interface, line 51: the PKCE mode field declaration (field name and type only, no value; T-008).
 2c7393584954a11933f680a04c649a9d62fa0ad8:packages/domain/src/env/runtime.ts:linkedin-client-secret:51
 packages/domain/src/env/runtime.ts:linkedin-client-secret:51
+# LinkedIn OAuth service, line 13 of commit 7ca04f7 only: an import list whose second name, the old 14-letter
+# HTTP client class, matched linkedin-client-id. The class was renamed (LinkedInApiClient), so the working
+# tree is clean; this suppresses the historical commit alone (PR #84, Crivo round 1).
+7ca04f7c2fe03605befae1e0471f9daacfcbeb0c:apps/api/src/linkedin/linkedin-oauth.service.ts:linkedin-client-id:13

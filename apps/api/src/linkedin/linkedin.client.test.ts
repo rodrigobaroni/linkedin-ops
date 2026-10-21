@@ -4,7 +4,7 @@ import { FixedWindowLimiter } from "./fixed-window-limiter.js";
 import {
   classifyPostResponse,
   LinkedInApiError,
-  LinkedInClient,
+  LinkedInApiClient,
   type FetchLike,
 } from "./linkedin.client.js";
 
@@ -25,7 +25,7 @@ function json(status: number, body: unknown, headers: Record<string, string> = {
 
 function clientWith(handler: FetchLike) {
   const calls: { url: string; init: RequestInit }[] = [];
-  const client = new LinkedInClient(async (url, init) => {
+  const client = new LinkedInApiClient(async (url, init) => {
     calls.push({ url, init });
     return handler(url, init);
   }, CONFIG);
@@ -70,7 +70,7 @@ describe("classifyPostResponse (ADR-0003)", () => {
   });
 });
 
-describe("LinkedInClient", () => {
+describe("LinkedInApiClient", () => {
   it("exchanges the code with the byte-identical redirect URI and never follows redirects", async () => {
     const { client, calls } = clientWith(async () =>
       json(200, {

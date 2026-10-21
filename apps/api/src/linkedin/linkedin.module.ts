@@ -6,7 +6,7 @@ import { RUNTIME_ENV } from "../config/runtime-env.module.js";
 import { API_LOGGER } from "../logging/logger.js";
 import { PrismaModule } from "../prisma/prisma.module.js";
 import {
-  LinkedInClient,
+  LinkedInApiClient,
   LINKEDIN_CONFIG,
   LINKEDIN_FETCH,
   type FetchLike,
@@ -49,7 +49,7 @@ export class LinkedInModule {
           inject: [RUNTIME_ENV],
           useFactory: (env: RuntimeEnv) => new TokenVault(env.encryptionKeyRing),
         },
-        LinkedInClient,
+        LinkedInApiClient,
         LinkedInOAuthService,
         PublicationsService,
       ],

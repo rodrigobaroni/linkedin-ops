@@ -10,7 +10,7 @@ import { API_LOGGER } from "../logging/logger.js";
 import { PRISMA_CLIENT } from "../prisma/prisma.module.js";
 import type { AuthenticatedSession } from "../session/session.service.js";
 import { FixedWindowLimiter } from "./fixed-window-limiter.js";
-import { LinkedInApiError, LinkedInClient } from "./linkedin.client.js";
+import { LinkedInApiError, LinkedInApiClient } from "./linkedin.client.js";
 import { LINKEDIN_AUTHORIZE_URL, LINKEDIN_SCOPES } from "./linkedin.constants.js";
 
 export const TOKEN_VAULT = Symbol("TOKEN_VAULT");
@@ -55,7 +55,7 @@ export class LinkedInOAuthService {
     @Inject(PRISMA_CLIENT) private readonly prisma: PrismaClient,
     @Inject(RUNTIME_ENV) private readonly env: RuntimeEnv,
     @Inject(TOKEN_VAULT) private readonly vault: TokenVault,
-    @Inject(LinkedInClient) private readonly client: LinkedInClient,
+    @Inject(LinkedInApiClient) private readonly client: LinkedInApiClient,
     @Inject(API_LOGGER) private readonly logger: Logger,
   ) {}
 
