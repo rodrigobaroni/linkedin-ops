@@ -43,7 +43,7 @@ Legenda: 🔒 = autenticado; ⚡ = assíncrono (202 + job); 🧾 = exige `Idempo
 | Verbo | Rota      | Descrição                          |
 | ----- | --------- | ---------------------------------- |
 | GET   | `/health` | liveness (sem auth)                |
-| GET   | `/ready`  | readiness: DB + pg-boss (sem auth) |
+| GET   | `/ready`  | readiness: DB + pg-boss (sem auth). `200 { status: "ok", checks }` quando nada falhou; `503 SERVICE_NOT_READY` (Problem, `detail` lista os checks) se algum check falhou. Um check `skipped` (dependência ainda não ligada, ex.: pg-boss antes de T-006) nunca conta como falha (decisão 2026-10-21, T-008) |
 
 ### 2.2 Auth e sessão
 
@@ -320,6 +320,8 @@ Formato **RFC 9457 Problem Details** (`Content-Type: application/problem+json`),
 | 412  | `LINKEDIN_REAUTH_REQUIRED`, `APPROVED_VERSION_REQUIRED`, `PUBLICATION_NOT_RETRYABLE`                                                                                                                                                            | pré-condição de domínio                                                                 |
 | 422  | `SOURCE_URL_NOT_ALLOWED`, `SCHEDULE_IN_PAST`, `TIMEZONE_INVALID`                                                                                                                                                                                | semanticamente inválido                                                                 |
 | 429  | `RATE_LIMITED`                                                                                                                                                                                                                                  | com `Retry-After`                                                                       |
+| 413  | `PAYLOAD_TOO_LARGE`                                                                                                                                                                                                                             | corpo da requisição acima do limite (JSON: 1 MiB; T-008)                                |
+| 415  | `UNSUPPORTED_MEDIA_TYPE`                                                                                                                                                                                                                        | `Content-Type` não aceito pela rota (mutações exigem JSON; T-008)                       |
 | 503  | `UPSTREAM_UNAVAILABLE`, `SERVICE_NOT_READY`                                                                                                                                                                                                     | OpenAI/LinkedIn/S3 indisponível em chamada síncrona (rara) / `GET /ready` falhou        |
 | 500  | `INTERNAL`                                                                                                                                                                                                                                      | sem detalhes internos; `correlationId` para o log                                       |
 

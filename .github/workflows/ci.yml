@@ -161,6 +161,9 @@ jobs:
       - name: Integration tests (Testcontainers, postgres:17-alpine)
         run: pnpm db:test
 
+      - name: API readiness against PostgreSQL (Testcontainers, T-008)
+        run: pnpm --filter @linkedin-ops/api test:integration
+
   # --- compose-smoke (ativado em T-003) -------------------------------------------------------
   # Decision by Rodrigo (2026-10-13): Docker is not available on the local machine, so T-003
   # (Docker Compose dev environment) is validated here in CI instead. T-003 uncomments and

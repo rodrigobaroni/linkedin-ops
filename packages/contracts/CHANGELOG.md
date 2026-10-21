@@ -3,6 +3,16 @@
 All notable changes to `@linkedin-ops/contracts`. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning: internal SemVer (see `README.md`).
 
+## [Unreleased]
+
+### Added
+
+- `openapi/document.ts` (`buildOpenApiDocument`, `serializeOpenApiDocument`): OpenAPI 3.0.3 generated from `routes/v1.ts`
+  with `z.toJSONSchema` only; committed as `openapi/v1.json` with a drift test (`pnpm openapi:generate` refreshes it).
+  Components are named after `.meta({ id })`; `IdParams`, `DraftVersionParams` and `<Item>Page` gained ids (T-008).
+- `ErrorCode` gains `PAYLOAD_TOO_LARGE` (413) and `UNSUPPORTED_MEDIA_TYPE` (415) for transport-level rejections
+  (contracts.md §4, T-008). `ReadinessCheck` gains `skipped` for dependencies not wired yet (pg-boss before T-006).
+
 ## [0.1.0] - 2026-10-13
 
 ### Changed
