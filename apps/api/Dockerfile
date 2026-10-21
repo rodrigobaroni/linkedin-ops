@@ -22,7 +22,10 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm install --frozen-lockfile --store-dir /pnpm/store --filter "@linkedin-ops/api..."
 
 FROM deps AS build
-RUN pnpm --filter "@linkedin-ops/api..." run build
+# Turbo is not used here, so the Prisma client is generated explicitly before the build (in the
+# monorepo, turbo runs `generate` as a declared dependency of build/typecheck/lint/test instead).
+RUN pnpm --filter "@linkedin-ops/domain" run generate \
+    && pnpm --filter "@linkedin-ops/api..." run build
 
 # Development image (docker-compose.dev.yml): toolchain + first build, sources bind-mounted on top.
 FROM build AS dev
