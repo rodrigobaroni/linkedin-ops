@@ -387,6 +387,8 @@ model OAuthToken {
   provider               OAuthProvider @default(LINKEDIN)
   /// `sub` / member URN at the provider.
   providerSubject        String        @map("provider_subject")
+  /// Display name from OIDC `userinfo` (`name`), shown on the publish confirmation; never a credential.
+  memberName             String?       @map("member_name")
   /// AES-256-GCM: schemaVersion(1) || nonce(12) || ciphertext || tag(16).
   accessTokenCiphertext  Bytes         @map("access_token_ciphertext")
   /// LinkedIn only issues refresh tokens for some products; may be null.
