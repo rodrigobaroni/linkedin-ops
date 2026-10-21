@@ -16,5 +16,8 @@ Em dev o Caddy emite certificado pela sua CA interna (auto-assinado): o browser 
 `caddy-data`. HSTS fica em `max-age=0` em dev para não quebrar `http://localhost:3000`.
 
 Headers (TM-18): HSTS, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`,
-`Permissions-Policy`, remoção de `Server`/`X-Powered-By`; `trusted_proxies` limitado a faixas privadas;
-admin API só no loopback do container (health check). Apenas 80/443 são publicadas.
+`Permissions-Policy`, remoção de `Server`/`X-Powered-By`; sem `trusted_proxies`: o Caddy é a borda e o
+`X-Forwarded-For` enviado por clientes é ignorado (um LB/CDN futuro exige CIDRs exatos e
+`trusted_proxies_strict`); admin API só no loopback do container (health check). Apenas 80/443 são
+publicadas. O access log JSON passa por um filtro que remove `code`, `state` e tokens da query string e os
+headers `Cookie`/`Authorization`/`Set-Cookie`; o `compose-smoke` prova isso a cada PR.
