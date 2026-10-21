@@ -33,3 +33,13 @@ export {
   type LinkedInPkceMode,
   type EncryptionKeyRing,
 } from "./env/runtime.js";
+export {
+  TokenVault,
+  TokenVaultError,
+  TOKEN_VAULT_SCHEMA_VERSION,
+  type CredentialRef,
+  type SealedCredential,
+  type TokenVaultErrorCode,
+  type VaultProvider,
+  type VaultTokenType,
+} from "./crypto/token-vault.js";
