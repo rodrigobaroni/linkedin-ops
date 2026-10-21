@@ -1,5 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { LoginResponseSchema, MeSchema, ProblemDetailsSchema } from "@linkedin-ops/contracts";
+import {
+  LoginResponseSchema,
+  MeSchema,
+  ProblemDetailsSchema,
+  ReauthResponseSchema,
+} from "@linkedin-ops/contracts";
 import {
   cookieHeader,
   createTestApp,
@@ -79,6 +84,35 @@ describe("auth routes: contract shape, Cache-Control: no-store, X-CSRF-Token (AD
       expect(setCookie).not.toMatch(/Domain=/i);
     } finally {
       app.sessions.login = original;
+    }
+  });
+
+  it("a successful reauth (session service stubbed) answers 200 { csrfToken, elevatedUntil }, rotates __Host-session and X-CSRF-Token together", async () => {
+    const current = app.sessions.issueForTest(TEST_USER);
+    const elevated = app.sessions.issueForTest(TEST_USER, { elevated: true });
+    const original = app.sessions.reauth.bind(app.sessions);
+    app.sessions.reauth = async () => elevated;
+    try {
+      const res = await app.request
+        .post("/api/v1/auth/reauth")
+        .set(mutationHeaders({ cookie: cookieHeader(current.cookieValue) }))
+        .send({ password: "correct horse battery staple" })
+        .expect(200);
+      expect(ReauthResponseSchema.safeParse(res.body).success).toBe(true);
+      expect(res.body).toEqual({
+        csrfToken: elevated.session.csrfToken,
+        elevatedUntil: elevated.session.elevatedUntil?.toISOString(),
+      });
+      expect(res.body.csrfToken).not.toBe(current.session.csrfToken);
+      expect(res.headers["cache-control"]).toBe("no-store");
+      expect(res.headers["x-csrf-token"]).toBe(elevated.session.csrfToken);
+      const setCookie = (res.headers["set-cookie"] as unknown as string[]).join(";");
+      expect(setCookie).toContain(`__Host-session=${elevated.cookieValue}`);
+      expect(setCookie).not.toContain(current.cookieValue);
+      expect(setCookie).toMatch(/HttpOnly/i);
+      expect(setCookie).toMatch(/Secure/i);
+    } finally {
+      app.sessions.reauth = original;
     }
   });
 });

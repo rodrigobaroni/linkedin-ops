@@ -1,5 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createLogger, REDACTED, scrubSensitiveKeys } from "../src/logging/logger.js";
+import {
+  CIRCULAR,
+  createLogger,
+  QUERY_OMITTED,
+  REDACTED,
+  scrubSensitiveKeys,
+  TRUNCATED,
+} from "../src/logging/logger.js";
 import {
   cookieHeader,
   createTestApp,
@@ -53,6 +60,45 @@ describe("Pino redaction and auth bodies never logged", () => {
       unknown
     >;
     expect(out).toEqual({ a: { refreshToken: REDACTED }, err: error, ok: 1 });
+  });
+
+  it("request logs drop the query string, so csrfToken, OAuth code/state and tokens never reach the log", async () => {
+    const canaries = {
+      csrfToken: "QA81-CANARY-CSRF",
+      token: "QA81-CANARY-TOKEN",
+      code: "QA81-CANARY-CODE",
+      state: "QA81-CANARY-STATE",
+      access_token: "QA81-CANARY-ACCESS",
+      refresh_token: "QA81-CANARY-REFRESH",
+    };
+    const query = new URLSearchParams(canaries).toString();
+    await app.request.get(`/api/v1/health?${query}`).expect(200);
+    const text = app.logs.text;
+    for (const value of Object.values(canaries)) expect(text).not.toContain(value);
+    expect(text).toContain(`"url":"/api/v1/health?${QUERY_OMITTED}"`);
+  });
+
+  it("scrubSensitiveKeys fails closed beyond the depth limit, inside arrays and on cycles", () => {
+    let deep: Record<string, unknown> = {
+      csrfToken: "QA81-DEEP-CSRF",
+      accessToken: "QA81-DEEP-ACCESS",
+    };
+    for (let level = 0; level < 8; level += 1) deep = { level, child: deep };
+    const cyclic: Record<string, unknown> = { name: "loop" };
+    cyclic["self"] = cyclic;
+    const logs = new LogCapture();
+    const logger = createLogger({ level: "info", pretty: false, stream: logs.stream });
+    logger.info(
+      { deep, list: [[{ clientSecret: "QA81-ARRAY-SECRET" }]], cyclic, safe: "visible" },
+      "probe",
+    );
+    const text = logs.text;
+    for (const value of ["QA81-DEEP-CSRF", "QA81-DEEP-ACCESS", "QA81-ARRAY-SECRET"]) {
+      expect(text).not.toContain(value);
+    }
+    expect(text).toContain(TRUNCATED);
+    expect(text).toContain(CIRCULAR);
+    expect(text).toContain("visible");
   });
 
   it("request logs carry method, url, status and correlationId but no headers, cookies or bodies", async () => {
