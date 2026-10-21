@@ -168,7 +168,8 @@ jobs:
   # PR #80 review); postgres and the S3 store must become healthy; an S3 round-trip (PUT -> presigned GET
   # via curl, sha256 compared -> authenticated HEAD; unsigned and wrong-method requests must be rejected)
   # catches S3-implementation divergences (Atlas condition); the production images (runtime stage) must
-  # build and serve; Caddy must terminate TLS for web and api on one host with the security headers.
+  # build and serve; Caddy must terminate TLS for web and api on one host with the security headers and
+  # its access log must not retain OAuth query parameters (code, state).
   compose-smoke:
     name: Compose smoke
     runs-on: ubuntu-latest
@@ -362,6 +363,28 @@ jobs:
             if grep -qiE '^(server|x-powered-by):' "$workdir/$f"; then echo "::error::$f leaks Server/X-Powered-By"; cat "$workdir/$f"; exit 1; fi
           done
           echo "Caddy OK: https://localhost/ -> web (HTML), https://localhost/api/v1/health -> api ($(cat "$workdir/health.json")), security headers present"
+
+      - name: Caddy access log does not retain OAuth query parameters
+        run: |
+          set -euo pipefail
+          ca="$RUNNER_TEMP/caddy-ca.crt"
+          curl_tls() { curl -4 -sS --cacert "$ca" --connect-timeout 5 --max-time 30 --retry 3 --retry-delay 2 --retry-all-errors "$@"; }
+          code_value="smokecode$(openssl rand -hex 8)"
+          state_value="smokestate$(openssl rand -hex 8)"
+          # Synthetic callback-shaped request: the filter must drop code/state and keep the other parameter.
+          curl_tls -o /dev/null "https://localhost/api/v1/health?code=${code_value}&state=${state_value}&keep=visible"
+          sleep 2
+          logs="$(docker compose logs --no-color --no-log-prefix caddy)"
+          if ! printf '%s\n' "$logs" | grep -qF '"uri":"/api/v1/health?keep=visible"'; then
+            echo "::error::expected an access-log entry with uri /api/v1/health?keep=visible (code/state removed)"
+            printf '%s\n' "$logs" | grep -F '/api/v1/health' | tail -n 5 || true
+            exit 1
+          fi
+          if printf '%s\n' "$logs" | grep -qE "${code_value}|${state_value}"; then
+            echo "::error::code/state values reached the Caddy access log"
+            exit 1
+          fi
+          echo "Caddy access log OK: code/state removed from request>uri, other parameters kept"
 
       - name: Diagnostics on failure (services, exit codes, health, logs)
         if: failure()

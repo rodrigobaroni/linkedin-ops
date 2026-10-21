@@ -9,12 +9,13 @@
 #   CADDY_HSTS_MAX_AGE  0 (dev; keeps http://localhost:<port> usable) | 31536000 (prod)
 # Threat model TM-18: host allowlist = the site address; only 80/443 are published; the admin API stays
 # on the container loopback (used by the Compose healthcheck); X-Forwarded-* are set by reverse_proxy.
+# Caddy is the edge: no `trusted_proxies`, so the client IP is the TCP peer and X-Forwarded-For sent by
+# clients is ignored (PR #80 review, Sentinela 4). If a load balancer or CDN is ever put in front,
+# declare its exact CIDRs with `trusted_proxies static <cidr>...` plus `trusted_proxies_strict`; never
+# `private_ranges`.
 
 {
 	admin 127.0.0.1:2019
-	servers {
-		trusted_proxies static private_ranges
-	}
 }
 
 {$CADDY_SITE_ADDRESS:localhost} {
@@ -43,6 +44,25 @@
 
 	log {
 		output stdout
-		format json
+		# The access log must never retain OAuth or session material (PR #80 review, Sentinela 1): the
+		# LinkedIn callback arrives as /auth/linkedin/callback?code=…&state=…. Caddy already drops the
+		# Cookie/Authorization/Set-Cookie headers; the query filter removes the sensitive parameters
+		# from request>uri. The CI job compose-smoke proves it with a synthetic ?code=&state= request.
+		format filter {
+			wrap json
+			fields {
+				request>uri query {
+					delete code
+					delete state
+					delete token
+					delete access_token
+					delete refresh_token
+					delete id_token
+				}
+				request>headers>Cookie delete
+				request>headers>Authorization delete
+				resp_headers>Set-Cookie delete
+			}
+		}
 	}
 }
