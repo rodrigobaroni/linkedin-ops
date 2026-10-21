@@ -52,6 +52,13 @@ type MockAuthState = {
 
 const state: MockAuthState = initialState();
 
+/** `linkedinConnected` of `/auth/me`; the publishing mock plugs in its connection state. */
+let linkedInConnected: () => boolean = () => MOCK_USER.linkedinConnected;
+
+export function provideMockLinkedInConnected(source: () => boolean): void {
+  linkedInConnected = source;
+}
+
 function initialState(): MockAuthState {
   return {
     loggedIn: null,
@@ -175,6 +182,7 @@ export const authHandlers = [
     const elevated = state.elevatedUntil !== null && state.elevatedUntil > Date.now();
     const me: Me = {
       ...MOCK_USER,
+      linkedinConnected: linkedInConnected(),
       csrfToken: state.csrfToken,
       elevatedUntil: elevated ? new Date(state.elevatedUntil!).toISOString() : null,
     };

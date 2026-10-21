@@ -8,7 +8,12 @@ import {
 import { HttpResponse, http } from "msw";
 import type { LinkedInConnection } from "@/lib/api/linkedin";
 import { PublishNowInputSchema, type PublicationView } from "@/lib/api/publications";
-import { problemResponse, requireElevated, requireSession } from "./auth-handlers";
+import {
+  problemResponse,
+  provideMockLinkedInConnected,
+  requireElevated,
+  requireSession,
+} from "./auth-handlers";
 
 /**
  * Mock of the MVP-0 "Publicar" endpoints (contract of feat/T-061 a8821b1), in the shape of `lib/api/linkedin.ts` and
@@ -41,6 +46,7 @@ type MockPublishingState = {
 
 const DAY_MS = 24 * 60 * 60_000;
 const state: MockPublishingState = initialState();
+provideMockLinkedInConnected(() => state.status === "ACTIVE");
 
 function initialState(): MockPublishingState {
   return {

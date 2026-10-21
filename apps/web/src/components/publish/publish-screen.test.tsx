@@ -355,11 +355,19 @@ describe("PublishScreen", () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
-  it("disconnects (🔐) and shows the disconnected state", async () => {
+  it("disconnects (🔐), shows the disconnected state and refreshes the session's LinkedIn status", async () => {
+    const meRequests: string[] = [];
+    server.events.on("request:start", ({ request }) => {
+      if (new URL(request.url).pathname === "/api/v1/auth/me") meRequests.push(request.url);
+    });
     const { user } = await renderPublish();
+    const before = meRequests.length;
     await user.click(screen.getByRole("button", { name: copy.connection.disconnect }));
     expect(await screen.findByText(copy.connection.disconnected)).toBeInTheDocument();
     expect(mockPublishingState().status).toBe("DISCONNECTED");
+    await waitFor(() => expect(meRequests.length).toBeGreaterThan(before));
+    const me = await fetch("/api/v1/auth/me").then((response) => response.json());
+    expect(me).toMatchObject({ linkedinConnected: false });
   });
 
   it.each([

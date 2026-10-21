@@ -49,7 +49,7 @@ export function LinkedInConnectionCard({
   const connection = useLinkedInConnection();
   const { linkedin } = usePublishingApi();
   const { withElevation } = useReauth();
-  const { user } = useAuth();
+  const { user, refresh: refreshSession } = useAuth();
   const queryClient = useQueryClient();
   const titleId = useId();
   const [pending, setPending] = useState<"connect" | "disconnect" | null>(null);
@@ -84,7 +84,11 @@ export function LinkedInConnectionCard({
       setError(copy.disconnectError);
     } finally {
       setPending(null);
-      await queryClient.invalidateQueries({ queryKey: LINKEDIN_CONNECTION_QUERY_KEY });
+      // The shell's "LinkedIn: …" indicator reads the session (`GET /auth/me`): refresh both sources.
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: LINKEDIN_CONNECTION_QUERY_KEY }),
+        refreshSession(),
+      ]);
     }
   }
 
