@@ -6,9 +6,9 @@
 #
 # Rules (threat model TM-18, TM-21; task T-003; PR #80 review):
 # - Images pinned by tag and digest; Dependabot (docker ecosystem) proposes digest updates.
-# - Fail closed: credentials, database and object-store settings have no interpolation defaults
-#   (`${VAR:?}`), so the stack refuses to render without a complete .env. Dev defaults live only in
-#   .env.example and the CI job proves that this file alone does not start with them.
+# - Fail closed: credentials, database and object-store settings have no interpolation defaults (they
+#   use the `:?` form), so the stack refuses to render without a complete .env. Dev defaults live only
+#   in .env.example and the CI job proves that this file alone does not start with them.
 # - NODE_ENV is the process mode, never read from .env: `production` here, `development` in
 #   docker-compose.dev.yml (which also holds the dev/CI object store and the in-network overrides).
 #   Production points DATABASE_URL and S3_ENDPOINT at the managed services through .env (T-056).
