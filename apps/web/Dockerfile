@@ -47,5 +47,8 @@ COPY --from=build --chown=node:node /app/apps/web/.next /app/apps/web/.next
 EXPOSE 3000
 USER node
 HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=6 CMD wget -q --spider http://127.0.0.1:3000/ || exit 1
-# `next` resolves from apps/web/node_modules (pnpm layout); no shell, no pnpm at runtime.
-CMD ["node", "apps/web/node_modules/next/dist/bin/next", "start", "-H", "0.0.0.0", "-p", "3000"]
+# `next start` reads .next, next.config.ts and public/ from the working directory, so run it from the app
+# (from /app it finds no build and no react). `next` resolves from apps/web/node_modules (pnpm layout);
+# no shell, no pnpm at runtime.
+WORKDIR /app/apps/web
+CMD ["node", "node_modules/next/dist/bin/next", "start", "-H", "0.0.0.0", "-p", "3000"]
