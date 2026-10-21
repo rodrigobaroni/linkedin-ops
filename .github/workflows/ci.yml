@@ -161,6 +161,9 @@ jobs:
       - name: Integration tests (Testcontainers, postgres:17-alpine)
         run: pnpm db:test
 
+      - name: API readiness against PostgreSQL (Testcontainers, T-008)
+        run: pnpm --filter @linkedin-ops/api test:integration
+
   # --- compose-smoke (T-003) ---------------------------------------------------------------------
   # Decision by Rodrigo (2026-10-13): Docker is not available on the local machine, so the Compose stack
   # is validated here, in the combination developers run (base + docker-compose.dev.yml). Credentials are
@@ -191,22 +194,33 @@ jobs:
           pg_password="$(openssl rand -hex 24)"
           s3_access_key="ci$(openssl rand -hex 8)"
           s3_secret_key="$(openssl rand -hex 32)"
+          # The api validates its environment fail-closed (validateRuntimeEnv, T-008): outside development the
+          # change-me placeholders are refused, SESSION_SECRET needs >= 32 bytes and ENCRYPTION_KEY must be
+          # base64 of exactly 32 bytes. The runtime image is smoked with NODE_ENV=production below.
+          session_secret="$(openssl rand -base64 48)"
+          encryption_key="$(openssl rand -base64 32)"
           echo "::add-mask::$pg_password"
           echo "::add-mask::$s3_access_key"
           echo "::add-mask::$s3_secret_key"
+          echo "::add-mask::$session_secret"
+          echo "::add-mask::$encryption_key"
           # Start from the committed template, then replace the dev defaults with per-run secrets.
-          grep -Ev '^(POSTGRES_PASSWORD|DATABASE_URL|S3_ACCESS_KEY_ID|S3_SECRET_ACCESS_KEY)=' .env.example > .env
+          grep -Ev '^(POSTGRES_PASSWORD|DATABASE_URL|S3_ACCESS_KEY_ID|S3_SECRET_ACCESS_KEY|SESSION_SECRET|ENCRYPTION_KEY|APP_BASE_URL)=' .env.example > .env
           {
             echo "POSTGRES_PASSWORD=$pg_password"
             echo "DATABASE_URL=postgresql://linkedin_ops:$pg_password@localhost:5432/linkedin_ops"
             echo "S3_ACCESS_KEY_ID=$s3_access_key"
             echo "S3_SECRET_ACCESS_KEY=$s3_secret_key"
+            echo "SESSION_SECRET=$session_secret"
+            echo "ENCRYPTION_KEY=$encryption_key"
+            # Caddy serves https://localhost; the api compares the Origin of every mutation with this value.
+            echo "APP_BASE_URL=https://localhost"
           } >> .env
 
       - name: Fail closed on missing variables and template coverage
         run: |
           set -euo pipefail
-          required="POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB POSTGRES_PORT DATABASE_URL S3_ENDPOINT S3_REGION S3_BUCKET S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY S3_FORCE_PATH_STYLE S3_PORT CADDY_SITE_ADDRESS CADDY_TLS CADDY_BIND_ADDRESS CADDY_HSTS_MAX_AGE"
+          required="POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB POSTGRES_PORT DATABASE_URL APP_BASE_URL API_PORT SESSION_SECRET ENCRYPTION_KEY S3_ENDPOINT S3_REGION S3_BUCKET S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY S3_FORCE_PATH_STYLE S3_PORT CADDY_SITE_ADDRESS CADDY_TLS CADDY_BIND_ADDRESS CADDY_HSTS_MAX_AGE"
           status=0
           for name in $required; do
             value="$(grep -E "^${name}=" .env | head -n1 | cut -d= -f2- || true)"
@@ -313,7 +327,10 @@ jobs:
           # The dev combination builds the `dev` stage; the images that ship are built from the base file alone.
           IMAGE_TAG=smoke-runtime docker compose -f infra/docker/docker-compose.yml build api web worker
           docker run -d --rm --name smoke-web linkedin-ops/web:smoke-runtime
-          docker run -d --rm --name smoke-api linkedin-ops/api:smoke-runtime
+          # The api image refuses to start without a valid production environment (validateRuntimeEnv, T-008):
+          # feed it the per-run .env and pin NODE_ENV=production (the .env carries development). The database is not
+          # reachable from this standalone container, which is fine: /health never touches it (/ready would).
+          docker run -d --rm --name smoke-api --env-file .env -e NODE_ENV=production linkedin-ops/api:smoke-runtime
           wait_http() { # <container> <url>: busybox wget inside the image, up to 60 s
             for _ in $(seq 1 30); do
               if docker exec "$1" wget -q -T 5 -O /dev/null "$2"; then return 0; fi

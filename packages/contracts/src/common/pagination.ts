@@ -12,11 +12,16 @@ export const PaginationQuerySchema = z.strictObject({
 export type PaginationQuery = z.infer<typeof PaginationQuerySchema>;
 export type PaginationQueryInput = z.input<typeof PaginationQuerySchema>;
 
-/** Wraps an item schema in the standard page envelope `{ items, nextCursor }`. */
+/**
+ * Wraps an item schema in the standard page envelope `{ items, nextCursor }`. When the item is registered
+ * with an id (`.meta({ id })`), the page gets `<Id>Page` so the OpenAPI document names it.
+ */
 export function paginated<T extends z.ZodType>(item: T) {
-  return z.object({
+  const page = z.object({
     items: z.array(item),
     nextCursor: z.string().nullable(),
   });
+  const itemId = z.globalRegistry.get(item)?.id;
+  return itemId === undefined ? page : page.meta({ id: `${itemId}Page` });
 }
 export type Page<T> = { items: T[]; nextCursor: string | null };

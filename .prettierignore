@@ -14,3 +14,6 @@ packages/domain/prisma/migrations
 # 2026-10-13). Kept out of `format:check` in T-002; each owner reformats their docs in their own task,
 # then this line is removed.
 docs/
+
+# Generated from packages/contracts/src/openapi (pnpm --filter @linkedin-ops/contracts openapi:generate)
+packages/contracts/openapi/v1.json

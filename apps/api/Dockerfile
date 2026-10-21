@@ -22,7 +22,10 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm install --frozen-lockfile --store-dir /pnpm/store --filter "@linkedin-ops/api..."
 
 FROM deps AS build
-RUN pnpm --filter "@linkedin-ops/api..." run build
+# Turbo is not used here, so the Prisma client is generated explicitly before the build (in the
+# monorepo, turbo runs `generate` as a declared dependency of build/typecheck/lint/test instead).
+RUN pnpm --filter "@linkedin-ops/domain" run generate \
+    && pnpm --filter "@linkedin-ops/api..." run build
 
 # Development image (docker-compose.dev.yml): toolchain + first build, sources bind-mounted on top.
 FROM build AS dev
@@ -44,9 +47,13 @@ ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=prod-deps --chown=node:node /app /app
 COPY --from=build --chown=node:node /app/packages/contracts/dist /app/packages/contracts/dist
+# @linkedin-ops/domain: compiled sources plus the generated Prisma client (dist/generated, emitted by
+# `prisma generate` + tsc in the build stage; the query compiler WASM ships inside @prisma/client).
+COPY --from=build --chown=node:node /app/packages/domain/dist /app/packages/domain/dist
 COPY --from=build --chown=node:node /app/apps/api/dist /app/apps/api/dist
 EXPOSE 3001
 USER node
-# GET /api/v1/health: HealthStatus contract, served by the placeholder listener until T-008 (NestJS).
+# GET /api/v1/health: liveness (HealthStatus contract) served by the NestJS app (T-008); it never touches
+# the database (/ready does). The process refuses to start without a valid production environment.
 HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=6 CMD wget -q --spider http://127.0.0.1:3001/api/v1/health || exit 1
 CMD ["node", "apps/api/dist/index.js"]

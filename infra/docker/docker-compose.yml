@@ -70,10 +70,13 @@ services:
         required: true
     environment:
       <<: *app-env
-      PORT: "3001"
+      # validateRuntimeEnv (T-008): the api listens on API_HOST:API_PORT. 0.0.0.0 is required inside the
+      # container (Caddy reaches api:3001); outside production the default would be 127.0.0.1.
+      API_PORT: "3001"
+      API_HOST: "0.0.0.0"
     healthcheck:
-      # GET /api/v1/health answers the HealthStatus contract (packages/contracts resources/health.ts);
-      # served by the placeholder listener in apps/api/src until T-008 replaces it with the NestJS app.
+      # GET /api/v1/health answers the HealthStatus contract (packages/contracts resources/health.ts),
+      # served by the NestJS app (T-008) without touching the database.
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3001/api/v1/health"]
       interval: 10s
       timeout: 5s

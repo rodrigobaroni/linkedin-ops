@@ -51,3 +51,14 @@ Resumo das condições normativas; o texto completo está em `docs/adr/0007-auth
 - **N1 e N3** (OAuth `state` atômico, PKCE sem fallback) são de T-038, mas a sessão desta tarefa é a que o callback rotaciona; o teste de callbacks concorrentes (G-03) depende da rotação daqui.
 - **N4** guard global de mutações (compartilhado com T-008/T-057).
 - **ADR-0004 item 13.** `totp_secret_ciphertext` (reservado) e qualquer segredo cifrado desta tarefa usam o `TokenVault` de T-052; parse estrito do key ring, framing autenticado e testes de G-02 são condição de aprovação do PR que cifra.
+
+## Condições herdadas da revisão de arquitetura do T-008 (Atlas, PR #81, 2026-10-21)
+
+- **Porta de sessão no domínio.** `SessionService` (verificação Argon2id, rotação, elevação, expiração) é regra de
+  aplicação: mover a porta e o serviço para `packages/domain` (auth). `apps/api` fica só com os adapters
+  (`RouteAccessGuard`, `SessionCookieWriter`, binding Nest). Tirar `me()` da porta: perfil é consulta de usuário.
+- **Política de elevação fora do controller.** `POST /auth/login` passa a devolver
+  `issued.session.elevatedUntil?.toISOString() ?? null` em vez de fixar `null` no controller.
+- **Paridade de rotas sem lista fixa.** `apps/api/test/route-parity.test.ts` deriva os controllers dos metadados do
+  `AppModule` (incluindo módulos importados) e exige `@ContractRoute` ou `@RouteAuth` explícito em todo handler,
+  para que um controller novo não escape do teste.
