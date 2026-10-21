@@ -31,6 +31,20 @@ export interface EncryptionKeyRing {
   keys: ReadonlyMap<number, Uint8Array>;
 }
 
+/** Path the LinkedIn redirect URI must point to (contracts `integrations.linkedin.callback`). */
+export const LINKEDIN_CALLBACK_PATH = "/api/v1/auth/linkedin/callback";
+
+/** LinkedIn app credentials (T-038). Present only when `LINKEDIN_CLIENT_ID` is set. */
+export interface LinkedInClientConfig {
+  clientId: string;
+  /** Confidential client secret. Never log it, never send it anywhere but the token endpoint. */
+  clientSecret: string;
+  /** Registered redirect URI, sent byte-for-byte in authorize and token exchange. */
+  redirectUri: string;
+  /** ADR-0007 N3: explicit, mandatory once the client is configured. */
+  pkce: LinkedInPkceMode;
+}
+
 export interface RuntimeEnv {
   nodeEnv: RuntimeEnvironment;
   /** Origin (`scheme://host[:port]`) the browser uses; `Origin` of every mutation must equal it (ADR-0007 N4). */
@@ -49,6 +63,8 @@ export interface RuntimeEnv {
   encryptionKeyRing: EncryptionKeyRing | null;
   /** `null` = not configured (allowed until T-038 wires the OAuth flow). */
   linkedinPkce: LinkedInPkceMode | null;
+  /** `null` = LinkedIn integration not configured: connect/publish answer `503 SERVICE_NOT_READY`. */
+  linkedin: LinkedInClientConfig | null;
 }
 
 export class RuntimeEnvError extends Error {
@@ -283,6 +299,74 @@ function parseEnum<const T extends readonly string[]>(
   return value as T[number];
 }
 
+const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/**
+ * LinkedIn client (T-038). `LINKEDIN_CLIENT_ID` switches the integration on; then the secret, the redirect
+ * URI and an explicit `LINKEDIN_PKCE` are mandatory. The redirect must point to the API callback; in
+ * production it must be https on `APP_BASE_URL` itself, elsewhere https or http on loopback.
+ */
+function parseLinkedIn(
+  env: EnvironmentLike,
+  nodeEnv: RuntimeEnvironment,
+  appBaseUrl: string | null,
+  pkce: LinkedInPkceMode | null,
+  issues: string[],
+): LinkedInClientConfig | null {
+  const clientId = read(env, "LINKEDIN_CLIENT_ID");
+  if (clientId === undefined) return null;
+  const clientSecret = read(env, "LINKEDIN_CLIENT_SECRET");
+  const redirectUri = read(env, "LINKEDIN_REDIRECT_URI");
+  const before = issues.length;
+  if (clientSecret === undefined)
+    issues.push("LINKEDIN_CLIENT_SECRET is required when LINKEDIN_CLIENT_ID is set");
+  else if (nodeEnv !== "development" && PLACEHOLDER_PATTERN.test(clientSecret)) {
+    issues.push(
+      "LINKEDIN_CLIENT_SECRET is still the change-me placeholder (allowed in development only)",
+    );
+  }
+  if (pkce === null && read(env, "LINKEDIN_PKCE") === undefined) {
+    issues.push(
+      "LINKEDIN_PKCE must be set explicitly (required or disabled) when LINKEDIN_CLIENT_ID is set",
+    );
+  }
+  if (redirectUri === undefined) {
+    issues.push("LINKEDIN_REDIRECT_URI is required when LINKEDIN_CLIENT_ID is set");
+  } else {
+    let url: URL | null = null;
+    try {
+      url = new URL(redirectUri);
+    } catch {
+      issues.push("LINKEDIN_REDIRECT_URI is not a valid absolute URL");
+    }
+    if (url) {
+      const loopbackHttp = url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname);
+      if (url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== "") {
+        issues.push("LINKEDIN_REDIRECT_URI must not carry credentials, query or fragment");
+      } else if (url.pathname !== LINKEDIN_CALLBACK_PATH) {
+        issues.push(`LINKEDIN_REDIRECT_URI must point to ${LINKEDIN_CALLBACK_PATH}`);
+      } else if (nodeEnv === "production") {
+        if (url.protocol !== "https:" || (appBaseUrl !== null && url.origin !== appBaseUrl)) {
+          issues.push("LINKEDIN_REDIRECT_URI must be https on APP_BASE_URL in production");
+        }
+      } else if (url.protocol !== "https:" && !loopbackHttp) {
+        issues.push(
+          "LINKEDIN_REDIRECT_URI must use https (http only on loopback outside production)",
+        );
+      }
+    }
+  }
+  if (
+    issues.length > before ||
+    clientSecret === undefined ||
+    redirectUri === undefined ||
+    pkce === null
+  ) {
+    return null;
+  }
+  return { clientId, clientSecret, redirectUri, pkce };
+}
+
 /**
  * Validates and normalizes the runtime environment. Throws `RuntimeEnvError` listing every problem found
  * (names and reasons only). `NODE_ENV` is mandatory: an unset value is refused, never assumed.
@@ -324,6 +408,8 @@ export function validateRuntimeEnv(env: EnvironmentLike): RuntimeEnv {
     encryptionKeyRing = parseKeyRing(env, issues);
   }
 
+  const linkedin = parseLinkedIn(env, nodeEnv, appBaseUrl, linkedinPkce, issues);
+
   if (issues.length > 0 || appBaseUrl === null || databaseUrl === null || sessionSecret === null) {
     throw new RuntimeEnvError(issues);
   }
@@ -338,5 +424,6 @@ export function validateRuntimeEnv(env: EnvironmentLike): RuntimeEnv {
     sessionSecret,
     encryptionKeyRing,
     linkedinPkce,
+    linkedin,
   };
 }
