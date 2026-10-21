@@ -249,6 +249,11 @@ jobs:
         with:
           run_install: false
 
+      - name: Setup Node (version from .nvmrc; engine-strict refuses the runner's default Node)
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+
       - name: pnpm dev:infra starts postgres and s3, waits for health checks and creates the bucket
         # Literally the daily command (PR #80 review, Atlas round 2): `pnpm run compose` must carry both
         # Compose files, otherwise `s3`/`s3-init` are unknown services.
