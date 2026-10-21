@@ -1,50 +1,50 @@
 #!/usr/bin/env bash
 # Deploy LinkedIn Ops to a host that already runs a shared Caddy on 80/443 (MVP-0, Rodrigo's Oracle VM).
 # Runs on the operator's machine. Ships a git ref with `git archive` over SSH (the VM needs no GitHub
-# credentials), builds the images on the VM (arm64 or amd64), applies migrations and starts api + web
-# behind the host's Caddy. Secrets never touch the repository, the terminal or the logs.
+# credentials), builds immutable images tagged with the commit sha on the VM, takes an encrypted backup and
+# applies migrations, starts api + web behind the host's Caddy, verifies health and rolls back to the
+# previous release on failure. Secrets never touch the repository, argv, the terminal or the logs.
 #
-# Usage:
-#   DEPLOY_HOST=ubuntu@1.2.3.4 DEPLOY_SSH_KEY=~/path/key APP_HOST=linkedin.example.com \
-#     infra/deploy/deploy-shared-host.sh init-env     # once: creates ~/linkedin-ops/.env on the VM (0600)
-#   ... infra/deploy/deploy-shared-host.sh deploy [git-ref]   # default ref: origin/main
-#   ... infra/deploy/deploy-shared-host.sh status
+#   export DEPLOY_HOST=ubuntu@1.2.3.4 DEPLOY_SSH_KEY=~/path/key APP_HOST=linkedin.example.com
+#   infra/deploy/deploy-shared-host.sh init-env          # once: ~/linkedin-ops/.env on the VM (0600)
+#   infra/deploy/deploy-shared-host.sh escrow-key        # once: ENCRYPTION_KEY copy in the macOS Keychain
+#   infra/deploy/deploy-shared-host.sh deploy [git-ref]  # default origin/main
+#   REQUIRE_PUBLIC=0 ... deploy                          # first deploy, before the Caddy site block exists
+#   infra/deploy/deploy-shared-host.sh status
 set -euo pipefail
 
 : "${DEPLOY_HOST:?set DEPLOY_HOST (user@ip)}"
 : "${DEPLOY_SSH_KEY:?set DEPLOY_SSH_KEY (path to the private key)}"
-REMOTE_DIR=${REMOTE_DIR:-linkedin-ops}
+REMOTE_DIR=${REMOTE_DIR:-linkedin-ops} # relative to the remote user's home (ssh starts there)
 PROJECT=${COMPOSE_PROJECT:-linkedin-ops}
 SSH=(ssh -i "$DEPLOY_SSH_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes "$DEPLOY_HOST")
 ROOT=$(git rev-parse --show-toplevel)
 
-compose_remote() { # $1 = release dir on the VM; rest = compose args
-  local release=$1; shift
-  # --env-file: Compose interpolates from the project directory (infra/docker) by default, not the repo root.
-  printf 'cd %q && docker compose -p %q --env-file .env -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.shared-proxy.yml %s' \
-    "$release" "$PROJECT" "$*"
-}
-
 init_env() {
   : "${APP_HOST:?set APP_HOST (public hostname, e.g. linkedin.example.com)}"
-  local local_env="$ROOT/.env"
-  local client_id client_secret
+  local local_env="$ROOT/.env" client_id client_secret
   client_id=$(grep -E '^LINKEDIN_CLIENT_ID=' "$local_env" | cut -d= -f2-)
   client_secret=$(grep -E '^LINKEDIN_CLIENT_SECRET=' "$local_env" | cut -d= -f2-)
   [ -n "$client_id" ] && [ -n "$client_secret" ] || { echo "LINKEDIN_CLIENT_ID/SECRET missing in $local_env" >&2; exit 1; }
-  # The LinkedIn credentials travel inside the script on stdin (never in argv or on screen); every other
-  # secret is generated on the VM.
+  # The LinkedIn credentials travel inside the script on stdin (never argv or screen); every other secret
+  # is generated on the VM. The file is written to a temporary name and moved atomically.
   {
     printf 'client_id=%q\nclient_secret=%q\n' "$client_id" "$client_secret"
     cat <<'REMOTE'
 set -euo pipefail
 dir=$HOME/$1; host=$2
+required="NODE_ENV APP_BASE_URL DATABASE_URL POSTGRES_PASSWORD SESSION_SECRET ENCRYPTION_KEY LINKEDIN_CLIENT_ID LINKEDIN_CLIENT_SECRET LINKEDIN_REDIRECT_URI"
+complete() { for k in $required; do grep -qE "^$k=.+" "$1" || return 1; done; }
 mkdir -p "$dir/releases" "$dir/backups"; chmod 700 "$dir"
 env_file=$dir/.env
-if [ -e "$env_file" ]; then echo "refusing: $env_file already exists (delete it explicitly to regenerate)" >&2; exit 1; fi
+if [ -e "$env_file" ]; then
+  if complete "$env_file"; then echo "$env_file already exists and is complete; nothing to do"; exit 0; fi
+  echo "refusing: $env_file exists but is incomplete; inspect and remove it explicitly" >&2; exit 1
+fi
 umask 077
+tmp=$(mktemp "$dir/.env.XXXXXX"); trap 'rm -f "$tmp"' EXIT
 pg_pass=$(openssl rand -hex 24)
-cat > "$env_file" <<ENV
+cat > "$tmp" <<ENV
 # Generated on $(date -u +%FT%TZ) by infra/deploy/deploy-shared-host.sh init-env. Never commit or print.
 NODE_ENV=production
 APP_TIMEZONE=America/Sao_Paulo
@@ -69,47 +69,98 @@ S3_BUCKET=unused
 S3_ACCESS_KEY_ID=unused
 S3_SECRET_ACCESS_KEY=unused
 S3_FORCE_PATH_STYLE=true
-IMAGE_TAG=current
 API_PUBLISH_PORT=3101
 WEB_PUBLISH_PORT=3100
 ENV
-chmod 600 "$env_file"
+complete "$tmp" || { echo "generated env is incomplete" >&2; exit 1; }
+chmod 600 "$tmp"; mv "$tmp" "$env_file"; trap - EXIT
 echo "created $env_file (0600)"
 REMOTE
   } | "${SSH[@]}" bash -s -- "$REMOTE_DIR" "$APP_HOST"
-  echo "Next: keep a separate copy of ENCRYPTION_KEY (Sentinela condition 5):"
-  echo "  infra/deploy/deploy-shared-host.sh escrow-key"
+  echo "Next: infra/deploy/deploy-shared-host.sh escrow-key (Sentinela condition 5)"
 }
 
 escrow_key() {
-  # Stores ENCRYPTION_KEY in the macOS login Keychain of the operator, never on screen.
-  "${SSH[@]}" "grep -E '^ENCRYPTION_KEY=' \$HOME/$REMOTE_DIR/.env | cut -d= -f2-" |
-    { read -r key; security add-generic-password -U -a linkedin-ops -s "linkedin-ops ENCRYPTION_KEY v1" -w "$key"; }
-  echo "ENCRYPTION_KEY v1 stored in the login Keychain (service: 'linkedin-ops ENCRYPTION_KEY v1')."
+  # `security -i` reads its commands from stdin, so the key never appears in any process's argv.
+  "${SSH[@]}" "grep -E '^ENCRYPTION_KEY=' \"\$HOME/$REMOTE_DIR/.env\" | cut -d= -f2-" | {
+    read -r key
+    [ -n "$key" ] || { echo "ENCRYPTION_KEY not found on the VM" >&2; exit 1; }
+    printf 'add-generic-password -U -a linkedin-ops -s "linkedin-ops ENCRYPTION_KEY v1" -w "%s"\n' "$key" | security -i >/dev/null
+  }
+  security find-generic-password -a linkedin-ops -s "linkedin-ops ENCRYPTION_KEY v1" >/dev/null
+  echo "ENCRYPTION_KEY v1 stored in the login Keychain (service 'linkedin-ops ENCRYPTION_KEY v1')."
 }
 
 deploy() {
-  local ref=${1:-origin/main} sha release
+  local ref=${1:-origin/main} sha
   git -C "$ROOT" fetch -q origin
   sha=$(git -C "$ROOT" rev-parse --short=12 "$ref")
-  release="\$HOME/$REMOTE_DIR/releases/$sha"
   echo "deploying $ref ($sha) to $DEPLOY_HOST"
-  git -C "$ROOT" archive --format=tar "$sha" | gzip -1 |
-    "${SSH[@]}" "set -e; mkdir -p $release; tar -xzf - -C $release; ln -sfn \$HOME/$REMOTE_DIR/.env $release/.env; test -s \$HOME/$REMOTE_DIR/.env"
-  "${SSH[@]}" "set -e
-    $(compose_remote "$release" build api web)
-    docker build -q --target build -f $release/apps/api/Dockerfile -t linkedin-ops/api-tools:current $release >/dev/null
-    $(compose_remote "$release" up -d --wait postgres)
-    docker run --rm --network ${PROJECT}_internal --env-file \$HOME/$REMOTE_DIR/.env linkedin-ops/api-tools:current pnpm db:migrate
-    $(compose_remote "$release" up -d --wait --remove-orphans api web)
-    ln -sfn $release \$HOME/$REMOTE_DIR/current
-    curl -fsS --max-time 5 http://172.17.0.1:3101/api/v1/health >/dev/null && echo 'api health: ok'
-    curl -fsS --max-time 5 -o /dev/null http://172.17.0.1:3100/ && echo 'web: ok'"
-  echo "deployed $sha"
+  git -C "$ROOT" archive --format=tar "$sha" | gzip -1 | "${SSH[@]}" bash -c "'set -euo pipefail
+    rel=\$HOME/$REMOTE_DIR/releases/$sha; test -s \$HOME/$REMOTE_DIR/.env
+    rm -rf \"\$rel.tmp\"; mkdir -p \"\$rel.tmp\"; tar -xzf - -C \"\$rel.tmp\"
+    ln -sfn \$HOME/$REMOTE_DIR/.env \"\$rel.tmp/.env\"; rm -rf \"\$rel\"; mv \"\$rel.tmp\" \"\$rel\"'"
+  "${SSH[@]}" bash -s -- "$sha" "$PROJECT" "$REMOTE_DIR" "${APP_HOST:-}" "${REQUIRE_PUBLIC:-1}" <<'REMOTE'
+set -euo pipefail
+sha=$1 project=$2 base=$HOME/$3 host=$4 require_public=$5
+exec 9>"$base/deploy.lock"
+flock -n 9 || { echo "another deploy is running" >&2; exit 1; }
+compose() { # $1 = release sha; IMAGE_TAG pins immutable images per release (shell env beats --env-file)
+  local r=$1; shift
+  (cd "$base/releases/$r" && IMAGE_TAG=$r docker compose -p "$project" --env-file .env \
+    -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.shared-proxy.yml "$@")
+}
+retry() { local n=0; until "$@"; do n=$((n + 1)); [ "$n" -ge 10 ] && return 1; sleep 3; done; }
+prev=$(cat "$base/current.sha" 2>/dev/null || true)
+tools=(docker run --rm --network "${project}_internal" --env-file "$base/.env" "linkedin-ops/api-tools:$sha")
+
+compose "$sha" build api web
+docker build -q --target build -f "$base/releases/$sha/apps/api/Dockerfile" -t "linkedin-ops/api-tools:$sha" "$base/releases/$sha" >/dev/null
+compose "$sha" up -d --wait postgres
+
+# Encrypted backup BEFORE any DDL (runbook database-migrations.md); only skippable on the very first deploy.
+if [ -x "$base/backup-db.sh" ]; then "$base/backup-db.sh"
+elif [ -n "$prev" ]; then echo "refusing to migrate: backup-db.sh is not installed (run backup-offsite.sh setup-key)" >&2; exit 1
+else echo "first deploy: no data to back up yet"; fi
+echo "--- migration status before:"; "${tools[@]}" pnpm db:migrate:status || true
+if ! "${tools[@]}" pnpm db:migrate; then
+  echo "MIGRATION FAILED. The running release (${prev:-none}) was NOT touched; the schema may be partially migrated." >&2
+  echo "Next steps (no blind retry): '${tools[*]} pnpm db:migrate:status'; fix forward or 'prisma migrate resolve'," >&2
+  echo "or restore the backup taken above (docs/runbooks/database-migrations.md)." >&2
+  exit 1
+fi
+
+rollback() {
+  if [ -n "$prev" ] && [ -d "$base/releases/$prev" ]; then
+    echo "rolling back api/web to $prev" >&2; compose "$prev" up -d --wait api web || true
+  else
+    echo "no previous release to roll back to; stopping api/web" >&2; compose "$sha" stop api web || true
+  fi
+}
+check() {
+  retry curl -fsS --max-time 5 -o /dev/null http://172.17.0.1:3101/api/v1/health &&
+    retry curl -fsS --max-time 5 -o /dev/null http://172.17.0.1:3101/api/v1/ready &&
+    retry curl -fsS --max-time 5 -o /dev/null http://172.17.0.1:3100/ &&
+    { [ "$require_public" = 0 ] || retry curl -fsS --max-time 10 -o /dev/null "https://$host/api/v1/health"; }
+}
+if ! compose "$sha" up -d --wait --remove-orphans api web || ! check; then
+  compose "$sha" ps -a >&2 || true; compose "$sha" logs --no-color --tail=80 api web >&2 || true
+  rollback; exit 1
+fi
+printf '%s\n' "$sha" > "$base/current.sha.tmp" && mv "$base/current.sha.tmp" "$base/current.sha"
+ln -sfn "$base/releases/$sha" "$base/current.tmp" && mv -T "$base/current.tmp" "$base/current"
+echo "deployed $sha (previous: ${prev:-none}); api health, ready and web ok$([ "$require_public" = 0 ] || echo ", https://$host ok")"
+REMOTE
 }
 
 status() {
-  "${SSH[@]}" "set -e; cd \$HOME/$REMOTE_DIR/current && docker compose -p $PROJECT --env-file .env -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.shared-proxy.yml ps"
+  "${SSH[@]}" bash -s -- "$PROJECT" "$REMOTE_DIR" <<'REMOTE'
+set -euo pipefail
+base=$HOME/$2; sha=$(cat "$base/current.sha")
+cd "$base/releases/$sha" && IMAGE_TAG=$sha docker compose -p "$1" --env-file .env \
+  -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.shared-proxy.yml ps
+echo "current release: $sha"
+REMOTE
 }
 
 case "${1:-}" in
