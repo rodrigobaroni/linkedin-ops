@@ -15,7 +15,7 @@ que o job `compose-smoke` valida.
 | `api`      | build `apps/api/Dockerfile`                                          | API NestJS (placeholder até T-008)                                   | `127.0.0.1:3001`               |
 | `worker`   | build `apps/worker/Dockerfile`                                       | Worker pg-boss (placeholder até T-006)                               | —                              |
 | `web`      | build `apps/web/Dockerfile`                                          | Dashboard Next.js                                                    | `127.0.0.1:3000`               |
-| `caddy`    | `caddy:2.11.7-alpine`                                                | Borda TLS, `/api/*` → api, `/` → web (`infra/caddy`)                 | `${CADDY_BIND_ADDRESS}:80/443` |
+| `caddy`    | `caddy:2.11.7-alpine@sha256:d8542f…`                                 | Borda TLS, `/api/*` → api, `/` → web (`infra/caddy`)                 | `${CADDY_BIND_ADDRESS}:80/443` |
 
 Volumes nomeados: `pg-data`, `caddy-data`, `caddy-config` (base) e `s3-data` (dev). Rede única `internal`;
 no arquivo base só o Caddy publica portas (em `127.0.0.1` por padrão; produção define
@@ -77,8 +77,9 @@ O override de dev sobrescreve `DATABASE_URL` (host `postgres`) e `S3_ENDPOINT` (
 ## Imagens dos apps
 
 `apps/*/Dockerfile` são multi-stage (`deps` → `build` → `prod-deps` → `runtime`, mais `dev` para hot
-reload), base `node:24.22.0-alpine`, pnpm na versão de `package.json#packageManager`, runtime não-root
-(`node`). O stage `prod-deps` instala com `--ignore-scripts` (o `prepare` raiz, husky, não existe sem
+reload), base `node:24.22.0-alpine` pinada por tag e digest (default do `ARG NODE_IMAGE`), frontend
+BuildKit `docker/dockerfile:1.7` também por digest, pnpm na versão de `package.json#packageManager`,
+runtime não-root (`node`). O stage `prod-deps` instala com `--ignore-scripts` (o `prepare` raiz, husky, não existe sem
 devDependencies) e em seguida roda `pnpm rebuild --pending -r --filter <app>...`, que executa só os build
 scripts permitidos em `onlyBuiltDependencies` (`pnpm-workspace.yaml`). A api expõe `GET /api/v1/health`
 por um listener placeholder (`apps/api/src/server.ts`) até T-008; o worker ainda é um placeholder que
@@ -93,6 +94,13 @@ Condições registradas na revisão do PR #80 (Atlas 2), também anotadas em T-0
 - O `rebuild --pending` com `argon2` e `@prisma/engines` em Alpine/musl ainda não foi exercitado no CI:
   a primeira imagem que os incluir valida isso no `compose-smoke` (prebuild musl do argon2; o download
   dos engines exige rede durante o build).
+
+Supply chain (revisão do PR #80, Sentinela 3): todas as imagens (`postgres`, `caddy`, `rustfs`, `aws-cli`,
+`node`) estão pinadas por tag **e** digest do manifest list; o Dependabot (`package-ecosystem: docker`,
+diretórios `infra/docker` e `apps/*`) renova tag e digest. Ponto a observar no primeiro PR do Dependabot:
+o digest do `node` vive no default de um `ARG NODE_IMAGE`; se o Dependabot não o propuser, trocar por um
+`FROM node:…@sha256:…` literal. A linha `# syntax=docker/dockerfile:…@sha256:…` não é coberta pelo
+Dependabot e se renova manualmente (ou em T-062, junto com o `trivy image`).
 
 O `compose-smoke` constrói as imagens de runtime a partir do arquivo base e as testa fora do Compose
 (web serve HTML, api responde o health JSON, worker sai com código 0), além da combinação de dev com

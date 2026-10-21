@@ -1,10 +1,11 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 # @linkedin-ops/api — multi-stage image (T-003). Build context: repository root.
 #   docker compose -f infra/docker/docker-compose.yml build api
 # Stages: deps (all workspaces the app needs) -> build (compiled output) -> prod-deps (production
 # node_modules only) -> runtime (non-root, no toolchain). `dev` keeps the toolchain for hot reload.
 
-ARG NODE_IMAGE=node:24.22.0-alpine
+# Tag + digest (TM-21). Dependabot (docker ecosystem) is expected to bump both; see infra/docker/README.md.
+ARG NODE_IMAGE=node:24.22.0-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f
 ARG PNPM_VERSION=10.34.5
 
 FROM ${NODE_IMAGE} AS base
