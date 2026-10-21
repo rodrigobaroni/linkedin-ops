@@ -177,8 +177,14 @@ function resultOf(res: { status: number; headers: Record<string, string> }): str
   expect(res.status).toBe(302);
   const location = new URL(res.headers.location ?? "");
   expect(location.origin + location.pathname).toBe(`${APP_BASE_URL}/publicar`);
-  expect([...location.searchParams.keys()]).toEqual(["linkedin"]);
-  return location.searchParams.get("linkedin");
+  // `?linkedin=connected`, or `?linkedin=error&reason=<reason>`: the reason is returned for errors.
+  if (location.searchParams.get("linkedin") === "connected") {
+    expect([...location.searchParams.keys()]).toEqual(["linkedin"]);
+    return "connected";
+  }
+  expect([...location.searchParams.keys()]).toEqual(["linkedin", "reason"]);
+  expect(location.searchParams.get("linkedin")).toBe("error");
+  return location.searchParams.get("reason");
 }
 
 /** Stores an ACTIVE credential directly (publish tests do not need to replay the OAuth dance). */
@@ -310,7 +316,7 @@ describe("POST /integrations/linkedin/connect", () => {
     const first = (await connectUrl(actor)).searchParams.get("state")!;
     await connectUrl(actor);
     const res = await callback(actor, { code: "c", state: first });
-    expect(resultOf(res)).toBe("invalid");
+    expect(resultOf(res)).toBe("invalid_state");
     expect(linkedin.calls).toHaveLength(0);
   });
 });
@@ -384,7 +390,7 @@ describe("GET /auth/linkedin/callback (N1, G-03)", () => {
     const actor = await newActor();
     const state = (await connectUrl(actor)).searchParams.get("state")!;
     expect(resultOf(await callback(actor, { code: "c1", state }))).toBe("connected");
-    expect(resultOf(await callback(actor, { code: "c2", state }))).toBe("invalid");
+    expect(resultOf(await callback(actor, { code: "c2", state }))).toBe("invalid_state");
     expect(linkedin.callsTo("/accessToken")).toHaveLength(1);
   });
 
@@ -395,7 +401,7 @@ describe("GET /auth/linkedin/callback (N1, G-03)", () => {
       callback(actor, { code: "c1", state }),
       callback(actor, { code: "c2", state }),
     ]);
-    expect(results.map(resultOf).sort()).toEqual(["connected", "invalid"]);
+    expect(results.map(resultOf).sort()).toEqual(["connected", "invalid_state"]);
     expect(linkedin.callsTo("/accessToken")).toHaveLength(1);
   });
 
@@ -408,7 +414,7 @@ describe("GET /auth/linkedin/callback (N1, G-03)", () => {
       state,
     });
     expect(resultOf(denied)).toBe("denied");
-    expect(resultOf(await callback(actor, { code: "c", state }))).toBe("invalid");
+    expect(resultOf(await callback(actor, { code: "c", state }))).toBe("invalid_state");
     expect(linkedin.calls).toHaveLength(0);
   });
 
@@ -427,11 +433,11 @@ describe("GET /auth/linkedin/callback (N1, G-03)", () => {
     const victim = await newActor();
     const attacker = await newActor();
     const state = (await connectUrl(victim)).searchParams.get("state")!;
-    expect(resultOf(await callback(attacker, { code: "c", state }))).toBe("invalid");
-    expect(resultOf(await callback(victim, { code: "c", state }))).toBe("invalid");
+    expect(resultOf(await callback(attacker, { code: "c", state }))).toBe("invalid_state");
+    expect(resultOf(await callback(victim, { code: "c", state }))).toBe("invalid_state");
 
     const other = (await connectUrl(victim)).searchParams.get("state")!;
-    expect(resultOf(await callback(null, { code: "c", state: other }))).toBe("invalid");
+    expect(resultOf(await callback(null, { code: "c", state: other }))).toBe("invalid_state");
     expect(linkedin.calls).toHaveLength(0);
     expect(await prisma.oAuthToken.count({ where: { userId: victim.userId } })).toBe(0);
   });
@@ -449,7 +455,7 @@ describe("GET /auth/linkedin/callback (N1, G-03)", () => {
     const actor = await newActor();
     const state = (await connectUrl(actor)).searchParams.get("state")!;
     linkedin.token = () => json(400, { error: "invalid_grant", error_description: "bad code" });
-    expect(resultOf(await callback(actor, { code: "c", state }))).toBe("error");
+    expect(resultOf(await callback(actor, { code: "c", state }))).toBe("exchange_failed");
     expect(await prisma.oAuthToken.count({ where: { userId: actor.userId } })).toBe(0);
   });
 

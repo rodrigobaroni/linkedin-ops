@@ -22,9 +22,18 @@ export const PUBLISH_SCOPE = "w_member_social";
 /** Fixed UI route the callback returns to; the only `returnTo` value (never a raw URL). */
 export const CALLBACK_RETURN_PATH = "/publicar";
 
-/** `?linkedin=<result>` appended to the return route; the web maps it to a message. */
+/**
+ * Outcome of the callback, sent to the return route as `?linkedin=connected` or
+ * `?linkedin=error&reason=<reason>`; the web maps the reason to a message.
+ */
 export type CallbackResult =
-  "connected" | "denied" | "expired" | "invalid" | "scope_missing" | "error" | "unavailable";
+  | "connected"
+  | "denied"
+  | "expired"
+  | "invalid_state"
+  | "exchange_failed"
+  | "unavailable"
+  | "scope_missing";
 
 interface ClaimedState {
   user_id: string;
@@ -110,10 +119,10 @@ export class LinkedInOAuthService {
       WHERE state_hash = ${this.hashState(query.state)} AND used_at IS NULL
       RETURNING user_id::text AS user_id, session_id::text AS session_id, (expires_at > ${now}) AS live`;
     const claimed = rows[0];
-    if (!claimed) return this.returnUrl("invalid");
+    if (!claimed) return this.returnUrl("invalid_state");
     if (!claimed.live) return this.returnUrl("expired");
     if (!session || session.id !== claimed.session_id || session.userId !== claimed.user_id) {
-      return this.returnUrl("invalid");
+      return this.returnUrl("invalid_state");
     }
     if (query.error !== undefined) {
       // Only the class is logged; error_description is untrusted text from the query string.
@@ -145,7 +154,7 @@ export class LinkedInOAuthService {
         { correlationId, linkedinError: error.code, httpStatus: error.httpStatus },
         "linkedin oauth callback failed",
       );
-      return this.returnUrl("error");
+      return this.returnUrl("exchange_failed");
     }
   }
 
@@ -281,7 +290,12 @@ export class LinkedInOAuthService {
 
   private returnUrl(result: CallbackResult): string {
     const url = new URL(CALLBACK_RETURN_PATH, this.env.appBaseUrl);
-    url.searchParams.set("linkedin", result);
+    if (result === "connected") {
+      url.searchParams.set("linkedin", "connected");
+    } else {
+      url.searchParams.set("linkedin", "error");
+      url.searchParams.set("reason", result);
+    }
     return url.toString();
   }
 }
