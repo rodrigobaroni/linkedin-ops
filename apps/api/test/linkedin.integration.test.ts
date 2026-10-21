@@ -181,6 +181,28 @@ function callback(actor: Actor | null, query: Record<string, string>) {
   return actor ? req.set("cookie", cookieHeader(actor.cookie)) : req;
 }
 
+/** New `__Host-session` cookie value and `X-CSRF-Token` set by a rotating response. */
+function rotatedSessionOf(res: { headers: Record<string, unknown> }): {
+  cookie: string;
+  csrfToken: string;
+} {
+  const setCookie = ([] as string[]).concat(
+    (res.headers["set-cookie"] as string[] | undefined) ?? [],
+  );
+  const session = setCookie.find((line) => line.startsWith("__Host-session="));
+  expect(session, "rotated session cookie").toBeDefined();
+  expect(session).toMatch(/HttpOnly/i);
+  expect(session).toMatch(/Secure/i);
+  expect(session).toMatch(/SameSite=Lax/i);
+  expect(session).toMatch(/Path=\//);
+  const csrfToken = res.headers["x-csrf-token"];
+  expect(typeof csrfToken).toBe("string");
+  return {
+    cookie: session!.split(";")[0]!.slice("__Host-session=".length),
+    csrfToken: csrfToken as string,
+  };
+}
+
 function resultOf(res: { status: number; headers: Record<string, string> }): string | null {
   expect(res.status).toBe(302);
   const location = new URL(res.headers.location ?? "");
@@ -350,6 +372,16 @@ describe("GET /auth/linkedin/callback (N1, G-03)", () => {
     const res = await callback(actor, { code: "auth-code-123", state });
     expect(resultOf(res)).toBe("connected");
     expect(res.headers["cache-control"]).toBe("no-store");
+    // A-3: the session was rotated; the redirect carries the new cookie and CSRF token.
+    const rotated = rotatedSessionOf(res);
+    expect(rotated.cookie).not.toBe(actor.cookie);
+    const successor = await prisma.session.findUniqueOrThrow({
+      where: { secretHash: hashSessionSecret(rotated.cookie) },
+    });
+    expect(successor.id).not.toBe(actor.sessionId);
+    expect(successor.userId).toBe(actor.userId);
+    expect(rotated.csrfToken).toBe(deriveCsrfToken(env.sessionSecret, successor.id));
+    expect(rotated.csrfToken).not.toBe(actor.csrfToken);
     expect(linkedin.callsTo("/accessToken")).toHaveLength(1);
     expect(linkedin.callsTo("/userinfo")).toHaveLength(1);
 
@@ -379,11 +411,19 @@ describe("GET /auth/linkedin/callback (N1, G-03)", () => {
     const user = await prisma.user.findUniqueOrThrow({ where: { id: actor.userId } });
     expect(user.linkedinMemberUrn).toBe(`urn:li:person:${MEMBER_SUB}`);
     const audit = await prisma.auditEvent.findMany({ where: { userId: actor.userId } });
-    expect(audit.map((event) => event.action)).toEqual(["integration.linkedin.connect"]);
+    expect(audit.map((event) => event.action).sort()).toEqual([
+      "auth.session.rotate",
+      "integration.linkedin.connect",
+    ]);
 
-    const status = await request
+    // The old session is dead; only the rotated one works.
+    await request
       .get("/api/v1/integrations/linkedin")
       .set("cookie", cookieHeader(actor.cookie))
+      .expect(401);
+    const status = await request
+      .get("/api/v1/integrations/linkedin")
+      .set("cookie", cookieHeader(rotated.cookie))
       .expect(200);
     expect(status.body).toEqual({
       status: "ACTIVE",
@@ -397,6 +437,27 @@ describe("GET /auth/linkedin/callback (N1, G-03)", () => {
     for (const secret of [issued, "auth-code-123", state, CLIENT_SECRET]) {
       expect(logs.text).not.toContain(secret);
     }
+  });
+
+  it("loses a session rotation race fail-closed: nothing stored, no new cookie (A-3)", async () => {
+    const actor = await newActor();
+    const state = (await connectUrl(actor)).searchParams.get("state")!;
+    // Another request rotates/revokes the session while this callback is talking to LinkedIn.
+    linkedin.userinfo = async () => {
+      await prisma.session.update({
+        where: { id: actor.sessionId },
+        data: { revokedAt: new Date() },
+      });
+      return json(200, { sub: MEMBER_SUB, name: "Rodrigo Baroni" });
+    };
+    const res = await callback(actor, { code: "c", state });
+    expect(resultOf(res)).toBe("invalid_state");
+    expect(res.headers["set-cookie"]).toBeUndefined();
+    expect(res.headers["x-csrf-token"]).toBeUndefined();
+    expect(await prisma.oAuthToken.count({ where: { userId: actor.userId } })).toBe(0);
+    expect(await prisma.session.count({ where: { userId: actor.userId, revokedAt: null } })).toBe(
+      0,
+    );
   });
 
   it("a replayed state is rejected without calling LinkedIn again", async () => {

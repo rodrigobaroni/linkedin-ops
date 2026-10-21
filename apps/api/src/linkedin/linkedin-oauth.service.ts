@@ -8,7 +8,13 @@ import { ProblemError } from "../common/problem.error.js";
 import { RUNTIME_ENV } from "../config/runtime-env.module.js";
 import { API_LOGGER } from "../logging/logger.js";
 import { PRISMA_CLIENT } from "../prisma/prisma.module.js";
-import type { AuthenticatedSession } from "../session/session.service.js";
+import {
+  SESSION_SERVICE,
+  type AuthenticatedSession,
+  type IssuedSession,
+  type RequestMeta,
+  type SessionService,
+} from "../session/session.service.js";
 import { FixedWindowLimiter } from "./fixed-window-limiter.js";
 import { hashNonce, LinkedInIdTokenVerifier } from "./id-token.verifier.js";
 import { LinkedInApiError, LinkedInApiClient } from "./linkedin.client.js";
@@ -37,6 +43,12 @@ export type CallbackResult =
   | "unavailable"
   | "scope_missing";
 
+/** What the callback answers: where to redirect and, after a successful connect, the rotated session. */
+export interface CallbackOutcome {
+  location: string;
+  issued: IssuedSession | null;
+}
+
 interface ClaimedState {
   nonce_hash: string | null;
 }
@@ -58,6 +70,7 @@ export class LinkedInOAuthService {
     @Inject(LinkedInApiClient) private readonly client: LinkedInApiClient,
     @Inject(LinkedInIdTokenVerifier) private readonly idTokens: LinkedInIdTokenVerifier,
     @Inject(LINKEDIN_RATE_LIMITS) limits: LinkedInRateLimits,
+    @Inject(SESSION_SERVICE) private readonly sessions: SessionService,
     @Inject(API_LOGGER) private readonly logger: Logger,
   ) {
     this.#connectLimiter = new FixedWindowLimiter(limits.connectPerSession, limits.windowMs);
@@ -116,10 +129,22 @@ export class LinkedInOAuthService {
   async handleCallback(
     query: LinkedInCallbackQuery,
     session: AuthenticatedSession | null,
-    clientKey: string,
-    correlationId: string,
-  ): Promise<string> {
-    this.#callbackLimiter.consume(clientKey, "Muitas tentativas; aguarde alguns minutos");
+    meta: RequestMeta,
+  ): Promise<CallbackOutcome> {
+    const outcome = await this.callback(query, session, meta);
+    return typeof outcome === "string" ? { location: outcome, issued: null } : outcome;
+  }
+
+  private async callback(
+    query: LinkedInCallbackQuery,
+    session: AuthenticatedSession | null,
+    meta: RequestMeta,
+  ): Promise<string | CallbackOutcome> {
+    const { correlationId } = meta;
+    this.#callbackLimiter.consume(
+      meta.ip ?? "unknown",
+      "Muitas tentativas; aguarde alguns minutos",
+    );
     // The application clock, bound as a parameter, goes through the same serialization as the stored
     // `expires_at`; SQL `now()` would be skewed by the session TimeZone with the pg driver adapter.
     if (!session) return this.returnUrl("invalid_state");
@@ -157,8 +182,21 @@ export class LinkedInOAuthService {
       }
       const member = await this.client.userinfo(grant.accessToken);
       await this.idTokens.verify(grant.idToken, { nonceHash: claimed.nonce_hash, sub: member.sub });
-      await this.storeCredential(session, grant, member, correlationId);
-      return this.returnUrl("connected");
+      // oauth-and-tokens.md §2.3 step 8 (Sentinela A-3): rotate BEFORE storing, so a connection never exists
+      // without a fresh session. `null` = the session was rotated or revoked concurrently: fail closed.
+      const issued = await this.sessions.rotate(session, meta);
+      if (!issued) {
+        this.logger.warn({ correlationId }, "linkedin callback lost a session rotation race");
+        return this.returnUrl("invalid_state");
+      }
+      try {
+        await this.storeCredential(session, issued.session, grant, member, correlationId);
+      } catch (error) {
+        // The old session is already revoked: hand over the new one even though nothing was stored.
+        this.logger.error({ correlationId, err: error }, "linkedin credential could not be stored");
+        return { location: this.returnUrl("exchange_failed"), issued };
+      }
+      return { location: this.returnUrl("connected"), issued };
     } catch (error) {
       if (!(error instanceof LinkedInApiError)) throw error;
       this.logger.warn(
@@ -227,8 +265,13 @@ export class LinkedInOAuthService {
     });
   }
 
+  /**
+   * `previous` is the session the state was bound to (now revoked by the rotation): its remaining
+   * `oauth_states` rows still point at it and are deleted here; nothing is re-bound to the new session.
+   */
   private async storeCredential(
-    session: AuthenticatedSession,
+    previous: AuthenticatedSession,
+    current: AuthenticatedSession,
     grant: { accessToken: string; expiresInSeconds: number; scopes: string[] },
     member: { sub: string; name: string | null },
     correlationId: string,
@@ -237,13 +280,13 @@ export class LinkedInOAuthService {
     const accessExpiresAt = new Date(Date.now() + grant.expiresInSeconds * 1000);
     await this.prisma.$transaction(async (tx) => {
       const existing = await tx.oAuthToken.findUnique({
-        where: { userId_provider: { userId: session.userId, provider: "LINKEDIN" } },
+        where: { userId_provider: { userId: current.userId, provider: "LINKEDIN" } },
         select: { id: true, providerSubject: true },
       });
       // The AAD binds the ciphertext to the row id, so a reconnect re-seals under the same id with a new DEK.
       const credentialId = existing?.id ?? newId();
       const sealed = this.vault.seal(
-        { provider: "linkedin", userId: session.userId, credentialId },
+        { provider: "linkedin", userId: current.userId, credentialId },
         { accessToken: grant.accessToken },
       );
       const data = {
@@ -260,21 +303,21 @@ export class LinkedInOAuthService {
         lastRefreshedAt: null,
       };
       await tx.oAuthToken.upsert({
-        where: { userId_provider: { userId: session.userId, provider: "LINKEDIN" } },
-        create: { id: credentialId, userId: session.userId, provider: "LINKEDIN", ...data },
+        where: { userId_provider: { userId: current.userId, provider: "LINKEDIN" } },
+        create: { id: credentialId, userId: current.userId, provider: "LINKEDIN", ...data },
         update: data,
       });
       await tx.user.update({
-        where: { id: session.userId },
+        where: { id: current.userId },
         data: { linkedinMemberUrn: memberUrn },
       });
-      await tx.oAuthState.deleteMany({ where: { sessionId: session.id } });
+      await tx.oAuthState.deleteMany({ where: { sessionId: previous.id } });
       await tx.auditEvent.create({
         data: {
           id: newId(),
-          userId: session.userId,
+          userId: current.userId,
           actorType: "USER",
-          actorId: session.userId,
+          actorId: current.userId,
           action: "integration.linkedin.connect",
           entityType: "oauth_token",
           entityId: credentialId,
@@ -288,8 +331,6 @@ export class LinkedInOAuthService {
         },
       });
     });
-    // TODO(T-015): rotate the local session here (oauth-and-tokens.md §2.3 step 8) once SessionService
-    // exposes rotation; the callback is a top-level navigation, so the new cookie can be set on this reply.
   }
 
   /** Read-only, after a failed claim: tells an expired state of this session apart (UX only). */

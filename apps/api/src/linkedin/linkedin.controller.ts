@@ -6,7 +6,9 @@ import type {
 } from "@linkedin-ops/contracts";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { ContractRoute } from "../common/contract-route.decorator.js";
+import { metaOf } from "../auth/auth.controller.js";
 import { ContractQuery } from "../common/zod-validation.pipe.js";
+import { SessionCookieWriter } from "../session/session-cookie.writer.js";
 import {
   SESSION_COOKIE_NAME,
   SESSION_SERVICE,
@@ -25,6 +27,7 @@ export class LinkedInController {
   constructor(
     @Inject(LinkedInOAuthService) private readonly oauth: LinkedInOAuthService,
     @Inject(SESSION_SERVICE) private readonly sessions: SessionService,
+    @Inject(SessionCookieWriter) private readonly cookies: SessionCookieWriter,
   ) {}
 
   @ContractRoute("integrations.linkedin.get")
@@ -45,7 +48,9 @@ export class LinkedInController {
   ): Promise<void> {
     const session = await this.sessions.resolve(request.cookies[SESSION_COOKIE_NAME]);
     const live = session && session.expiresAt.getTime() > Date.now() ? session : null;
-    const location = await this.oauth.handleCallback(query, live, request.ip, request.id);
+    const { location, issued } = await this.oauth.handleCallback(query, live, metaOf(request));
+    // A-3: a connected callback rotated the session; new cookie + X-CSRF-Token go out with the redirect.
+    if (issued) this.cookies.commit(reply, issued);
     await reply.code(302).header("location", location).header("cache-control", "no-store").send();
   }
 
