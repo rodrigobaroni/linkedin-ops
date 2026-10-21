@@ -15,6 +15,14 @@ const securityHeaders = [
   },
 ];
 
+/**
+ * `pnpm dev` without Caddy: proxy `/api/v1/*` to the API so the browser stays same-origin (ADR-0007 §9,
+ * system-overview.md §3.1). Opt-in via `API_PROXY=1` (set by the `dev` script); the Compose stack (T-003)
+ * never sets it, because Caddy already routes `/api/*` before the request reaches Next.js.
+ */
+const apiProxyTarget =
+  process.env.API_PROXY === "1" ? (process.env.API_BASE_URL ?? "http://localhost:3001") : null;
+
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   // @linkedin-ops/ui ships TypeScript source; Next compiles it so `pnpm --filter @linkedin-ops/web <script>`
@@ -22,10 +30,22 @@ const nextConfig: NextConfig = {
   transpilePackages: ["@linkedin-ops/ui"],
   poweredByHeader: false,
   typedRoutes: true,
+  // `msw/browser` has no `node` export; the dev-only dynamic import in src/mocks/mock-boot.tsx is still
+  // compiled for the SSR layer, so it resolves to an empty module there (it never runs on the server).
+  turbopack: {
+    resolveAlias: { "msw/browser": { browser: "msw/browser", default: false } },
+  },
   // Do not generate apps/web/AGENTS.md: agent guidance lives in the repo docs and CLAUDE.md.
   agentRules: false,
   headers() {
     return Promise.resolve([{ source: "/(.*)", headers: securityHeaders }]);
+  },
+  rewrites() {
+    return Promise.resolve(
+      apiProxyTarget
+        ? [{ source: "/api/v1/:path*", destination: `${apiProxyTarget}/api/v1/:path*` }]
+        : [],
+    );
   },
 };
 

@@ -23,6 +23,10 @@ catalog:
   # Integration tests against a real PostgreSQL (Testcontainers); TS runner for seed scripts.
   "@testcontainers/postgresql": ^12.2.1
   tsx: ^4.21.0
+  # Web auth (T-015): forms, API mocking for dev/Vitest (devDependency only; never in the production bundle).
+  react-hook-form: ^7.90.0
+  "@hookform/resolvers": ^6.0.0
+  msw: ^3.0.3
 
 # pnpm 10 blocks install scripts by default. Only these packages may run them (T-005): the Prisma CLI and
 # its schema engine download, argon2's native binding, and esbuild (used by tsx and Vitest).

@@ -63,6 +63,50 @@ export const messages = {
       "O restante do LinkedIn Ops continua disponível. Tente novamente ou volte para Hoje.",
     backToToday: "Voltar para Hoje",
   },
+  auth: {
+    login: {
+      title: "Entrar",
+      description: "Acesse o LinkedIn Ops com o e-mail e a senha cadastrados.",
+      email: "E-mail",
+      emailHint: "O mesmo e-mail usado na criação da conta.",
+      password: "Senha",
+      submit: "Entrar",
+      submitting: "Entrando…",
+      emailRequired: "Informe seu e-mail.",
+      emailInvalid: "Informe um e-mail válido.",
+      passwordRequired: "Informe sua senha.",
+      invalidCredentials: "E-mail ou senha incorretos. Confira os dados e tente novamente.",
+      networkError:
+        "Não foi possível conectar ao LinkedIn Ops. Verifique sua conexão e tente novamente.",
+      unexpectedError: "Não foi possível entrar agora. Tente novamente em instantes.",
+      rateLimitedTitle: "Muitas tentativas de entrada",
+      rateLimited: (remaining: string) =>
+        `Por segurança, a entrada fica bloqueada por alguns minutos. Tente novamente em ${remaining}.`,
+      rateLimitReleased: "O bloqueio terminou. Você já pode tentar novamente.",
+      noAccount: "Não existe cadastro pela interface: a conta é criada pelo comando de setup.",
+    },
+    session: {
+      checking: "Verificando sua sessão",
+      redirecting: "Redirecionando para a página de entrada",
+      unavailableTitle: "Não foi possível verificar sua sessão",
+      unavailableDescription:
+        "O LinkedIn Ops não respondeu. Nada foi perdido: tente novamente em instantes.",
+      logout: "Sair",
+      loggingOut: "Saindo…",
+      logoutFailed: "Não foi possível encerrar a sessão agora. Tente novamente.",
+    },
+    reauth: {
+      title: "Confirme sua senha",
+      description:
+        "Esta ação é sensível. Digite sua senha para continuar; a confirmação vale por alguns minutos.",
+      password: "Senha",
+      confirm: "Confirmar",
+      confirming: "Confirmando…",
+      cancel: "Cancelar",
+      invalid: "Senha incorreta. Tente novamente.",
+    },
+    required: "obrigatório",
+  },
   notFound: {
     title: "Página não encontrada",
     description: "O endereço pode ter mudado ou o item não existe mais.",

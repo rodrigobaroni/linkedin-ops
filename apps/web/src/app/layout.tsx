@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { messages } from "@/i18n/pt-br";
+import { MockBoot } from "@/mocks/mock-boot";
 import { AppProviders } from "@/providers/app-providers";
 import "./globals.css";
 
@@ -23,7 +24,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="pt-BR">
       <body className="font-sans antialiased">
-        <AppProviders>{children}</AppProviders>
+        <MockBoot>
+          <AppProviders>{children}</AppProviders>
+        </MockBoot>
       </body>
     </html>
   );
