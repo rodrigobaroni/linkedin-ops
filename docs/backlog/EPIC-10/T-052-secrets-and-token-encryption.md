@@ -31,7 +31,9 @@ cifra e deve cobrir **todos** os envelopes, não só `oauth_tokens`:
 - `users`: `totp_secret_ciphertext`, `totp_wrapped_dek`, `totp_key_version` (mesmo envelope; `CHECK` todos nulos ou todos preenchidos).
 - `oauth_states`: `code_verifier_ciphertext` + `code_verifier_key_version` (`CHECK` all-or-none); TTL de 10 min via `expires_at` (indexado) — o job de purge de `oauth_states` expirados/usados (≤ 24 h, `data-and-lgpd.md` §4) é entregue aqui ou em T-038, nunca deixado para depois.
 - AAD canônica `"<schemaVersion>|<provider>|<userId>|<credentialId>|<tokenType>"` com `tokenType` ∈ `access | refresh | dek | totp | code_verifier`: um ciphertext nunca pode ser movido entre linhas, colunas ou usuários.
-- Rotação de KEK (`keys:rotate`) re-envelopa as DEKs das três tabelas; verificação de 100% das linhas com decrypt autenticado.
+- Rotação de KEK (`keys:rotate`) re-envelopa as DEKs de `oauth_tokens` e `users` (TOTP); `oauth_states` não tem DEK
+  (AEAD direta com `key_version`), então a KEK anterior permanece disponível até o purge ou a re-cifra dos
+  `code_verifier` ainda válidos; verificação de 100% das linhas com decrypt autenticado.
 - Testes de adulteração (tag, AAD, chave errada, frame truncado) para cada envelope; nenhum caminho devolve plaintext em falha.
 - Roles de banco (ADR-0004 §9, com Estaleiro): role de runtime sem `UPDATE`/`DELETE` em `draft_versions`, `approvals`, `audit_events` (hoje só o trigger protege) e sem acesso ao material de chave.
 - Nomenclatura: o módulo descrito como `SecretsVault` aqui é o `TokenVault` do ADR-0004; adotar um nome só.
