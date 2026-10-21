@@ -65,7 +65,7 @@ Bootstrap do primeiro usuário: **comando CLI** (`pnpm --filter api cli user:cre
 | ------ | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | GET    | `/integrations/linkedin` 🔒            | `{ status: "DISCONNECTED"\|"ACTIVE"\|"EXPIRED"\|"REAUTH_REQUIRED", scopes, accessExpiresAt, memberUrn }` — **nunca** o token                                                  |
 | POST   | `/integrations/linkedin/connect` 🔒 🔐 | gera `state` (CSPRNG ≥ 256 bits, só o hash persistido, ligado à sessão, 10 min, uso único; um state ativo por sessão) e PKCE S256 quando o app suportar; → `{ authorizeUrl }` |
-| GET    | `/integrations/linkedin/callback`      | recebe `code`+`state`; troca por token no servidor; cifra e grava; redireciona para `APP_BASE_URL/settings/integrations?result=ok\|error`                                     |
+| GET    | `/auth/linkedin/callback`              | recebe `code`+`state`; troca por token no servidor; cifra e grava; redireciona para `APP_BASE_URL/publicar?linkedin=connected\|error&reason=<código>` (MVP-0) |
 | DELETE | `/integrations/linkedin` 🔒 🔐         | revoga/remove token (`AuditEvent`)                                                                                                                                            |
 
 ### 2.4 Settings
@@ -139,6 +139,7 @@ Bootstrap do primeiro usuário: **comando CLI** (`pnpm --filter api cli user:cre
 | ------ | ------------------------------------ | --------------------------------------------------------------------------- |
 | GET    | `/schedules?from&to` 🔒              | calendário; retorna `scheduledAt` (UTC) + `timezone` + `requestedLocalTime` |
 | DELETE | `/schedules/{id}` 🔒                 | cancela (draft volta a `APPROVED`)                                          |
+| POST   | `/publications/publish-now` 🔐 🧾    | MVP-0: publica texto livre agora, síncrono; `201 Publication`               |
 | GET    | `/publications` 🔒                   | histórico                                                                   |
 | GET    | `/publications/{id}` 🔒              | status, `externalPostId`, `externalUrl`, `error` (sem token)                |
 | POST   | `/publications/{id}/reconcile` 🔒 ⚡ | para `AMBIGUOUS`: consulta LinkedIn e resolve (ADR-0003)                    |

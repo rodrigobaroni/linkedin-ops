@@ -10,6 +10,8 @@ export const LinkedInIntegrationSchema = z
     scopes: z.array(z.string().min(1).max(64)).describe("Granted OAuth scopes"),
     accessExpiresAt: IsoDateTimeSchema.nullable(),
     memberUrn: LinkedInUrnSchema.nullable(),
+    /** Display name from OIDC `userinfo`; shown on the publish confirmation (Sentinela condition 7). */
+    memberName: z.string().min(1).max(200).nullable(),
   })
   .meta({ id: "LinkedInIntegration" });
 export type LinkedInIntegration = z.infer<typeof LinkedInIntegrationSchema>;
@@ -23,7 +25,7 @@ export const LinkedInConnectResponseSchema = z
 export type LinkedInConnectResponse = z.infer<typeof LinkedInConnectResponseSchema>;
 
 /**
- * Query of `GET /integrations/linkedin/callback` (RFC 6749 §4.1.2 / §4.1.2.1): exactly one of `code` or
+ * Query of `GET /auth/linkedin/callback` (RFC 6749 §4.1.2 / §4.1.2.1): exactly one of `code` or
  * `error`, never both, never neither. `code` is exchanged server-side and never stored. Unknown params are
  * rejected (TM-03).
  */

@@ -45,6 +45,7 @@ export const linkedInIntegration: c.LinkedInIntegration = {
   scopes: ["openid", "profile", "w_member_social"],
   accessExpiresAt: LATER,
   memberUrn: "urn:li:person:abc123",
+  memberName: "Rodrigo Baroni",
 };
 
 export const quietHours: c.QuietHours = { start: "22:00", end: "07:00", timezone: TZ };
@@ -383,6 +384,7 @@ export const publication: c.Publication = {
   id: ids.publication,
   draftId: ids.draft,
   draftVersionId: ids.version,
+  text: null,
   scheduleId: ids.schedule,
   status: "SUCCEEDED",
   attempt: 1,
@@ -394,6 +396,17 @@ export const publication: c.Publication = {
   error: null,
   createdAt: AT,
 };
+
+/** MVP-0 "publish now" of free text: no draft, no schedule. */
+export const manualPublication: c.Publication = {
+  ...publication,
+  draftId: null,
+  draftVersionId: null,
+  text: "Texto escrito pelo Rodrigo, publicado agora.",
+  scheduleId: null,
+};
+
+export const publishNowInput: c.PublishNowInput = { text: "Texto escrito pelo Rodrigo." };
 
 export const publicationError: c.PublicationError = {
   code: "LINKEDIN_401",
@@ -1337,6 +1350,26 @@ export const resourceCases: SchemaCase[] = [
       "unknown status": set("status", "DONE"),
       "externalPostId not urn": set("externalPostId", "share:123"),
       "negative attempt": set("attempt", -1),
+    },
+  },
+  {
+    name: "Publication (manual text, publish now)",
+    schema: c.PublicationSchema,
+    valid: manualPublication,
+    invalid: {
+      "text too long": set("text", repeat("a", 3001)),
+      "missing text": drop("text"),
+    },
+  },
+  {
+    name: "PublishNowInput",
+    schema: c.PublishNowInputSchema,
+    valid: publishNowInput,
+    invalid: {
+      "empty text": set("text", ""),
+      "blank text": set("text", "  \n "),
+      "text too long": set("text", repeat("a", 3001)),
+      "unknown field": set("idempotencyKey", "0192f4a0-0000-7000-8000-000000000001"),
     },
   },
   // media

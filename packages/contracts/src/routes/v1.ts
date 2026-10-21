@@ -70,7 +70,11 @@ import {
   OpportunitySelectAcceptedSchema,
   OpportunitySelectAdoptedSchema,
 } from "../resources/opportunity.js";
-import { PublicationListQuerySchema, PublicationSchema } from "../resources/publication.js";
+import {
+  PublicationListQuerySchema,
+  PublicationSchema,
+  PublishNowInputSchema,
+} from "../resources/publication.js";
 import { ScheduleListQuerySchema, ScheduleSchema } from "../resources/schedule.js";
 import {
   SourceInputSchema,
@@ -216,7 +220,7 @@ export const routesV1 = defineRoutes({
   },
   "integrations.linkedin.callback": {
     method: "GET",
-    path: "/integrations/linkedin/callback",
+    path: "/auth/linkedin/callback",
     summary: "OAuth callback: exchanges the code server-side and redirects to settings",
     tag: "integrations",
     auth: "none",
@@ -771,6 +775,18 @@ export const routesV1 = defineRoutes({
     auth: "session",
     params: IdParamsSchema,
     responses: { 204: null },
+  },
+  "publications.publishNow": {
+    method: "POST",
+    path: "/publications/publish-now",
+    summary: "Publish free text now, synchronously (MVP-0; elevated: publishes to LinkedIn)",
+    tag: "publications",
+    auth: "elevated",
+    roles: OWNER_ONLY,
+    body: PublishNowInputSchema,
+    responses: { 201: PublicationSchema },
+    idempotencyKey: "required",
+    rateLimited: true,
   },
   "publications.list": {
     method: "GET",

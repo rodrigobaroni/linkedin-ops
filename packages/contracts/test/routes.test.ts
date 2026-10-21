@@ -60,6 +60,7 @@ describe("routes/v1 registry", () => {
       "drafts.schedule",
       "drafts.regenerate",
       "drafts.retryPublication",
+      "publications.publishNow",
       "curationRuns.create",
       "opportunities.select",
       "opportunities.createManual",
@@ -74,6 +75,7 @@ describe("routes/v1 registry", () => {
     for (const key of [
       "drafts.publish",
       "drafts.retryPublication",
+      "publications.publishNow",
       "settings.autonomy.update",
       "integrations.linkedin.connect",
       "integrations.linkedin.disconnect",
