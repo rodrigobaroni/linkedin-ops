@@ -127,6 +127,7 @@ export const messages = {
       title: "Conexão com o LinkedIn",
       loading: "Verificando a conexão com o LinkedIn",
       loadError: "Não foi possível verificar a conexão com o LinkedIn.",
+      retry: "Tentar novamente",
       connectedAs: (name: string) => `Conectado como ${name}`,
       unidentified: "Conectado, mas sem identificação da conta",
       unidentifiedHint:
@@ -166,6 +167,8 @@ export const messages = {
           "O LinkedIn não confirmou a autorização. Nada foi conectado; tente novamente.",
         unavailable:
           "O LinkedIn não está respondendo agora. Tente conectar novamente em instantes.",
+        scope_missing:
+          "O LinkedIn não concedeu a permissão de publicar; conecte de novo e autorize todas as permissões.",
       },
     },
     composer: {
@@ -211,6 +214,9 @@ export const messages = {
       resendSameHint:
         "Se o post não estiver lá, reenvie o mesmo pedido: ele é reconhecido e nunca vira um segundo post.",
       resendSame: "Reenviar o mesmo pedido",
+      /** `Retry-After` from the API, shown as an absolute time plus minutes left. */
+      rateLimitedUntil: (clock: string, minutes: number) =>
+        `Muitas publicações em pouco tempo. Nada foi publicado; tente novamente às ${clock} (${minutes <= 1 ? "em menos de 1 minuto" : `em ${minutes} minutos`}).`,
       failedTitle: "O post não foi publicado",
       newPost: "Escrever outro post",
       cancelled: "Publicação cancelada. O texto continua aqui.",
@@ -219,9 +225,6 @@ export const messages = {
       LINKEDIN_REAUTH_REQUIRED:
         "O LinkedIn recusou o acesso atual. Reconecte a conta e tente publicar de novo.",
       RATE_LIMITED: "Muitas publicações em pouco tempo. Aguarde alguns minutos e tente novamente.",
-      /** `Retry-After` from the API, shown as an absolute time plus minutes left. */
-      rateLimitedUntil: (clock: string, minutes: number) =>
-        `Muitas publicações em pouco tempo. Nada foi publicado; tente novamente às ${clock} (${minutes <= 1 ? "em menos de 1 minuto" : `em ${minutes} minutos`}).`,
       VALIDATION_FAILED:
         "O texto não foi aceito. Confira o tamanho e o conteúdo e tente novamente.",
       PUBLICATION_ALREADY_EXISTS: "Este post já foi publicado. Confira as publicações recentes.",

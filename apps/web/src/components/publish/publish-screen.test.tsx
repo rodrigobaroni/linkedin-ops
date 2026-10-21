@@ -288,7 +288,7 @@ describe("PublishScreen", () => {
     await user.click(within(dialog).getByRole("button", { name: copy.confirm.confirm }));
     const until = Date.parse("2026-10-21T22:10:00Z");
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(copy.errors.rateLimitedUntil(formatClock(until), 10));
+    expect(alert).toHaveTextContent(copy.result.rateLimitedUntil(formatClock(until), 10));
     await waitFor(() => expect(alert.parentElement).toHaveFocus());
     expect(screen.queryByRole("button", { name: copy.result.resendSame })).not.toBeInTheDocument();
     expect(mockPublishingState().linkedinCalls).toBe(0);
@@ -385,6 +385,28 @@ describe("PublishScreen", () => {
     },
   );
 
+  it("connection status fails to load: offers Tentar novamente, which recovers", async () => {
+    // Fails the first load and its automatic retry (`retry: 1`), then recovers.
+    let failures = 2;
+    server.use(
+      http.get("/api/v1/integrations/linkedin", () =>
+        failures-- > 0 ? problemResponse("INTERNAL") : undefined,
+      ),
+    );
+    const user = userEvent.setup();
+    const { container } = await renderApp(<PublishScreen />, { elevated: true });
+    // The automatic retry waits ~1 s before failing for good.
+    expect(
+      await screen.findByText(copy.connection.loadError, {}, { timeout: 4000 }),
+    ).toBeInTheDocument();
+    const results = await runAxe(container);
+    expect(results.violations, formatViolations(results)).toEqual([]);
+    await user.click(screen.getByRole("button", { name: copy.connection.retry }));
+    expect(
+      await screen.findByText(copy.connection.connectedAs(MOCK_MEMBER_NAME)),
+    ).toBeInTheDocument();
+  });
+
   it("shows the OAuth callback notice and removes the parameter from the URL", async () => {
     setSearch("linkedin=connected");
     await renderPublish();
@@ -415,7 +437,13 @@ describe("callbackNotice", () => {
       kind: "info",
       message: copy.callback.denied,
     });
-    for (const reason of ["expired", "invalid_state", "exchange_failed", "unavailable"] as const) {
+    for (const reason of [
+      "expired",
+      "invalid_state",
+      "exchange_failed",
+      "unavailable",
+      "scope_missing",
+    ] as const) {
       expect(callbackNotice("error", reason)).toEqual({
         kind: "error",
         message: copy.callback.reasons[reason],

@@ -111,7 +111,21 @@ export function LinkedInConnectionCard({
           </>
         ) : connection.isError ? (
           <Alert variant="destructive">
-            <AlertDescription>{copy.loadError}</AlertDescription>
+            <AlertDescription>
+              <p>{copy.loadError}</p>
+              <div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="max-md:h-11"
+                  disabled={connection.isFetching}
+                  onClick={() => void connection.refetch()}
+                >
+                  {connection.isFetching ? <Spinner /> : null}
+                  {copy.retry}
+                </Button>
+              </div>
+            </AlertDescription>
           </Alert>
         ) : (
           <ConnectionDetails connection={connection.data} timeZone={user?.timezone} now={now} />

@@ -396,7 +396,7 @@ function failureFromError(
     const until = Date.now() + cause.retryAfterSeconds * 1000;
     return {
       kind: "failed",
-      message: errors.rateLimitedUntil(formatClock(until), minutesUntil(until)),
+      message: copy.result.rateLimitedUntil(formatClock(until), minutesUntil(until)),
       reconnect: false,
     };
   }
