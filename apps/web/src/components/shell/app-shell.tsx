@@ -1,5 +1,8 @@
+"use client";
+
 import type { ReactNode } from "react";
-import { MOCK_ACCOUNT_NAME, MOCK_LINKEDIN_STATUS, MOCK_UNREAD_NOTIFICATIONS } from "@/config/mock";
+import { MOCK_UNREAD_NOTIFICATIONS, linkedInStatusFromSession } from "@/config/mock";
+import { useAuth } from "@/providers/auth-provider";
 import { BottomNav } from "./bottom-nav";
 import { MobileTopBar } from "./mobile-top-bar";
 import { RouteFocus } from "./route-focus";
@@ -9,17 +12,22 @@ import { MAIN_CONTENT_ID, SkipLink } from "./skip-link";
 /**
  * Application shell: skip link → sidebar (md+) / top bar + bottom nav (mobile) → `main`.
  * DOM order matches reading order; the page header and `h1` are rendered by each page inside `main`.
+ * Account name and LinkedIn status come from the session (`GET /auth/me`); the shell is only rendered
+ * behind `RequireSession`, so `user` is present.
  */
 export function AppShell({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
+  const accountName = user?.name ?? "";
+  const linkedInStatus = linkedInStatusFromSession(user?.linkedinConnected ?? false);
   return (
     <>
       <SkipLink />
       <RouteFocus />
       <div className="flex min-h-dvh">
         <Sidebar
-          linkedInStatus={MOCK_LINKEDIN_STATUS}
+          linkedInStatus={linkedInStatus}
           unreadNotifications={MOCK_UNREAD_NOTIFICATIONS}
-          accountName={MOCK_ACCOUNT_NAME}
+          accountName={accountName}
         />
         <div className="flex min-w-0 flex-1 flex-col">
           <MobileTopBar unreadNotifications={MOCK_UNREAD_NOTIFICATIONS} />
@@ -32,10 +40,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </main>
         </div>
       </div>
-      <BottomNav
-        linkedInStatus={MOCK_LINKEDIN_STATUS}
-        unreadNotifications={MOCK_UNREAD_NOTIFICATIONS}
-      />
+      <BottomNav linkedInStatus={linkedInStatus} unreadNotifications={MOCK_UNREAD_NOTIFICATIONS} />
     </>
   );
 }

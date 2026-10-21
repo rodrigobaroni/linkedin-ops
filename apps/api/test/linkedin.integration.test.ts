@@ -2,7 +2,7 @@
  * MVP-0 LinkedIn slice against a real PostgreSQL (T-038/T-052/T-039 núcleo; gates G-02, G-03, G-04):
  * OAuth connect/callback with the N1 atomic state claim, envelope-encrypted token at rest, publish-now with
  * the idempotency claim before the call, AMBIGUOUS on timeout/5xx and reauth on 401/403. LinkedIn is a
- * scripted `fetch` (no network); sessions come from a fake `SessionService` bound to real `sessions` rows.
+ * scripted `fetch` (no network); sessions are real `sessions` rows resolved by `PrismaSessionService`.
  *
  * Without Docker, point `INTEGRATION_DATABASE_URL` at an EMPTY database (e.g. a throwaway local cluster);
  * the container is then skipped.
@@ -14,9 +14,10 @@ import { fileURLToPath } from "node:url";
 import { Test } from "@nestjs/testing";
 import type { NestFastifyApplication } from "@nestjs/platform-fastify";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { LoginInput, Me } from "@linkedin-ops/contracts";
 import {
   createPrismaClient,
+  deriveCsrfToken,
+  hashSessionSecret,
   newId,
   TokenVault,
   validateRuntimeEnv,
@@ -34,12 +35,6 @@ import { LINKEDIN_OIDC_ISSUER } from "../src/linkedin/linkedin.constants.js";
 import { ADR_0007_RATE_LIMITS, LINKEDIN_RATE_LIMITS } from "../src/linkedin/rate-limits.js";
 import { ABANDONED_CLAIM_MS, PublicationsService } from "../src/linkedin/publications.service.js";
 import { createLogger } from "../src/logging/logger.js";
-import {
-  SESSION_SERVICE,
-  type AuthenticatedSession,
-  type IssuedSession,
-  type SessionService,
-} from "../src/session/session.service.js";
 import { APP_BASE_URL, LogCapture, cookieHeader, mutationHeaders } from "./helpers.js";
 
 const POSTGRES_IMAGE =
@@ -54,23 +49,6 @@ const CLIENT_SECRET = "WPL_AP1.integration-client-secret";
 const REDIRECT_URI = `${APP_BASE_URL}/api/v1/auth/linkedin/callback`;
 const MEMBER_SUB = "x1Y2z3_member";
 const POST_URN = "urn:li:share:7381234567890123456";
-
-/** Sessions resolved from cookies, bound to real `sessions` rows (the FK of `oauth_states`). */
-class FakeSessionService implements SessionService {
-  readonly byCookie = new Map<string, AuthenticatedSession>();
-  async resolve(cookie: string | undefined) {
-    return (cookie && this.byCookie.get(cookie)) || null;
-  }
-  async login(_input: LoginInput): Promise<IssuedSession | null> {
-    return null;
-  }
-  async reauth(): Promise<IssuedSession | null> {
-    return null;
-  }
-  async me(): Promise<Me> {
-    throw new Error("not used");
-  }
-}
 
 type Handler = (url: string, init: RequestInit) => Promise<Response> | Response;
 
@@ -142,7 +120,6 @@ let app: NestFastifyApplication;
 let request: ReturnType<typeof supertest>;
 let env: RuntimeEnv;
 let vault: TokenVault;
-const sessions = new FakeSessionService();
 const linkedin = new FakeLinkedIn();
 const logs = new LogCapture();
 
@@ -165,25 +142,19 @@ async function newActor(options: { elevated?: boolean } = {}): Promise<Actor> {
       name: "Owner",
     },
   });
+  // A real `sessions` row, resolved by the app's own PrismaSessionService (T-015): only the cookie's
+  // SHA-256 is stored and the CSRF token is derived from the session id, exactly as at login.
+  const cookie = randomBytes(32).toString("base64url");
   await prisma.session.create({
     data: {
       id: sessionId,
       userId,
-      secretHash: randomBytes(32).toString("hex"),
+      secretHash: hashSessionSecret(cookie),
       expiresAt: new Date(Date.now() + 3_600_000),
+      elevatedUntil: options.elevated === false ? null : new Date(Date.now() + 15 * 60_000),
     },
   });
-  const cookie = randomBytes(32).toString("base64url");
-  const csrfToken = randomBytes(32).toString("base64url");
-  sessions.byCookie.set(cookie, {
-    id: sessionId,
-    userId,
-    role: "OWNER",
-    csrfToken,
-    elevatedUntil: options.elevated === false ? null : new Date(Date.now() + 15 * 60_000),
-    expiresAt: new Date(Date.now() + 3_600_000),
-  });
-  return { userId, sessionId, cookie, csrfToken };
+  return { userId, sessionId, cookie, csrfToken: deriveCsrfToken(env.sessionSecret, sessionId) };
 }
 
 function elevated(actor: Actor, extra: Record<string, string> = {}) {
@@ -286,8 +257,6 @@ beforeAll(async () => {
   const moduleRef = await Test.createTestingModule({
     imports: [AppModule.forRoot({ env, logger })],
   })
-    .overrideProvider(SESSION_SERVICE)
-    .useValue(sessions)
     .overrideProvider(LINKEDIN_FETCH)
     .useValue(linkedin.fetch)
     // Every callback of this file comes from 127.0.0.1; the ADR ceilings are pinned in rate-limits.test.ts.

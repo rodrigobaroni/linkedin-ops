@@ -29,9 +29,13 @@ export interface CreateAppOptions {
  * logger, `req_<uuid v7>` request ids, body limit and a catch-all content-type parser. The parser accepts
  * (and discards) non-JSON bodies so that `RouteAccessGuard` can answer `403 CSRF_REJECTED` for form posts
  * instead of Fastify's generic 415; JSON stays on Fastify's strict built-in parser (prototype poisoning →
- * error).
+ * error). `X-Forwarded-For` is honoured only from `trustedProxies` (`TRUSTED_PROXY_CIDRS`, empty by
+ * default), so `request.ip` — the key of login throttling — cannot be forged by a client.
  */
-export function createFastifyAdapter(logger: Logger): FastifyAdapter {
+export function createFastifyAdapter(
+  logger: Logger,
+  trustedProxies: readonly string[] = [],
+): FastifyAdapter {
   const adapter = new FastifyAdapter({
     loggerInstance: logger,
     genReqId: () => newCorrelationId(),
@@ -39,7 +43,7 @@ export function createFastifyAdapter(logger: Logger): FastifyAdapter {
     // Details and the exception filter as `correlationId` (same value).
     requestIdHeader: false,
     bodyLimit: BODY_LIMIT_BYTES,
-    trustProxy: false,
+    trustProxy: trustedProxies.length > 0 ? [...trustedProxies] : false,
     onProtoPoisoning: "error",
     onConstructorPoisoning: "error",
   });
@@ -92,7 +96,7 @@ export async function createApp({
 }: CreateAppOptions): Promise<NestFastifyApplication> {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.forRoot({ env, logger }),
-    createFastifyAdapter(logger),
+    createFastifyAdapter(logger, env.trustedProxyCidrs),
     { bufferLogs: true, bodyParser: false },
   );
   await configureApp(app, env, logger);

@@ -1,0 +1,51 @@
+# Site block for a host that already runs a shared Caddy on 80/443 (see infra/docker/docker-compose.shared-proxy.yml).
+# Append to that Caddyfile, replacing linkedin.example.com with the real hostname, then validate and reload:
+#   docker exec <caddy> caddy validate --config /etc/caddy/Caddyfile && docker exec <caddy> caddy reload --config /etc/caddy/Caddyfile
+# The Caddy container must resolve host.docker.internal (extra_hosts: "host.docker.internal:host-gateway").
+# Same security headers and access-log filter as infra/caddy/Caddyfile (PR #80 review, Sentinela 1 and 4).
+
+linkedin.example.com {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy no-referrer
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+		-Server
+		-X-Powered-By
+	}
+
+	@api path /api /api/*
+	handle @api {
+		reverse_proxy host.docker.internal:3101
+	}
+
+	handle {
+		reverse_proxy host.docker.internal:3100
+	}
+
+	log {
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				request>uri query {
+					delete code
+					delete state
+					delete token
+					delete access_token
+					delete refresh_token
+					delete id_token
+				}
+				request>headers>Cookie delete
+				request>headers>Authorization delete
+				# CSRF token sent by the web on mutations and returned by login/reauth (PR #82 review, Sentinela S-1).
+				request>headers>X-Csrf-Token delete
+				resp_headers>Set-Cookie delete
+				resp_headers>X-Csrf-Token delete
+			}
+		}
+	}
+}

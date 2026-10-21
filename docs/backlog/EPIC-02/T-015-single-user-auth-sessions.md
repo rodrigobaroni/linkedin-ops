@@ -12,13 +12,13 @@ Um único usuário (Rodrigo), mas o modelo não pode impedir multiusuário. Subi
 
 ## Resultado esperado
 
-Login conforme ADR-0007 (e-mail + senha com Argon2id; passkey e TOTP depois do MVP), sessão em cookie `HttpOnly/Secure/SameSite=Lax`, logout, endpoint `POST /auth/reauthenticate` que emite prova de reautenticação com validade de 5 min, guard que injeta `userId` em toda requisição, rate limit em login, página de login no web.
+Login conforme ADR-0007 (e-mail + senha com Argon2id; passkey e TOTP depois do MVP), sessão em cookie `HttpOnly/Secure/SameSite=Lax`, logout, endpoint `POST /auth/reauth` que eleva a sessão por 15 min (ADR-0007 item 3; o web deriva o prazo exibido de `elevatedUntil`), guard que injeta `userId` em toda requisição, rate limit em login, página de login no web.
 
 ## Critérios de aceite (verificáveis)
 
 - [ ] 5 falhas de login em 1 min bloqueiam por 15 min (teste).
 - [ ] Toda rota de domínio exige sessão; teste de acesso anônimo retorna 401.
-- [ ] Reautenticação expira em 5 min e é exigida pelo endpoint de troca de modo (T-044 consome).
+- [ ] Reautenticação (elevação da sessão) expira em 15 min e é exigida pelo endpoint de troca de modo (T-044 consome).
 - [ ] Senha nunca aparece em logs; cookie com flags corretas (teste de header).
 - [ ] Criação do primeiro usuário via comando de setup (`pnpm setup:user`), não via endpoint público.
 - [ ] `POST /auth/login` e `POST /auth/reauth` respondem `200 { csrfToken, elevatedUntil | null }`; `GET /auth/me` inclui `csrfToken`; as três respostas têm `Cache-Control: no-store` e o body não é logado (ADR-0007 N2; contrato do PR #68).

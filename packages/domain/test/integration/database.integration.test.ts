@@ -142,17 +142,22 @@ afterAll(async () => {
 });
 
 describe("migration baseline", () => {
-  it("applies every migration from scratch, in order, and enables citext", async () => {
-    const migrations = await prisma.$queryRaw<{ name: string; finished: boolean }[]>`
-      SELECT migration_name AS name, finished_at IS NOT NULL AS finished FROM _prisma_migrations
-      ORDER BY migration_name`;
-    // Every migration folder on disk, so adding a migration never needs this test edited.
-    const onDisk = readdirSync(MIGRATIONS_DIR, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && /^\d{14}_[a-z0-9_]+$/.test(entry.name))
+  it("applies every migration in prisma/migrations from scratch, in order, and enables citext", async () => {
+    // Derived from the folders so that adding a migration never needs an edit here.
+    const expected = readdirSync(MIGRATIONS_DIR, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
       .sort();
-    expect(onDisk[0]).toBe("20261016120000_init");
-    expect(migrations).toEqual(onDisk.map((name) => ({ name, finished: true })));
+    expect(expected[0]).toBe("20261016120000_init");
+    const migrations = await prisma.$queryRaw<
+      { name: string; finished: boolean; rolledBack: boolean }[]
+    >`
+      SELECT migration_name AS name, finished_at IS NOT NULL AS finished,
+             rolled_back_at IS NOT NULL AS "rolledBack"
+      FROM _prisma_migrations ORDER BY migration_name`;
+    expect(migrations).toEqual(
+      expected.map((name) => ({ name, finished: true, rolledBack: false })),
+    );
     const extensions = await prisma.$queryRaw<{ extname: string }[]>`
       SELECT extname FROM pg_extension WHERE extname = 'citext'`;
     expect(extensions).toHaveLength(1);

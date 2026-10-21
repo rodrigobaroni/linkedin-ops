@@ -1,0 +1,23 @@
+# LinkedIn Ops — deploy on a host whose ports 80/443 already belong to a shared reverse proxy
+# (MVP-0 on Rodrigo's Oracle VM, 2026-10-21). Use together with the base file:
+#   docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.shared-proxy.yml ...
+#
+# - Our own Caddy is disabled: the host's Caddy is the edge and gets the site block from
+#   infra/caddy/shared-proxy.site.caddy.example (same headers and access-log filter as infra/caddy/Caddyfile).
+# - web and api are published only on the docker0 bridge address (172.17.0.1), never on a public interface,
+#   so they are reachable from the host's Caddy (host.docker.internal) and not from the internet.
+# - The worker is not part of MVP-0 (T-006); it stays behind a profile.
+services:
+  caddy:
+    profiles: ["own-proxy"]
+
+  worker:
+    profiles: ["worker"]
+
+  api:
+    ports:
+      - "172.17.0.1:${API_PUBLISH_PORT:-3101}:3001"
+
+  web:
+    ports:
+      - "172.17.0.1:${WEB_PUBLISH_PORT:-3100}:3000"

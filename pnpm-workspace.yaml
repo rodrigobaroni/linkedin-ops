@@ -23,6 +23,10 @@ catalog:
   # Integration tests against a real PostgreSQL (Testcontainers); TS runner for seed scripts.
   "@testcontainers/postgresql": ^12.2.1
   tsx: ^4.21.0
+  # Web auth (T-015): forms, API mocking for dev/Vitest (devDependency only; never in the production bundle).
+  react-hook-form: ^7.90.0
+  "@hookform/resolvers": ^6.0.0
+  msw: ^3.0.3
   # API (T-008, ADR-0001): NestJS 12 on Fastify, pinned exactly (two-week soak rule; Dependabot bumps).
   # `fastify` tracks the exact version @nestjs/platform-fastify depends on so a single copy is installed.
   "@nestjs/common": 12.1.3

@@ -14,6 +14,7 @@ import {
 } from "@linkedin-ops/ui";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
+import { LogoutButton } from "@/components/auth/logout-button";
 import type { LinkedInConnectionStatus } from "@/config/mock";
 import { drawerItems, isActivePath, moreIcon as MoreIcon } from "@/config/navigation";
 import { messages } from "@/i18n/pt-br";
@@ -84,6 +85,10 @@ export function MoreDrawer({
             })}
           </ul>
         </nav>
+        <Separator />
+        <div className="px-2 py-2 pb-4">
+          <LogoutButton className="min-h-11 w-full" />
+        </div>
       </SheetContent>
     </Sheet>
   );

@@ -1,34 +1,34 @@
-import { render, screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PlaceholderScreen } from "@/components/placeholder-screen";
 import { navItems } from "@/config/navigation";
 import { messages } from "@/i18n/pt-br";
-import { AppProviders } from "@/providers/app-providers";
+import { mockAuthState } from "@/mocks/auth-handlers";
 import { formatViolations, runAxe } from "@/test/axe";
-import { setPathname } from "@/test/next-navigation";
+import { resetNavigation, routerMock, setPathname } from "@/test/next-navigation";
+import { renderApp } from "@/test/render";
 import { AppShell } from "./app-shell";
 
 vi.mock("next/navigation", async () => (await import("@/test/next-navigation")).navigationMock);
 
 function renderShell(pathname = "/curadoria") {
   setPathname(pathname);
-  return render(
-    <AppProviders>
-      <AppShell>
-        <PlaceholderScreen screen="curadoria" pathname="/curadoria" />
-      </AppShell>
-    </AppProviders>,
+  return renderApp(
+    <AppShell>
+      <PlaceholderScreen screen="curadoria" pathname="/curadoria" />
+    </AppShell>,
   );
 }
 
 describe("AppShell", () => {
   beforeEach(() => {
+    resetNavigation();
     setPathname("/curadoria");
   });
 
-  it("starts with the skip link and exposes the main landmarks", () => {
-    const { container } = renderShell();
+  it("starts with the skip link and exposes the main landmarks", async () => {
+    const { container } = await renderShell();
     const skip = screen.getByRole("link", { name: messages.skipLink });
     expect(container.querySelector("a")).toBe(skip);
     expect(skip).toHaveAttribute("href", "#conteudo-principal");
@@ -43,14 +43,15 @@ describe("AppShell", () => {
     );
   });
 
-  it("lists every destination of the navigation map in the sidebar, in order", () => {
-    renderShell();
+  it("lists every destination of the navigation map in the sidebar, in order", async () => {
+    await renderShell();
     const sidebar = screen.getByRole("navigation", { name: messages.nav.primary });
     const labels = within(sidebar)
       .getAllByRole("link")
       .map((link) => link.textContent?.trim());
     expect(labels).toEqual([
       "Hoje",
+      "Publicar",
       "Curadoria",
       "Estúdio",
       "Calendário",
@@ -65,35 +66,46 @@ describe("AppShell", () => {
     expect(within(sidebar).getByText(messages.nav.editorialMemory)).toBeInTheDocument();
   });
 
-  it("marks the active route with aria-current, including nested paths", () => {
-    renderShell("/estudio/abc");
+  it("marks the active route with aria-current, including nested paths", async () => {
+    await renderShell("/estudio/abc");
     const sidebar = screen.getByRole("navigation", { name: messages.nav.primary });
     const current = within(sidebar).getAllByRole("link", { current: "page" });
     expect(current).toHaveLength(1);
     expect(current[0]).toHaveTextContent("Estúdio");
   });
 
-  it("shows the autonomy mode badge with a textual label (mocked ASSISTED)", () => {
-    renderShell();
+  it("shows the autonomy mode badge with a textual label (mocked ASSISTED)", async () => {
+    await renderShell();
     const badges = screen.getAllByText("Modo Assistido");
     // Sidebar footer + page header: always visible regardless of breakpoint.
     expect(badges.length).toBeGreaterThanOrEqual(2);
     expect(badges[0]?.closest("[data-mode]")).toHaveAttribute("data-mode", "ASSISTED");
   });
 
-  it("shows the LinkedIn connection status as text", () => {
-    renderShell();
+  it("shows the account name and the LinkedIn connection status from the session", async () => {
+    await renderShell();
     expect(screen.getAllByText("LinkedIn: Conectado").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Rodrigo").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("logs out from the sidebar: POST /auth/logout, then /login", async () => {
+    await renderShell();
+    const sidebar = screen.getByRole("complementary");
+    await userEvent.click(
+      within(sidebar).getByRole("button", { name: messages.auth.session.logout }),
+    );
+    await waitFor(() => expect(routerMock.replace).toHaveBeenCalledWith("/login"));
+    expect(mockAuthState().loggedIn).toBe(false);
   });
 
   it("offers four mobile destinations and opens the 'Mais' drawer with the remaining ones", async () => {
-    renderShell("/fontes");
+    await renderShell("/fontes");
     const bottom = screen.getByRole("navigation", { name: messages.nav.bottom });
     const items = within(bottom).getAllByRole("listitem");
     expect(items).toHaveLength(4);
     expect(within(bottom).getByRole("link", { name: "Hoje" })).toBeInTheDocument();
     expect(within(bottom).getByRole("link", { name: "Curadoria" })).toBeInTheDocument();
-    expect(within(bottom).getByRole("link", { name: "Calendário" })).toBeInTheDocument();
+    expect(within(bottom).getByRole("link", { name: "Publicar" })).toBeInTheDocument();
 
     const more = within(bottom).getByRole("button", { name: messages.nav.more });
     // /fontes lives inside the drawer, so the trigger is marked as containing the current page.
@@ -106,13 +118,16 @@ describe("AppShell", () => {
       .getAllByRole("link")
       .map((link) => link.textContent?.trim());
     const expected = navItems
-      .filter((item) => !["/hoje", "/curadoria", "/calendario"].includes(item.href))
+      .filter((item) => !["/hoje", "/publicar", "/curadoria"].includes(item.href))
       .map((item) => item.label);
     expect(drawerLinks).toEqual(expected);
     expect(within(dialog).getByText("Modo Assistido")).toBeInTheDocument();
     expect(within(dialog).getByRole("link", { name: /LinkedIn: Conectado/ })).toBeInTheDocument();
     expect(
       within(drawerNav).getByRole("link", { name: "Fontes", current: "page" }),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("button", { name: messages.auth.session.logout }),
     ).toBeInTheDocument();
 
     await userEvent.keyboard("{Escape}");
@@ -121,7 +136,7 @@ describe("AppShell", () => {
   });
 
   it("has no axe violations (jsdom, contrast excluded)", async () => {
-    const { container } = renderShell();
+    const { container } = await renderShell();
     const results = await runAxe(container);
     expect(results.violations, formatViolations(results)).toEqual([]);
   });
