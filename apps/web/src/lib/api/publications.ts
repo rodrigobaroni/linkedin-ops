@@ -69,10 +69,30 @@ export function createPublicationsApi(client: ApiClient) {
 }
 export type PublicationsApi = ReturnType<typeof createPublicationsApi>;
 
-/** Public URL of a post: the API's `externalUrl` when present, otherwise derived from the URN. */
+const LINKEDIN_ORIGIN = "https://www.linkedin.com";
+/** Post URNs the feed URL can be derived from; anything else is not linked. */
+const POST_URN = /^urn:li:(?:share|ugcPost):\d+$/;
+
+/**
+ * Public URL of a post, used as an `href`: the API's `externalUrl` only when its origin is exactly
+ * https://www.linkedin.com (no userinfo), otherwise derived from a validated share/ugcPost URN; `null` when
+ * neither is safe. An API answer can never turn into a `javascript:` or third-party link.
+ */
 export function publicationUrl(publication: PublicationView): string | null {
-  if (publication.externalUrl) return publication.externalUrl;
-  if (!publication.externalPostId) return null;
-  // `externalPostId` is a validated LinkedIn URN (`urn:li:<type>:<id>`), safe in the path as is.
-  return `https://www.linkedin.com/feed/update/${publication.externalPostId}/`;
+  const external = linkedInUrl(publication.externalUrl);
+  if (external) return external;
+  const urn = publication.externalPostId;
+  if (!urn || !POST_URN.test(urn)) return null;
+  return `${LINKEDIN_ORIGIN}/feed/update/${urn}/`;
+}
+
+function linkedInUrl(value: string | null): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (url.origin !== LINKEDIN_ORIGIN || url.username !== "" || url.password !== "") return null;
+    return url.href;
+  } catch {
+    return null;
+  }
 }
