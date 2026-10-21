@@ -217,7 +217,16 @@ jobs:
         run: |
           set -euo pipefail
           docker compose up -d --wait web
-          docker compose exec -T web wget -qO- http://127.0.0.1:3000/ | grep -qi '<html'
+          # Capture the whole body before grepping: piped straight into `grep -q` the step failed with exit 255
+          # and no output (the reader closes the pipe as soon as it matches). busybox wget follows the 307
+          # from / to the landing page.
+          body="$(docker compose exec -T web wget -q -T 15 -O - http://127.0.0.1:3000/)"
+          if ! printf '%s\n' "$body" | grep -qi '<html'; then
+            echo "::error::web did not answer GET / with an HTML document"
+            printf '%s\n' "$body" | head -c 600; echo
+            exit 1
+          fi
+          echo "web answered GET / with an HTML document ($(printf '%s' "$body" | wc -c) bytes)"
 
       - name: Logs on failure
         if: failure()
