@@ -49,5 +49,5 @@ Domínio: `linkedin.baroni.dedyn.io` (registro A na deSEC apontando para o IP re
 - Backup cifrado antes de qualquer migration; se a migration falhar, a release em execução **não** é tocada e o
   script imprime os próximos passos (status do Prisma, `migrate resolve`, restore). Sem retry cego.
 - Se `up` ou os health checks (api `/health` e `/ready`, web, HTTPS público) falharem, `api`/`web` voltam
-  automaticamente para a release anterior (`current.sha`); `current` só avança quando tudo passa.
+  automaticamente para a release anterior (o symlink `current`, única referência da release em execução), que só avança quando tudo passa. A cópia do código é preparada num diretório temporário e promovida sob o lock. Depois da migration, `db:migrate:status` precisa sair limpo.
 - Rollback manual: `deploy <sha anterior>`; as releases ficam em `~/linkedin-ops/releases/`.

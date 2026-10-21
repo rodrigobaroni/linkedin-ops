@@ -96,22 +96,27 @@ deploy() {
   git -C "$ROOT" fetch -q origin
   sha=$(git -C "$ROOT" rev-parse --short=12 "$ref")
   echo "deploying $ref ($sha) to $DEPLOY_HOST"
-  git -C "$ROOT" archive --format=tar "$sha" | gzip -1 | "${SSH[@]}" bash -c "'set -euo pipefail
-    rel=\$HOME/$REMOTE_DIR/releases/$sha; test -s \$HOME/$REMOTE_DIR/.env
-    rm -rf \"\$rel.tmp\"; mkdir -p \"\$rel.tmp\"; tar -xzf - -C \"\$rel.tmp\"
-    ln -sfn \$HOME/$REMOTE_DIR/.env \"\$rel.tmp/.env\"; rm -rf \"\$rel\"; mv \"\$rel.tmp\" \"\$rel\"'"
-  "${SSH[@]}" bash -s -- "$sha" "$PROJECT" "$REMOTE_DIR" "${APP_HOST:-}" "${REQUIRE_PUBLIC:-1}" <<'REMOTE'
+  # Stage into a unique temp dir (no lock needed); the release is promoted under the deploy lock below.
+  local incoming
+  incoming=$(git -C "$ROOT" archive --format=tar "$sha" | gzip -1 | "${SSH[@]}" bash -c "'set -euo pipefail
+    test -s \$HOME/$REMOTE_DIR/.env; mkdir -p \$HOME/$REMOTE_DIR/releases
+    tmp=\$(mktemp -d \$HOME/$REMOTE_DIR/releases/.incoming.XXXXXX); tar -xzf - -C \"\$tmp\"
+    ln -sfn \$HOME/$REMOTE_DIR/.env \"\$tmp/.env\"; basename \"\$tmp\"'")
+  "${SSH[@]}" bash -s -- "$sha" "$PROJECT" "$REMOTE_DIR" "${APP_HOST:-}" "${REQUIRE_PUBLIC:-1}" "$incoming" <<'REMOTE'
 set -euo pipefail
-sha=$1 project=$2 base=$HOME/$3 host=$4 require_public=$5
+sha=$1 project=$2 base=$HOME/$3 host=$4 require_public=$5 incoming=$base/releases/$6
 exec 9>"$base/deploy.lock"
-flock -n 9 || { echo "another deploy is running" >&2; exit 1; }
+flock -n 9 || { rm -rf "$incoming"; echo "another deploy is running" >&2; exit 1; }
+# Promote the staged tree under the lock. The same sha has the same content, so an existing release is kept.
+if [ -d "$base/releases/$sha" ]; then rm -rf "$incoming"; else mv "$incoming" "$base/releases/$sha"; fi
 compose() { # $1 = release sha; IMAGE_TAG pins immutable images per release (shell env beats --env-file)
   local r=$1; shift
   (cd "$base/releases/$r" && IMAGE_TAG=$r docker compose -p "$project" --env-file .env \
     -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.shared-proxy.yml "$@")
 }
 retry() { local n=0; until "$@"; do n=$((n + 1)); [ "$n" -ge 10 ] && return 1; sleep 3; done; }
-prev=$(cat "$base/current.sha" 2>/dev/null || true)
+# Single source of truth for the running release: the `current` symlink.
+prev=$(basename "$(readlink "$base/current" 2>/dev/null || true)")
 tools=(docker run --rm --network "${project}_internal" --env-file "$base/.env" "linkedin-ops/api-tools:$sha")
 
 compose "$sha" build api web
@@ -127,6 +132,11 @@ if ! "${tools[@]}" pnpm db:migrate; then
   echo "MIGRATION FAILED. The running release (${prev:-none}) was NOT touched; the schema may be partially migrated." >&2
   echo "Next steps (no blind retry): '${tools[*]} pnpm db:migrate:status'; fix forward or 'prisma migrate resolve'," >&2
   echo "or restore the backup taken above (docs/runbooks/database-migrations.md)." >&2
+  exit 1
+fi
+echo "--- migration status after:"
+if ! "${tools[@]}" pnpm db:migrate:status; then
+  echo "migrations still pending or failed after db:migrate; the running release (${prev:-none}) was NOT touched" >&2
   exit 1
 fi
 
@@ -147,7 +157,6 @@ if ! compose "$sha" up -d --wait --remove-orphans api web || ! check; then
   compose "$sha" ps -a >&2 || true; compose "$sha" logs --no-color --tail=80 api web >&2 || true
   rollback; exit 1
 fi
-printf '%s\n' "$sha" > "$base/current.sha.tmp" && mv "$base/current.sha.tmp" "$base/current.sha"
 ln -sfn "$base/releases/$sha" "$base/current.tmp" && mv -T "$base/current.tmp" "$base/current"
 echo "deployed $sha (previous: ${prev:-none}); api health, ready and web ok$([ "$require_public" = 0 ] || echo ", https://$host ok")"
 REMOTE
@@ -156,7 +165,7 @@ REMOTE
 status() {
   "${SSH[@]}" bash -s -- "$PROJECT" "$REMOTE_DIR" <<'REMOTE'
 set -euo pipefail
-base=$HOME/$2; sha=$(cat "$base/current.sha")
+base=$HOME/$2; sha=$(basename "$(readlink "$base/current")")
 cd "$base/releases/$sha" && IMAGE_TAG=$sha docker compose -p "$1" --env-file .env \
   -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.shared-proxy.yml ps
 echo "current release: $sha"
