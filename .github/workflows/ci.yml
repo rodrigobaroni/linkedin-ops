@@ -161,19 +161,258 @@ jobs:
       - name: Integration tests (Testcontainers, postgres:17-alpine)
         run: pnpm db:test
 
-  # --- compose-smoke (ativado em T-003) -------------------------------------------------------
-  # Decision by Rodrigo (2026-10-13): Docker is not available on the local machine, so T-003
-  # (Docker Compose dev environment) is validated here in CI instead. T-003 uncomments and
-  # completes this job: bring up `infra/docker/docker-compose.yml` (postgres, minio), wait for
-  # the health checks, build the api/web/worker images. Kept commented (not `if: false`) so
-  # actionlint stays clean and no runner minutes are spent before the compose files exist.
-  #
-  # compose-smoke:
-  #   name: Compose smoke
-  #   runs-on: ubuntu-latest
-  #   timeout-minutes: 15
-  #   steps:
-  #     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-  #     - run: docker compose -f infra/docker/docker-compose.yml up -d --wait postgres minio
-  #     - run: docker compose -f infra/docker/docker-compose.yml ps
-  #     - run: docker compose -f infra/docker/docker-compose.yml build api web worker
+  # --- compose-smoke (T-003) ---------------------------------------------------------------------
+  # Decision by Rodrigo (2026-10-13): Docker is not available on the local machine, so the Compose stack
+  # is validated here, in the combination developers run (base + docker-compose.dev.yml). Credentials are
+  # generated per run (never committed); the base file must refuse to render without them (fail closed,
+  # PR #80 review); postgres and the S3 store must become healthy; an S3 round-trip (PUT -> presigned GET
+  # via curl, sha256 compared -> authenticated HEAD; unsigned and wrong-method requests must be rejected)
+  # catches S3-implementation divergences (Atlas condition); the production images (runtime stage) must
+  # build and serve; Caddy must terminate TLS for web and api on one host with the security headers and
+  # its access log must not retain OAuth query parameters (code, state). The daily pnpm scripts
+  # (dev:infra, dev:infra:down) are executed literally so they cannot drift from the Compose files.
+  compose-smoke:
+    name: Compose smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Colon-separated: the dev override is part of the stack under test.
+      COMPOSE_FILE: infra/docker/docker-compose.yml:infra/docker/docker-compose.dev.yml
+      COMPOSE_ENV_FILES: .env
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Create .env with random credentials (not committed, masked in logs)
+        run: |
+          set -euo pipefail
+          pg_password="$(openssl rand -hex 24)"
+          s3_access_key="ci$(openssl rand -hex 8)"
+          s3_secret_key="$(openssl rand -hex 32)"
+          echo "::add-mask::$pg_password"
+          echo "::add-mask::$s3_access_key"
+          echo "::add-mask::$s3_secret_key"
+          # Start from the committed template, then replace the dev defaults with per-run secrets.
+          grep -Ev '^(POSTGRES_PASSWORD|DATABASE_URL|S3_ACCESS_KEY_ID|S3_SECRET_ACCESS_KEY)=' .env.example > .env
+          {
+            echo "POSTGRES_PASSWORD=$pg_password"
+            echo "DATABASE_URL=postgresql://linkedin_ops:$pg_password@localhost:5432/linkedin_ops"
+            echo "S3_ACCESS_KEY_ID=$s3_access_key"
+            echo "S3_SECRET_ACCESS_KEY=$s3_secret_key"
+          } >> .env
+
+      - name: Fail closed on missing variables and template coverage
+        run: |
+          set -euo pipefail
+          required="POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB POSTGRES_PORT DATABASE_URL S3_ENDPOINT S3_REGION S3_BUCKET S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY S3_FORCE_PATH_STYLE S3_PORT CADDY_SITE_ADDRESS CADDY_TLS CADDY_BIND_ADDRESS CADDY_HSTS_MAX_AGE"
+          status=0
+          for name in $required; do
+            value="$(grep -E "^${name}=" .env | head -n1 | cut -d= -f2- || true)"
+            if [ -z "$value" ]; then echo "::error::$name is missing or empty in .env"; status=1; fi
+          done
+          # Every ${VAR} the Compose files interpolate must be documented in .env.example (T-003 criterion).
+          # shellcheck disable=SC2016 # regex, not a shell expansion
+          for name in $(grep -ohE '\$\{[A-Z0-9_]+' infra/docker/docker-compose*.yml | tr -d '${' | sort -u); do
+            if ! grep -qE "^${name}=" .env.example; then echo "::error::$name is used by Compose but absent from .env.example"; status=1; fi
+          done
+          if grep -qE '^(POSTGRES_PASSWORD|S3_SECRET_ACCESS_KEY)=linkedin_ops' .env; then
+            echo "::error::dev default credentials leaked into the CI .env"; status=1
+          fi
+          exit "$status"
+
+      - name: Validate the Compose files (dev combination and base alone) and the Caddyfile
+        run: |
+          set -euo pipefail
+          docker compose version
+          docker compose config -q
+          docker compose -f infra/docker/docker-compose.yml config -q
+          docker compose run --rm --no-deps caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
+      - name: Base file fails closed without .env (no interpolation defaults for credentials)
+        run: |
+          set -euo pipefail
+          # No --env-file, no shell variables: every `${VAR:?}` must stop `config` before anything starts.
+          if output="$(env -u COMPOSE_ENV_FILES docker compose --env-file /dev/null -f infra/docker/docker-compose.yml config -q 2>&1)"; then
+            echo "::error::the base Compose file rendered without .env; credentials must have no defaults"
+            exit 1
+          fi
+          if ! printf '%s\n' "$output" | grep -qi 'required variable'; then
+            echo "::error::config failed for another reason: $output"
+            exit 1
+          fi
+          echo "base file refused to render without .env: $(printf '%s\n' "$output" | grep -i -m1 'required variable')"
+
+      - name: Setup pnpm (the package.json Compose scripts are part of what this job proves)
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          run_install: false
+
+      - name: Setup Node (version from .nvmrc; engine-strict refuses the runner's default Node)
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: pnpm dev:infra starts postgres and s3, waits for health checks and creates the bucket
+        # Literally the daily command (PR #80 review, Atlas round 2): `pnpm run compose` must carry both
+        # Compose files, otherwise `s3`/`s3-init` are unknown services.
+        run: pnpm dev:infra
+
+      - name: Show services
+        run: docker compose ps
+
+      - name: Postgres accepts the DATABASE_URL credentials
+        run: |
+          set -euo pipefail
+          set -a; . ./.env; set +a
+          docker compose exec -T postgres pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+          docker compose exec -T postgres psql "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB}" -tAc 'select 1' | grep -qx 1
+
+      - name: S3 round-trip (PUT -> presigned GET -> HEAD, sha256 compared) and private bucket
+        run: |
+          set -euo pipefail
+          set -a; . ./.env; set +a
+          workdir="$(mktemp -d)"
+          head -c 65536 /dev/urandom > "$workdir/payload.bin"
+          expected="$(sha256sum "$workdir/payload.bin" | cut -d' ' -f1)"
+          key="smoke/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.bin"
+          # Standard S3 only (SigV4, path-style): PUT, presign, HEAD through the AWS CLI. The single-quoted
+          # script is expanded inside the container, on purpose.
+          # shellcheck disable=SC2016
+          presigned="$(docker compose run --rm --no-deps -T --entrypoint "" -v "$workdir:/smoke:ro" \
+            -e KEY="$key" s3-init sh -ec '
+              aws configure set default.s3.addressing_style path
+              aws configure set default.cli_connect_timeout 5
+              aws configure set default.cli_read_timeout 60
+              aws s3api put-object --bucket "$S3_BUCKET" --key "$KEY" --body /smoke/payload.bin > /dev/null
+              length="$(aws s3api head-object --bucket "$S3_BUCKET" --key "$KEY" --query ContentLength --output text)"
+              [ "$length" = 65536 ] || { echo "HEAD returned ContentLength=$length, expected 65536" >&2; exit 1; }
+              aws s3 presign "s3://$S3_BUCKET/$KEY" --expires-in 300' | tr -d '\r')"
+          echo "::add-mask::$presigned"
+          echo "presigned URL query parameters: $(printf '%s' "$presigned" | sed 's/^[^?]*?//' | tr '&' '\n' | cut -d= -f1 | tr '\n' ' ')"
+          # Download via plain HTTP with the presigned URL (curl inside the store container, same network).
+          # The inner script always exits 0 and reports the HTTP status, so a rejection prints the S3 error body.
+          get_report="$(docker compose exec -T s3 sh -c "code=\$(curl -sS --connect-timeout 5 --max-time 60 -o /tmp/smoke.bin -w '%{http_code}' '$presigned'); echo \"status=\$code\"; [ \"\$code\" = 200 ] || head -c 2000 /tmp/smoke.bin" \
+            | sed -E 's/X-Amz-Signature=[0-9a-f]+/X-Amz-Signature=REDACTED/g; s/X-Amz-Credential=[^&" ]+/X-Amz-Credential=REDACTED/g')"
+          echo "presigned GET: $get_report"
+          case "$get_report" in status=200*) ;; *) echo "::error::presigned GET was rejected by the S3 store"; exit 1 ;; esac
+          actual="$(docker compose exec -T s3 sh -ec "sha256sum /tmp/smoke.bin | cut -d' ' -f1")"
+          if [ "$actual" != "$expected" ]; then echo "::error::sha256 mismatch after presigned GET"; exit 1; fi
+          # SigV4 signs the HTTP method: a HEAD with a GET-presigned URL must be rejected (same as AWS S3).
+          code="$(docker compose exec -T s3 sh -c "curl -s --connect-timeout 5 --max-time 30 -o /dev/null -w '%{http_code}' -I '$presigned'")"
+          if [ "$code" != "403" ]; then echo "::error::HEAD with a GET-presigned URL returned $code, expected 403"; exit 1; fi
+          # Bucket must be private: an unsigned request is rejected.
+          code="$(docker compose exec -T s3 sh -ec "curl -s --connect-timeout 5 --max-time 30 -o /dev/null -w '%{http_code}' 'http://127.0.0.1:9000/${S3_BUCKET}/${key}'")"
+          if [ "$code" != "403" ]; then echo "::error::anonymous GET returned $code, expected 403"; exit 1; fi
+          echo "S3 round-trip OK (sha256 $expected)"
+
+      - name: Build the production images (runtime stage) and smoke them outside Compose
+        run: |
+          set -euo pipefail
+          # The dev combination builds the `dev` stage; the images that ship are built from the base file alone.
+          IMAGE_TAG=smoke-runtime docker compose -f infra/docker/docker-compose.yml build api web worker
+          docker run -d --rm --name smoke-web linkedin-ops/web:smoke-runtime
+          docker run -d --rm --name smoke-api linkedin-ops/api:smoke-runtime
+          wait_http() { # <container> <url>: busybox wget inside the image, up to 60 s
+            for _ in $(seq 1 30); do
+              if docker exec "$1" wget -q -T 5 -O /dev/null "$2"; then return 0; fi
+              sleep 2
+            done
+            echo "::error::$1 did not answer $2 within 60 s"
+            docker logs "$1" 2>&1 | tail -n 50
+            return 1
+          }
+          wait_http smoke-web http://127.0.0.1:3000/
+          wait_http smoke-api http://127.0.0.1:3001/api/v1/health
+          body="$(docker exec smoke-web wget -q -T 15 -O - http://127.0.0.1:3000/)"
+          if ! printf '%s\n' "$body" | grep -qi '<html'; then
+            echo "::error::the web runtime image did not answer GET / with an HTML document"
+            printf '%s\n' "$body" | head -c 600; echo
+            exit 1
+          fi
+          health="$(docker exec smoke-api wget -q -T 15 -O - http://127.0.0.1:3001/api/v1/health)"
+          if ! printf '%s\n' "$health" | jq -e '.status == "ok"' > /dev/null; then
+            echo "::error::the api runtime image health body is not the HealthStatus contract: $health"
+            exit 1
+          fi
+          # The worker is still a placeholder: its runtime image must start and exit cleanly.
+          timeout 60 docker run --rm linkedin-ops/worker:smoke-runtime
+          docker rm -f smoke-web smoke-api > /dev/null
+          echo "runtime images OK: web serves HTML ($(printf '%s' "$body" | wc -c) bytes), api health $health"
+
+      - name: Build the dev images and start web, api and caddy (dev combination)
+        run: |
+          set -euo pipefail
+          docker compose build api web worker
+          docker compose up -d --wait web api caddy
+          docker compose ps
+
+      - name: Caddy serves web and api on one TLS host with the security headers
+        run: |
+          set -euo pipefail
+          ca="$RUNNER_TEMP/caddy-ca.crt"
+          docker compose exec -T caddy cat /data/caddy/pki/authorities/local/root.crt > "$ca"
+          # Bounded and retried (Crivo 2): connect 5 s, total 30 s, 5 retries on any error while `next dev` warms up.
+          curl_tls() { curl -4 -sS --cacert "$ca" --connect-timeout 5 --max-time 30 --retry 5 --retry-delay 3 --retry-all-errors "$@"; }
+          workdir="$(mktemp -d)"
+          # web: / redirects to the landing page; follow it and require an HTML document.
+          code="$(curl_tls -L -o "$workdir/web.html" -D "$workdir/web.headers" -w '%{http_code}' https://localhost/)"
+          if [ "$code" != 200 ]; then echo "::error::https://localhost/ returned $code"; cat "$workdir/web.headers"; exit 1; fi
+          grep -qi '<html' "$workdir/web.html" || { echo "::error::https://localhost/ did not return an HTML document"; exit 1; }
+          # api: same host, /api/* -> api:3001, JSON matching the HealthStatus contract.
+          code="$(curl_tls -o "$workdir/health.json" -D "$workdir/api.headers" -w '%{http_code}' https://localhost/api/v1/health)"
+          if [ "$code" != 200 ]; then echo "::error::https://localhost/api/v1/health returned $code"; cat "$workdir/api.headers"; exit 1; fi
+          jq -e '.status == "ok"' "$workdir/health.json" > /dev/null || { echo "::error::health body is not the HealthStatus contract: $(cat "$workdir/health.json")"; exit 1; }
+          grep -qi '^content-type: application/json' "$workdir/api.headers" || { echo "::error::health is not served as JSON"; cat "$workdir/api.headers"; exit 1; }
+          # Security headers set by Caddy (deferred, so they also apply to proxied responses) and no server banners.
+          for f in web.headers api.headers; do
+            for h in 'x-content-type-options: nosniff' 'x-frame-options: DENY' 'referrer-policy: no-referrer' 'strict-transport-security:'; do
+              grep -qi "^$h" "$workdir/$f" || { echo "::error::$f lacks '$h'"; cat "$workdir/$f"; exit 1; }
+            done
+            if grep -qiE '^(server|x-powered-by):' "$workdir/$f"; then echo "::error::$f leaks Server/X-Powered-By"; cat "$workdir/$f"; exit 1; fi
+          done
+          echo "Caddy OK: https://localhost/ -> web (HTML), https://localhost/api/v1/health -> api ($(cat "$workdir/health.json")), security headers present"
+
+      - name: Caddy access log does not retain OAuth query parameters
+        run: |
+          set -euo pipefail
+          ca="$RUNNER_TEMP/caddy-ca.crt"
+          curl_tls() { curl -4 -sS --cacert "$ca" --connect-timeout 5 --max-time 30 --retry 3 --retry-delay 2 --retry-all-errors "$@"; }
+          code_value="smokecode$(openssl rand -hex 8)"
+          state_value="smokestate$(openssl rand -hex 8)"
+          # Synthetic callback-shaped request: the filter must drop code/state and keep the other parameter.
+          curl_tls -o /dev/null "https://localhost/api/v1/health?code=${code_value}&state=${state_value}&keep=visible"
+          sleep 2
+          logs="$(docker compose logs --no-color --no-log-prefix caddy)"
+          if ! printf '%s\n' "$logs" | grep -qF '"uri":"/api/v1/health?keep=visible"'; then
+            echo "::error::expected an access-log entry with uri /api/v1/health?keep=visible (code/state removed)"
+            printf '%s\n' "$logs" | grep -F '/api/v1/health' | tail -n 5 || true
+            exit 1
+          fi
+          if printf '%s\n' "$logs" | grep -qE "${code_value}|${state_value}"; then
+            echo "::error::code/state values reached the Caddy access log"
+            exit 1
+          fi
+          echo "Caddy access log OK: code/state removed from request>uri, other parameters kept"
+
+      - name: pnpm dev:infra:down stops the stack (volumes kept, as documented)
+        run: |
+          set -euo pipefail
+          pnpm dev:infra:down
+          remaining="$(docker compose ps -aq | wc -l | tr -d ' ')"
+          if [ "$remaining" != 0 ]; then echo "::error::$remaining container(s) still present after pnpm dev:infra:down"; docker compose ps -a; exit 1; fi
+          docker volume ls -q --filter label=com.docker.compose.project=linkedin-ops | grep -q . || { echo "::error::named volumes were removed by dev:infra:down; they must survive"; exit 1; }
+
+      - name: Diagnostics on failure (services, exit codes, health, logs)
+        if: failure()
+        run: |
+          docker compose ps -a --format 'table {{.Service}}\t{{.State}}\t{{.ExitCode}}\t{{.Health}}\t{{.Status}}' || docker compose ps -a
+          docker ps -a --filter name=smoke- --format 'table {{.Names}}\t{{.Status}}'
+          docker compose logs --no-color --tail=200
+
+      - name: Tear down
+        if: always()
+        run: |
+          docker rm -f smoke-web smoke-api > /dev/null 2>&1 || true
+          docker compose down -v --remove-orphans
