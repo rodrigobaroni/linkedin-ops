@@ -13,7 +13,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "clean": "rm -rf dist .turbo coverage *.tsbuildinfo"
+    "clean": "rm -rf dist .turbo coverage *.tsbuildinfo",
+    "linkedin:probe": "tsx --env-file-if-exists=../../.env scripts/linkedin-probe.ts"
   },
   "dependencies": {
     "@fastify/cookie": "catalog:",
@@ -25,6 +26,7 @@
     "@nestjs/core": "catalog:",
     "@nestjs/platform-fastify": "catalog:",
     "fastify": "catalog:",
+    "jose": "catalog:",
     "nestjs-pino": "catalog:",
     "pino": "catalog:",
     "pino-http": "catalog:",

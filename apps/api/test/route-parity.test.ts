@@ -23,6 +23,14 @@ const IMPLEMENTED: readonly RouteKey[] = [
   "auth.logoutAll",
   "auth.reauth",
   "auth.me",
+  // T-061/T-038/T-039 núcleo (MVP-0)
+  "integrations.linkedin.get",
+  "integrations.linkedin.connect",
+  "integrations.linkedin.callback",
+  "integrations.linkedin.disconnect",
+  "publications.publishNow",
+  "publications.list",
+  "publications.get",
 ];
 
 type ModuleRef = Type<unknown> | DynamicModule | Promise<DynamicModule>;

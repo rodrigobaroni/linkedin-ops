@@ -303,6 +303,96 @@ describe("key ring · strict parse without fallback (ADR-0004 item 13(a))", () =
   });
 });
 
+describe("validateRuntimeEnv · LinkedIn client (T-038)", () => {
+  const LINKEDIN = {
+    LINKEDIN_CLIENT_ID: "86abcdef",
+    LINKEDIN_CLIENT_SECRET: "WPL_AP1.not-a-real-secret",
+    LINKEDIN_REDIRECT_URI: "https://ops.example.com/api/v1/auth/linkedin/callback",
+    LINKEDIN_PKCE: "disabled",
+  };
+
+  it("is off (null) without LINKEDIN_CLIENT_ID, even with the shipped redirect default", () => {
+    const env = validateRuntimeEnv({
+      ...PRODUCTION,
+      LINKEDIN_REDIRECT_URI: "http://localhost:3001/api/v1/auth/linkedin/callback",
+    });
+    expect(env.linkedin).toBeNull();
+  });
+
+  it("parses a complete production client on APP_BASE_URL", () => {
+    expect(validateRuntimeEnv({ ...PRODUCTION, ...LINKEDIN }).linkedin).toEqual({
+      clientId: "86abcdef",
+      clientSecret: "WPL_AP1.not-a-real-secret",
+      redirectUri: "https://ops.example.com/api/v1/auth/linkedin/callback",
+      pkce: "disabled",
+    });
+  });
+
+  it("accepts an http loopback redirect outside production", () => {
+    const env = validateRuntimeEnv({
+      ...PRODUCTION,
+      ...LINKEDIN,
+      NODE_ENV: "test",
+      LINKEDIN_REDIRECT_URI: "http://localhost:3001/api/v1/auth/linkedin/callback",
+    });
+    expect(env.linkedin?.redirectUri).toBe("http://localhost:3001/api/v1/auth/linkedin/callback");
+  });
+
+  it("requires the secret, the redirect and an explicit PKCE mode (N3, no default)", () => {
+    expect(issuesOf({ ...PRODUCTION, ...LINKEDIN, LINKEDIN_CLIENT_SECRET: undefined })).toEqual([
+      "LINKEDIN_CLIENT_SECRET is required when LINKEDIN_CLIENT_ID is set",
+    ]);
+    expect(issuesOf({ ...PRODUCTION, ...LINKEDIN, LINKEDIN_REDIRECT_URI: undefined })).toEqual([
+      "LINKEDIN_REDIRECT_URI is required when LINKEDIN_CLIENT_ID is set",
+    ]);
+    expect(issuesOf({ ...PRODUCTION, ...LINKEDIN, LINKEDIN_PKCE: undefined })).toEqual([
+      "LINKEDIN_PKCE must be set explicitly (required or disabled) when LINKEDIN_CLIENT_ID is set",
+    ]);
+    expect(issuesOf({ ...PRODUCTION, ...LINKEDIN, LINKEDIN_CLIENT_SECRET: "change-me" })).toEqual([
+      "LINKEDIN_CLIENT_SECRET is still the change-me placeholder (allowed in development only)",
+    ]);
+  });
+
+  it("rejects a redirect off APP_BASE_URL, over http, on another path or with a query in production", () => {
+    for (const uri of [
+      "https://evil.example.com/api/v1/auth/linkedin/callback",
+      "http://ops.example.com/api/v1/auth/linkedin/callback",
+      "http://localhost:3001/api/v1/auth/linkedin/callback",
+    ]) {
+      expect(issuesOf({ ...PRODUCTION, ...LINKEDIN, LINKEDIN_REDIRECT_URI: uri })).toEqual([
+        "LINKEDIN_REDIRECT_URI must be https on APP_BASE_URL in production",
+      ]);
+    }
+    expect(
+      issuesOf({
+        ...PRODUCTION,
+        ...LINKEDIN,
+        LINKEDIN_REDIRECT_URI: "https://ops.example.com/callback",
+      }),
+    ).toEqual(["LINKEDIN_REDIRECT_URI must point to /api/v1/auth/linkedin/callback"]);
+    expect(
+      issuesOf({
+        ...PRODUCTION,
+        ...LINKEDIN,
+        LINKEDIN_REDIRECT_URI: "https://ops.example.com/api/v1/auth/linkedin/callback?x=1",
+      }),
+    ).toEqual(["LINKEDIN_REDIRECT_URI must not carry credentials, query or fragment"]);
+    expect(
+      issuesOf({
+        ...PRODUCTION,
+        ...LINKEDIN,
+        NODE_ENV: "test",
+        LINKEDIN_REDIRECT_URI: "http://ops.example.com/api/v1/auth/linkedin/callback",
+      }),
+    ).toEqual(["LINKEDIN_REDIRECT_URI must use https (http only on loopback outside production)"]);
+  });
+
+  it("never echoes the client secret in an issue", () => {
+    const issues = issuesOf({ ...PRODUCTION, ...LINKEDIN, LINKEDIN_REDIRECT_URI: "nope" });
+    expect(issues.join("\n")).not.toContain(LINKEDIN.LINKEDIN_CLIENT_SECRET);
+  });
+});
+
 describe("validateRuntimeEnv · TRUSTED_PROXY_CIDRS (T-015)", () => {
   it("defaults to trusting no proxy", () => {
     expect(validateRuntimeEnv(PRODUCTION).trustedProxyCidrs).toEqual([]);

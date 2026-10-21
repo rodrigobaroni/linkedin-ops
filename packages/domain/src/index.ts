@@ -23,6 +23,7 @@ export {
   RUNTIME_ENVIRONMENTS,
   LOG_LEVELS,
   LINKEDIN_PKCE_MODES,
+  LINKEDIN_CALLBACK_PATH,
   DEFAULT_API_PORT,
   SESSION_SECRET_MIN_BYTES,
   ENCRYPTION_KEY_BYTES,
@@ -32,7 +33,18 @@ export {
   type LogLevel,
   type LinkedInPkceMode,
   type EncryptionKeyRing,
+  type LinkedInClientConfig,
 } from "./env/runtime.js";
+export {
+  TokenVault,
+  TokenVaultError,
+  TOKEN_VAULT_SCHEMA_VERSION,
+  type CredentialRef,
+  type SealedCredential,
+  type TokenVaultErrorCode,
+  type VaultProvider,
+  type VaultTokenType,
+} from "./crypto/token-vault.js";
 export {
   ELEVATION_WINDOW_MS,
   SESSION_ABSOLUTE_TTL_MS,
