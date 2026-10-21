@@ -9,7 +9,7 @@ catalog:
   eslint: ^10.12.0
   prettier: ^3.9.10
   typescript: ~5.9.3
-  vitest: ^5.0.4
+  vitest: ^5.0.5
   zod: ^4.6.7
   # Database (T-005, ADR-0001): Prisma 7 (`prisma-client` generator + pg driver adapter), pinned together.
   prisma: 7.10.1

@@ -34,7 +34,7 @@
     "@linkedin-ops/config": "workspace:*",
     "husky": "^9.1.7",
     "prettier": "catalog:",
-    "turbo": "^2.11.7",
+    "turbo": "^2.11.8",
     "typescript": "catalog:"
   },
   "prettier": "@linkedin-ops/config/prettier"
