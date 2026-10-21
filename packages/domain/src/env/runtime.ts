@@ -49,7 +49,7 @@ export interface RuntimeEnv {
    */
   encryptionKeyRing: EncryptionKeyRing | null;
   /** `null` = not configured (allowed until T-038 wires the OAuth flow). */
-  linkedinPkce: LinkedInPkceMode | null;
+  linkedinPkce: null | LinkedInPkceMode;
   /**
    * Reverse proxies whose `X-Forwarded-For` is honoured to find the client IP (login throttling, audit).
    * Empty by default: then the socket address is the client IP and forwarded headers are ignored.

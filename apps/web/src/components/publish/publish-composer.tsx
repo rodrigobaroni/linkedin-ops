@@ -37,7 +37,7 @@ import {
   publicationUrl,
 } from "@/lib/api";
 import { formatClock, minutesUntil } from "@/lib/format-duration";
-import { useLinkedInConnection, usePublishingApi } from "./use-publishing";
+import { usePublishingApi, useLinkedInConnection } from "./use-publishing";
 
 const copy = messages.publish;
 /** Below this many characters left, the counter turns into a warning. */
