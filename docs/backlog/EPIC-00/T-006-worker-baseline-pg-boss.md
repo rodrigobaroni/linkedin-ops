@@ -32,3 +32,9 @@ Vitest com Testcontainers para pg-boss; relógio falso para o cron; teste de rei
 ## Riscos de segurança / compliance
 
 Payload de job nunca contém tokens ou texto de fonte bruto (só IDs).
+
+Imagem Docker (Estaleiro, revisão do PR #80): `apps/worker/Dockerfile` copia para o runtime só
+`packages/contracts/dist` e `apps/worker/dist`; ao depender de `@linkedin-ops/domain` e
+`@linkedin-ops/editorial-engine`, acrescentar os `COPY --from=build` correspondentes ou migrar para
+`pnpm deploy --prod --filter @linkedin-ops/worker`. Hoje o placeholder encerra logo após iniciar; o
+`compose-smoke` só exige que a imagem de runtime saia com código 0.
