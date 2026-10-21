@@ -58,6 +58,8 @@ interface Registry {
  */
 function buildRegistry(): Registry {
   const registry = z.registry<{ id?: string }>();
+  // `_idmap` is private zod API. A zod upgrade must regenerate and review `openapi/v1.json`; the drift
+  // test in `test/openapi.test.ts` fails if the internals change.
   for (const [id, schema] of z.globalRegistry._idmap) registry.add(schema as z.ZodType, { id });
   for (const [key, route] of Object.entries(routesV1) as [string, RouteDefinition][]) {
     for (const part of ["params", "query", "body"] as const) {

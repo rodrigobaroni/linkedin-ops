@@ -39,3 +39,8 @@ the variable names (never the values).
 - Throw `ProblemError(code, { detail })` for expected failures; anything else becomes `500 INTERNAL` with the
   stack logged under the request's `correlationId`.
 - Never log request bodies or headers. The serializers only keep method, url, status and the correlation id.
+
+## Swagger UI em desenvolvimento
+
+`/docs` fica fora do prefixo `/api`, então atrás do Caddy a rota cai no `web`. Em desenvolvimento, abra
+diretamente `http://127.0.0.1:3001/docs`. O documento OpenAPI continua em `GET /api/v1/openapi.json`.
