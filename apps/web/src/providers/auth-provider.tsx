@@ -105,6 +105,9 @@ export function AuthProvider({
   const login = useCallback(
     async (input: LoginInput) => {
       await authApi.login(input);
+      // A check started before the login (e.g. the first one, still pending) answers for the old cookie:
+      // cancel it so `fetchQuery` below cannot be deduplicated onto it and land on "anonymous".
+      await queryClient.cancelQueries({ queryKey: SESSION_QUERY_KEY });
       // Drop anything cached by a previous session before the new profile loads.
       queryClient.removeQueries({ predicate: isNotSessionQuery });
       // `staleTime: 0`: the cached `null` from the anonymous check must not be reused.

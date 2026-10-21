@@ -62,6 +62,38 @@ describe("AuthProvider", () => {
     expect(JSON.stringify(result.current.auth)).not.toContain(token);
   });
 
+  it("login while the first GET /auth/me is still pending ends authenticated (race regression)", async () => {
+    let releaseFirstCheck: () => void = () => {};
+    const firstCheck = new Promise<void>((resolve) => {
+      releaseFirstCheck = resolve;
+    });
+    // The first check answers "anonymous" only after the login already succeeded.
+    server.use(
+      http.get(
+        "/api/v1/auth/me",
+        async () => {
+          await firstCheck;
+          return problemResponse("AUTH_REQUIRED");
+        },
+        { once: true },
+      ),
+    );
+    const { result } = renderAuth(false);
+    expect(result.current.auth.status).toBe("loading");
+
+    await act(async () => {
+      const login = result.current.auth.login({ ...MOCK_CREDENTIALS });
+      // Release the stale check only once the POST made the session real.
+      await waitFor(() => expect(mockAuthState().loggedIn).toBe(true));
+      releaseFirstCheck();
+      await login;
+    });
+    await waitFor(() => expect(result.current.auth.status).toBe("authenticated"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(result.current.auth.status).toBe("authenticated");
+    expect(result.current.auth.user).toMatchObject({ name: "Rodrigo" });
+  });
+
   it("rejects wrong credentials with a generic problem and stays anonymous", async () => {
     const { result } = renderAuth(false);
     await settled(result);
