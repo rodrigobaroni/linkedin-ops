@@ -7,5 +7,5 @@
     "experimentalDecorators": true,
     "emitDecoratorMetadata": false
   },
-  "include": ["src", "test", "vitest.config.ts", "vitest.integration.config.ts"]
+  "include": ["src", "test", "scripts", "vitest.config.ts", "vitest.integration.config.ts"]
 }
