@@ -20,7 +20,7 @@ describe("LoginScreen", () => {
     await renderApp(<LoginScreen />, { loggedIn: false });
     const user = userEvent.setup();
     await user.type(screen.getByLabelText(/E-mail/), MOCK_CREDENTIALS.email);
-    await user.type(screen.getByLabelText(/Senha/), MOCK_CREDENTIALS.password);
+    await user.type(screen.getByLabelText(/^Senha/), MOCK_CREDENTIALS.password);
     await user.click(screen.getByRole("button", { name: messages.auth.login.submit }));
     await waitFor(() => expect(routerMock.replace).toHaveBeenCalledWith("/curadoria?x=1"));
     expect(mockAuthState().loggedIn).toBe(true);
@@ -31,7 +31,7 @@ describe("LoginScreen", () => {
     await renderApp(<LoginScreen />, { loggedIn: false });
     const user = userEvent.setup();
     await user.type(screen.getByLabelText(/E-mail/), MOCK_CREDENTIALS.email);
-    await user.type(screen.getByLabelText(/Senha/), MOCK_CREDENTIALS.password);
+    await user.type(screen.getByLabelText(/^Senha/), MOCK_CREDENTIALS.password);
     await user.click(screen.getByRole("button", { name: messages.auth.login.submit }));
     await waitFor(() => expect(routerMock.replace).toHaveBeenCalledWith("/hoje"));
   });

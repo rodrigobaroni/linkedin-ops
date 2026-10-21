@@ -12,9 +12,10 @@ import {
   DialogHeader,
   DialogTitle,
   FormField,
-  Input,
+  PasswordInput,
+  Spinner,
 } from "@linkedin-ops/ui";
-import { type FormEvent, useId, useState } from "react";
+import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { messages } from "@/i18n/pt-br";
 import { isApiNetworkError, isApiProblem } from "@/lib/api";
 
@@ -27,17 +28,27 @@ export type ReauthDialogProps = {
 };
 
 /**
- * Password confirmation for 🔐 actions (ADR-0007 item 3; accessibility.md "Reautenticação aceita password
- * manager/colar; erro não limpa o formulário principal"). Presentational: the `AuthProvider` opens it and
- * wires the API call. The password never leaves component state.
+ * Password confirmation for 🔐 actions (ADR-0007 item 3; Aurora spec items 14–18 and 23). Presentational:
+ * the `AuthProvider` opens it, wires the API call and announces the elevation deadline after success.
+ * The password never leaves component state and is cleared whenever the dialog closes.
  */
 export function ReauthDialog({ open, onSubmit, onSettled }: ReauthDialogProps) {
   const copy = messages.auth.reauth;
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; attempt: number } | null>(null);
   const [fieldError, setFieldError] = useState<string | null>(null);
   const errorId = useId();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const attempts = useRef(0);
+  // Item 23: focus goes back to the control that started the protected action (the dialog has no trigger).
+  const returnFocusTo = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (open && document.activeElement instanceof HTMLElement) {
+      returnFocusTo.current = document.activeElement;
+    }
+  }, [open]);
 
   /** Closes the dialog and forgets the password and any error. */
   function close(elevated: boolean) {
@@ -63,18 +74,8 @@ export function ReauthDialog({ open, onSubmit, onSettled }: ReauthDialogProps) {
       close(true);
       return;
     } catch (cause) {
-      if (
-        isApiProblem(cause, "AUTH_INVALID_CREDENTIALS") ||
-        isApiProblem(cause, "VALIDATION_FAILED")
-      ) {
-        setError(copy.invalid);
-      } else if (isApiProblem(cause, "RATE_LIMITED")) {
-        setError(messages.auth.login.rateLimitedTitle);
-      } else if (isApiNetworkError(cause)) {
-        setError(messages.auth.login.networkError);
-      } else {
-        setError(messages.auth.login.unexpectedError);
-      }
+      attempts.current += 1;
+      setError({ message: reauthErrorMessage(cause), attempt: attempts.current });
     } finally {
       setSubmitting(false);
     }
@@ -87,17 +88,33 @@ export function ReauthDialog({ open, onSubmit, onSettled }: ReauthDialogProps) {
         if (!next && !submitting) close(false);
       }}
     >
-      <DialogContent hideClose>
-        <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-4">
-          <DialogHeader>
+      <DialogContent
+        hideClose
+        className="sm:max-w-[440px]"
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          inputRef.current?.focus();
+        }}
+        onCloseAutoFocus={(event) => {
+          const target = returnFocusTo.current;
+          if (target?.isConnected) {
+            event.preventDefault();
+            target.focus();
+          }
+          returnFocusTo.current = null;
+        }}
+      >
+        <form
+          onSubmit={handleSubmit}
+          noValidate
+          aria-busy={submitting || undefined}
+          aria-describedby={error ? errorId : undefined}
+          className="flex flex-col gap-4"
+        >
+          <DialogHeader className="pr-0">
             <DialogTitle>{copy.title}</DialogTitle>
             <DialogDescription>{copy.description}</DialogDescription>
           </DialogHeader>
-          {error ? (
-            <Alert variant="destructive" id={errorId}>
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          ) : null}
           <FormField
             label={copy.password}
             error={fieldError}
@@ -105,27 +122,43 @@ export function ReauthDialog({ open, onSubmit, onSettled }: ReauthDialogProps) {
             requiredLabel={messages.auth.required}
           >
             {(control) => (
-              <Input
+              <PasswordInput
                 {...control}
-                type="password"
+                ref={inputRef}
                 name="password"
                 autoComplete="current-password"
+                placeholder={copy.passwordPlaceholder}
+                showLabel={messages.auth.login.showPassword}
+                hideLabel={messages.auth.login.hidePassword}
+                className="max-md:h-11"
                 value={password}
-                disabled={submitting}
+                readOnly={submitting}
                 onChange={(event) => setPassword(event.target.value)}
               />
             )}
           </FormField>
+          <div id={errorId} className="empty:hidden">
+            {error ? (
+              <Alert key={error.attempt} variant="destructive" role="alert">
+                <AlertDescription>{error.message}</AlertDescription>
+              </Alert>
+            ) : null}
+          </div>
+          <p role="status" aria-live="polite" className="sr-only">
+            {submitting ? copy.confirming : null}
+          </p>
           <DialogFooter>
             <Button
               type="button"
               variant="outline"
+              className="max-md:h-11"
               disabled={submitting}
-              onClick={() => onSettled(false)}
+              onClick={() => close(false)}
             >
               {copy.cancel}
             </Button>
-            <Button type="submit" disabled={submitting} aria-busy={submitting || undefined}>
+            <Button type="submit" className="max-md:h-11" disabled={submitting}>
+              {submitting ? <Spinner /> : null}
               {submitting ? copy.confirming : copy.confirm}
             </Button>
           </DialogFooter>
@@ -133,4 +166,14 @@ export function ReauthDialog({ open, onSubmit, onSettled }: ReauthDialogProps) {
       </DialogContent>
     </Dialog>
   );
+}
+
+function reauthErrorMessage(cause: unknown): string {
+  const copy = messages.auth.reauth;
+  if (isApiProblem(cause, "AUTH_INVALID_CREDENTIALS") || isApiProblem(cause, "VALIDATION_FAILED")) {
+    return copy.invalid;
+  }
+  if (isApiProblem(cause, "RATE_LIMITED")) return copy.rateLimited;
+  if (isApiNetworkError(cause)) return messages.auth.login.networkError;
+  return copy.invalid;
 }

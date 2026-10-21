@@ -3,6 +3,7 @@ import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { messages } from "@/i18n/pt-br";
 import { ApiNetworkError, ApiProblem } from "@/lib/api";
+import { formatClock } from "@/lib/format-duration";
 import { formatViolations, runAxe } from "@/test/axe";
 import { LoginForm } from "./login-form";
 
@@ -22,7 +23,7 @@ function setup(onSubmit = vi.fn<(values: { email: string; password: string }) =>
     ...view,
     onSubmit,
     email: screen.getByLabelText(/E-mail/),
-    password: screen.getByLabelText(/Senha/),
+    password: screen.getByLabelText(/^Senha/),
     submit: screen.getByRole("button", { name: copy.submit }),
   };
 }
@@ -48,6 +49,10 @@ describe("LoginForm", () => {
     expect(password).toHaveAttribute("autocomplete", "current-password");
     expect(password).toHaveAttribute("type", "password");
     expect(email).toBeRequired();
+    expect(email).toHaveAttribute("placeholder", copy.emailPlaceholder);
+    expect(password).toHaveAttribute("placeholder", copy.passwordPlaceholder);
+    expect(screen.getByText(copy.recovery)).toBeInTheDocument();
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
     const results = await runAxe(container);
     expect(results.violations, formatViolations(results)).toEqual([]);
   });
@@ -76,10 +81,10 @@ describe("LoginForm", () => {
     await user.type(password, "linkedin-ops-dev-password");
     await user.click(submit);
     expect(await screen.findByRole("button", { name: copy.submitting })).toBeDisabled();
-    expect(screen.getByRole("button", { name: copy.submitting })).toHaveAttribute(
-      "aria-busy",
-      "true",
-    );
+    expect(email.closest("form")).toHaveAttribute("aria-busy", "true");
+    expect(email).toHaveAttribute("readonly");
+    expect(password).toHaveAttribute("readonly");
+    expect(screen.getByRole("status")).toHaveTextContent(copy.submitting);
     expect(onSubmit).toHaveBeenCalledWith({
       email: "rodrigo@example.com",
       password: "linkedin-ops-dev-password",
@@ -99,6 +104,9 @@ describe("LoginForm", () => {
     expect(email).toHaveValue("rodrigo@example.com");
     expect(password).toHaveValue("linkedin-ops-dev-password");
     expect(screen.getByRole("button", { name: copy.submit })).toBeEnabled();
+    // Announced via role="alert" and linked to the form, without stealing focus from the fields.
+    expect(email.closest("form")).toHaveAttribute("aria-describedby", alert.parentElement?.id);
+    expect(alert).not.toHaveFocus();
     const results = await runAxe(container);
     expect(results.violations, formatViolations(results)).toEqual([]);
   });
@@ -117,32 +125,53 @@ describe("LoginForm", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(copy.unexpectedError);
   });
 
-  it("locks the form on 429 with a countdown from Retry-After and releases it at zero", async () => {
+  it("locks the form on 429 with HH:mm + countdown from Retry-After and releases it at zero", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     const { email, password, submit } = setup(
-      vi.fn(() => Promise.reject(problem("RATE_LIMITED", 90))),
+      vi.fn(() => Promise.reject(problem("RATE_LIMITED", 150))),
     );
     await fill(user, email, password);
     await user.click(submit);
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(copy.rateLimitedTitle);
-    expect(screen.getByTestId("login-lock-countdown")).toHaveTextContent("01:30");
-    expect(screen.getByTestId("login-lock-countdown")).toHaveAttribute("aria-live", "off");
+    const unlockAt = formatClock(Date.now() + 150_000);
+    expect(alert).toHaveTextContent(`${copy.locked(unlockAt)} (02:30).`);
+    expect(alert).toHaveFocus();
+    expect(screen.getByTestId("login-lock-countdown")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByTestId("login-lock-announcement")).toBeEmptyDOMElement();
     expect(screen.getByRole("button", { name: copy.submit })).toBeDisabled();
+    expect(email).toBeDisabled();
 
     await act(async () => {
-      vi.advanceTimersByTime(30_000);
+      vi.advanceTimersByTime(20_000);
     });
-    expect(screen.getByTestId("login-lock-countdown")).toHaveTextContent("01:00");
+    expect(screen.getByTestId("login-lock-countdown")).toHaveTextContent("02:10");
+    // Announced at most once per minute: nothing until the next whole minute.
+    expect(screen.getByTestId("login-lock-announcement")).toBeEmptyDOMElement();
 
     await act(async () => {
-      vi.advanceTimersByTime(61_000);
+      vi.advanceTimersByTime(10_000);
+    });
+    expect(screen.getByTestId("login-lock-announcement")).toHaveTextContent(
+      copy.lockedAnnouncement(unlockAt, 2),
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(121_000);
     });
     expect(screen.queryByTestId("login-lock-countdown")).not.toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent(copy.rateLimitReleased);
+    expect(screen.getByText(copy.rateLimitReleased)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: copy.submit })).toBeEnabled();
+    expect(email).toHaveValue("rodrigo@example.com");
+  });
+
+  it("toggles password visibility with a dynamic accessible name", async () => {
+    const user = userEvent.setup();
+    const { password } = setup();
+    await user.click(screen.getByRole("button", { name: copy.showPassword }));
+    expect(password).toHaveAttribute("type", "text");
+    expect(screen.getByRole("button", { name: copy.hidePassword })).toBeInTheDocument();
   });
 
   it("falls back to 15 minutes without Retry-After", async () => {
@@ -151,6 +180,6 @@ describe("LoginForm", () => {
     const { email, password, submit } = setup(vi.fn(() => Promise.reject(problem("RATE_LIMITED"))));
     await fill(user, email, password);
     await user.click(submit);
-    expect(await screen.findByTestId("login-lock-countdown")).toHaveTextContent("15:00");
+    expect(await screen.findByTestId("login-lock-countdown")).toHaveTextContent("(15:00)");
   });
 });

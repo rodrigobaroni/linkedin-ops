@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { useReauth } from "@/hooks/use-reauth";
 import { messages } from "@/i18n/pt-br";
 import { isApiProblem } from "@/lib/api";
+import { formatClock } from "@/lib/format-duration";
 import {
   MOCK_CREDENTIALS,
   mockAuthState,
@@ -178,7 +179,7 @@ describe("AuthProvider", () => {
     // Wrong password keeps the dialog open with an error; the right one completes the action.
     promise = result.current.reauth.withElevation(run);
     await screen.findByRole("dialog", { name: messages.auth.reauth.title });
-    const password = screen.getByLabelText(/Senha/);
+    const password = screen.getByLabelText(/^Senha/);
     await userEvent.type(password, "wrong-password-123456");
     await userEvent.click(screen.getByRole("button", { name: messages.auth.reauth.confirm }));
     expect(await screen.findByRole("alert")).toHaveTextContent(messages.auth.reauth.invalid);
@@ -195,5 +196,33 @@ describe("AuthProvider", () => {
     const second = await result.current.reauth.withElevation(run);
     expect(second?.authorizeUrl).toContain(mockAuthState().csrfToken);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("reauth dialog: focuses the password, forgets it on cancel and announces the server-granted deadline", async () => {
+    server.use(elevatedEcho());
+    const { result } = renderAuth(true);
+    await settled(result);
+    const run = () => result.current.auth.client.request(routesV1["integrations.linkedin.connect"]);
+
+    let promise = result.current.reauth.withElevation(run);
+    await screen.findByRole("dialog", { name: messages.auth.reauth.title });
+    const password = screen.getByLabelText(/^Senha/);
+    await waitFor(() => expect(password).toHaveFocus());
+    expect(password).toHaveAttribute("placeholder", messages.auth.reauth.passwordPlaceholder);
+    await userEvent.type(password, "abandoned-password");
+    await userEvent.keyboard("{Escape}");
+    await expect(promise).resolves.toBeUndefined();
+
+    promise = result.current.reauth.withElevation(run);
+    await screen.findByRole("dialog", { name: messages.auth.reauth.title });
+    expect(screen.getByLabelText(/^Senha/)).toHaveValue("");
+    await userEvent.type(screen.getByLabelText(/^Senha/), MOCK_CREDENTIALS.password);
+    await userEvent.click(screen.getByRole("button", { name: messages.auth.reauth.confirm }));
+    await promise;
+    const until = Date.parse(result.current.auth.elevatedUntil ?? "");
+    expect(until - Date.now()).toBeGreaterThan(14 * 60_000);
+    expect(screen.getByTestId("elevation-notice")).toHaveTextContent(
+      messages.auth.reauth.success(formatClock(until), 15),
+    );
   });
 });

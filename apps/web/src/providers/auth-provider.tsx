@@ -4,6 +4,7 @@ import type { LoginInput, ReauthInput } from "@linkedin-ops/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, createContext, useCallback, useContext, useMemo, useState } from "react";
 import { ReauthDialog } from "@/components/auth/reauth-dialog";
+import { messages } from "@/i18n/pt-br";
 import {
   type ApiClient,
   CsrfTokenStore,
@@ -13,6 +14,7 @@ import {
   createAuthApi,
   isApiProblem,
 } from "@/lib/api";
+import { formatClock, minutesUntil } from "@/lib/format-duration";
 
 export const SESSION_QUERY_KEY = ["auth", "me"] as const;
 
@@ -124,12 +126,18 @@ export function AuthProvider({
     }
   }, [authApi, queryClient]);
 
+  /** Polite announcement of the elevation deadline after the dialog closes (Aurora spec item 18). */
+  const [elevationNotice, setElevationNotice] = useState("");
+
   const reauth = useCallback(
     async (input: ReauthInput) => {
       const { elevatedUntil } = await authApi.reauth(input);
       queryClient.setQueryData<SessionSnapshot | null>(SESSION_QUERY_KEY, (current) =>
         current ? { ...current, elevatedUntil } : current,
       );
+      // The duration is whatever the server granted (ADR-0007 item 3: 15 min today), never a constant.
+      const until = Date.parse(elevatedUntil);
+      setElevationNotice(messages.auth.reauth.success(formatClock(until), minutesUntil(until)));
     },
     [authApi, queryClient],
   );
@@ -203,6 +211,9 @@ export function AuthProvider({
         onSubmit={reauth}
         onSettled={settleElevation}
       />
+      <p aria-live="polite" aria-atomic="true" className="sr-only" data-testid="elevation-notice">
+        {elevationNotice}
+      </p>
     </AuthContext.Provider>
   );
 }

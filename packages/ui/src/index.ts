@@ -47,6 +47,9 @@ export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "./comp
 export { Popover, PopoverTrigger, PopoverContent } from "./components/popover";
 export { Input, type InputProps } from "./components/input";
 export { Label, type LabelProps } from "./components/label";
+export { PasswordInput, type PasswordInputProps } from "./components/password-input";
+export { Textarea, type TextareaProps } from "./components/textarea";
+export { Spinner } from "./components/spinner";
 export {
   FormField,
   type FormFieldProps,

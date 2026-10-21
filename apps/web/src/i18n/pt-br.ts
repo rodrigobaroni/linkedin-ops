@@ -65,25 +65,31 @@ export const messages = {
   },
   auth: {
     login: {
-      title: "Entrar",
-      description: "Acesse o LinkedIn Ops com o e-mail e a senha cadastrados.",
+      title: "Entrar no LinkedIn Ops",
+      description: "Use o e-mail e a senha configurados para esta instalação.",
       email: "E-mail",
-      emailHint: "O mesmo e-mail usado na criação da conta.",
+      emailPlaceholder: "voce@empresa.com",
       password: "Senha",
+      passwordPlaceholder: "Digite sua senha",
+      showPassword: "Mostrar senha",
+      hidePassword: "Ocultar senha",
       submit: "Entrar",
       submitting: "Entrando…",
+      success: "Sessão iniciada. Abrindo o LinkedIn Ops…",
       emailRequired: "Informe seu e-mail.",
       emailInvalid: "Informe um e-mail válido.",
       passwordRequired: "Informe sua senha.",
-      invalidCredentials: "E-mail ou senha incorretos. Confira os dados e tente novamente.",
+      invalidCredentials: "Não foi possível entrar. Verifique suas credenciais e tente novamente.",
       networkError:
         "Não foi possível conectar ao LinkedIn Ops. Verifique sua conexão e tente novamente.",
       unexpectedError: "Não foi possível entrar agora. Tente novamente em instantes.",
-      rateLimitedTitle: "Muitas tentativas de entrada",
-      rateLimited: (remaining: string) =>
-        `Por segurança, a entrada fica bloqueada por alguns minutos. Tente novamente em ${remaining}.`,
+      /** `{HH:mm}` is the absolute unlock time; `{MM:SS}` the visual countdown (Aurora spec item 11). */
+      locked: (clock: string) => `Muitas tentativas sem sucesso. Tente novamente às ${clock}`,
+      lockedAnnouncement: (clock: string, minutes: number) =>
+        `Entrada bloqueada até ${clock}. ${minutes <= 1 ? "Falta menos de 1 minuto." : `Faltam ${minutes} minutos.`}`,
       rateLimitReleased: "O bloqueio terminou. Você já pode tentar novamente.",
-      noAccount: "Não existe cadastro pela interface: a conta é criada pelo comando de setup.",
+      recovery:
+        "Esqueceu a senha? A recuperação é feita pelo administrador no servidor. Consulte o runbook de acesso.",
     },
     session: {
       checking: "Verificando sua sessão",
@@ -96,14 +102,20 @@ export const messages = {
       logoutFailed: "Não foi possível encerrar a sessão agora. Tente novamente.",
     },
     reauth: {
-      title: "Confirme sua senha",
+      title: "Confirme sua identidade",
+      /** The duration comes from the server (`elevatedUntil`), so it is only stated after success. */
       description:
-        "Esta ação é sensível. Digite sua senha para continuar; a confirmação vale por alguns minutos.",
+        "Digite sua senha para continuar. A confirmação vale por tempo limitado e só para esta sessão.",
       password: "Senha",
-      confirm: "Confirmar",
+      passwordPlaceholder: "Digite sua senha",
+      confirm: "Confirmar identidade",
       confirming: "Confirmando…",
       cancel: "Cancelar",
-      invalid: "Senha incorreta. Tente novamente.",
+      invalid: "Não foi possível confirmar sua identidade. Verifique a senha e tente novamente.",
+      rateLimited: "Muitas tentativas sem sucesso. Aguarde alguns minutos e tente novamente.",
+      /** Derived from `elevatedUntil` (ADR-0007 item 3: 15 min today), never a constant. */
+      success: (clock: string, minutes: number) =>
+        `Identidade confirmada. Você pode continuar por ${minutes === 1 ? "1 minuto" : `${minutes} minutos`} (até ${clock}).`,
     },
     required: "obrigatório",
   },
