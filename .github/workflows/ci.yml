@@ -104,7 +104,9 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: postgres:17-alpine
+        # Tag + digest (TM-21); same reference in the Testcontainers suite and in the Compose file
+        # (T-003). Dependabot `docker` ecosystem (enabled by T-003) proposes digest updates.
+        image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
         env:
           POSTGRES_USER: ci
           POSTGRES_PASSWORD: ci
@@ -118,6 +120,8 @@ jobs:
           --health-retries 20
     env:
       DATABASE_URL: postgresql://ci:ci@localhost:5432/linkedin_ops_ci
+      # db:seed / db:reset refuse any NODE_ENV outside {development, test} (packages/domain/src/env/guards.ts).
+      NODE_ENV: test
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
