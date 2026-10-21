@@ -28,10 +28,21 @@ export function hashNonce(nonce: string): string {
 }
 
 /**
+ * LinkedIn interoperability exception, approved by the Sentinela on 2026-10-21 (PR #84) with evidence in
+ * docs/security/linkedin-api-proof.md: LinkedIn's id_token omits `nonce` even when the authorization request
+ * sends one, which does NOT conform to OIDC Core 1.0 (§2: a nonce sent in the request MUST be in the id_token;
+ * §3.1.3.7 item 11: the client MUST check it). Only the *absence* is tolerated; a present nonce is always checked. Changing this requires a new
+ * probe run and the Sentinela's sign-off. Deliberately a code constant, never configuration.
+ */
+export const LINKEDIN_OMITS_ID_TOKEN_NONCE = true;
+
+/**
  * ADR-0007 item 2 / oauth-and-tokens.md §2.4: the id_token must be RS256-signed by a key of LinkedIn's
- * JWKS, `iss`/`aud` exact, `exp`/`iat` within a short tolerance, `nonce` equal to the one bound to the state
- * and `sub` equal to the `userinfo` subject. Any failure is `ID_TOKEN_INVALID` (nothing about the token is
- * echoed); the callback then stores nothing.
+ * JWKS, `iss`/`aud` exact, `exp`/`iat` within a short tolerance and `sub` equal to the `userinfo` subject.
+ * `nonce`: present → must equal the one bound to the state (empty, non-string or different fails); absent
+ * → accepted only under `LINKEDIN_OMITS_ID_TOKEN_NONCE`, with every other check still required (and, around
+ * it, the single-use state bound to session + user and the server-side code exchange). Any failure is
+ * `ID_TOKEN_INVALID` (nothing about the token is echoed); the callback then stores nothing.
  */
 @Injectable()
 export class LinkedInIdTokenVerifier {
@@ -50,13 +61,21 @@ export class LinkedInIdTokenVerifier {
         audience: this.config.clientId,
         clockTolerance: ID_TOKEN_CLOCK_TOLERANCE_SECONDS,
         maxTokenAge: ID_TOKEN_MAX_AGE_SECONDS,
-        requiredClaims: ["exp", "iat", "sub", "nonce"],
+        requiredClaims: ["exp", "iat", "sub"],
       }));
     } catch {
       throw new LinkedInApiError("ID_TOKEN_INVALID", null);
     }
-    const nonce = payload.nonce;
-    if (typeof nonce !== "string" || !sameHex(hashNonce(nonce), expected.nonceHash)) {
+    if (Object.prototype.hasOwnProperty.call(payload, "nonce")) {
+      const nonce = payload.nonce;
+      if (
+        typeof nonce !== "string" ||
+        nonce.length === 0 ||
+        !sameHex(hashNonce(nonce), expected.nonceHash)
+      ) {
+        throw new LinkedInApiError("ID_TOKEN_INVALID", null);
+      }
+    } else if (!LINKEDIN_OMITS_ID_TOKEN_NONCE) {
       throw new LinkedInApiError("ID_TOKEN_INVALID", null);
     }
     if (payload.sub !== expected.sub) throw new LinkedInApiError("ID_TOKEN_INVALID", null);

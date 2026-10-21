@@ -2,7 +2,11 @@ import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT, type JWK } from
 import { beforeAll, describe, expect, it } from "vitest";
 
 type SigningKey = Awaited<ReturnType<typeof generateKeyPair>>["privateKey"];
-import { hashNonce, LinkedInIdTokenVerifier } from "./id-token.verifier.js";
+import {
+  hashNonce,
+  LINKEDIN_OMITS_ID_TOKEN_NONCE,
+  LinkedInIdTokenVerifier,
+} from "./id-token.verifier.js";
 import { LINKEDIN_OIDC_ISSUER } from "./linkedin.constants.js";
 
 const CONFIG = {
@@ -70,7 +74,9 @@ describe("LinkedInIdTokenVerifier (ADR-0007 item 2, Sentinela A-2)", () => {
     ["an expired token", () => idToken({ exp: Math.floor(Date.now() / 1000) - 120 })],
     ["an iat older than the max age", () => idToken({ iat: Math.floor(Date.now() / 1000) - 3600 })],
     ["a different nonce", () => idToken({ claims: { nonce: "other" } })],
-    ["no nonce", () => idToken({ claims: { nonce: undefined } })],
+    ["an empty nonce", () => idToken({ claims: { nonce: "" } })],
+    ["a numeric nonce", () => idToken({ claims: { nonce: 42 } })],
+    ["a null nonce", () => idToken({ claims: { nonce: null } })],
     [
       "a sub different from userinfo",
       () => idToken(),
@@ -110,5 +116,35 @@ describe("LinkedInIdTokenVerifier (ADR-0007 item 2, Sentinela A-2)", () => {
       .setExpirationTime("1h")
       .sign(new TextEncoder().encode("x".repeat(32)));
     await expect(verifier.verify(hs, expected)).rejects.toMatchObject({ code: "ID_TOKEN_INVALID" });
+  });
+});
+
+describe("LinkedIn nonce exception (absent nonce, Sentinela 2026-10-21)", () => {
+  const absent = (options: TokenOptions = {}) =>
+    idToken({ ...options, claims: { nonce: undefined, ...options.claims } });
+
+  it("is a single code constant, switched on by the T-061 probe evidence", () => {
+    expect(LINKEDIN_OMITS_ID_TOKEN_NONCE).toBe(true);
+  });
+
+  it("accepts an id_token WITHOUT nonce when everything else holds (LinkedIn's real shape)", async () => {
+    await expect(verifier.verify(await absent(), expected)).resolves.toBeUndefined();
+  });
+
+  it.each<[string, () => Promise<string>, { nonceHash: string; sub: string }?]>([
+    ["a foreign signature", () => absent({ key: foreignKey })],
+    ["another audience", () => absent({ aud: "someone-else" })],
+    ["another issuer", () => absent({ iss: "https://evil.example/oauth" })],
+    ["an expired token", () => absent({ exp: Math.floor(Date.now() / 1000) - 120 })],
+    ["an old iat", () => absent({ iat: Math.floor(Date.now() / 1000) - 3600 })],
+    [
+      "a sub different from userinfo",
+      () => absent(),
+      { nonceHash: hashNonce(NONCE), sub: "other" },
+    ],
+  ])("still rejects an absent-nonce token with %s", async (_name, token, override) => {
+    await expect(verifier.verify(await token(), override ?? expected)).rejects.toMatchObject({
+      code: "ID_TOKEN_INVALID",
+    });
   });
 });

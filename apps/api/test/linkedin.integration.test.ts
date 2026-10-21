@@ -62,10 +62,11 @@ const oidc: {
   nonce: "",
 };
 
+/** LinkedIn's real id_token has NO nonce claim (T-061 probe run 2); pass `nonce` to send one anyway. */
 async function signIdToken(
   claims: { nonce?: string; sub?: string; aud?: string } = {},
 ): Promise<string> {
-  return new SignJWT({ nonce: claims.nonce ?? oidc.nonce })
+  return new SignJWT(claims.nonce === undefined ? {} : { nonce: claims.nonce })
     .setProtectedHeader({ alg: "RS256", kid: "li-test" })
     .setSubject(claims.sub ?? MEMBER_SUB)
     .setIssuer(LINKEDIN_OIDC_ISSUER)
@@ -528,8 +529,17 @@ describe("GET /auth/linkedin/callback (N1, G-03)", () => {
     expect(await prisma.oAuthToken.count({ where: { userId: actor.userId } })).toBe(0);
   });
 
+  it("an id_token that echoes the exact nonce is accepted too (conforming provider)", async () => {
+    const actor = await newActor();
+    const state = (await connectUrl(actor)).searchParams.get("state")!;
+    linkedin.token = async () =>
+      tokenResponse({ id_token: await signIdToken({ nonce: oidc.nonce }) });
+    expect(resultOf(await callback(actor, { code: "c", state }))).toBe("connected");
+  });
+
   it.each([
     ["a nonce from another flow", { nonce: "replayed-nonce" }],
+    ["an empty nonce", { nonce: "" }],
     ["a sub different from userinfo", { sub: "someone-else" }],
     ["another audience", { aud: "another-client" }],
   ])("an id_token with %s stores nothing (exchange_failed)", async (_name, claims) => {
