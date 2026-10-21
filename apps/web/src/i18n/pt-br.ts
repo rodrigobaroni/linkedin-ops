@@ -206,8 +206,12 @@ export const messages = {
       ambiguousTitle: "Não conseguimos confirmar a publicação",
       ambiguous:
         "O LinkedIn não respondeu a tempo e não sabemos se o post foi ao ar. Confira seu perfil antes de tentar de novo: não repetimos a publicação automaticamente.",
+      unconfirmed:
+        "A conexão com o LinkedIn Ops caiu depois do envio e não sabemos se o post foi ao ar. Confira seu perfil no LinkedIn antes de qualquer coisa.",
+      resendSameHint:
+        "Se o post não estiver lá, reenvie o mesmo pedido: ele é reconhecido e nunca vira um segundo post.",
+      resendSame: "Reenviar o mesmo pedido",
       failedTitle: "O post não foi publicado",
-      retry: "Tentar novamente",
       newPost: "Escrever outro post",
       cancelled: "Publicação cancelada. O texto continua aqui.",
     },
@@ -221,10 +225,6 @@ export const messages = {
       IDEMPOTENCY_KEY_CONFLICT:
         "O texto mudou durante o envio. Confira o texto e publique novamente.",
       FORBIDDEN: "Sua conta não tem permissão para publicar.",
-      UPSTREAM_UNAVAILABLE:
-        "O LinkedIn não está respondendo agora. Nada foi publicado; tente novamente em instantes.",
-      network:
-        "Não foi possível falar com o LinkedIn Ops. Você pode tentar novamente com segurança: o mesmo envio nunca gera dois posts.",
       linkedinRejected: "O LinkedIn recusou o post. Revise o texto e tente novamente.",
       unexpected: "Não foi possível publicar agora. Tente novamente em instantes.",
     },

@@ -47,14 +47,20 @@ type Outcome =
   | { kind: "publishing" }
   | { kind: "cancelled" }
   | { kind: "published"; publication: PublicationView }
+  /** The API answered AMBIGUOUS: re-sending would replay the same answer, so nothing is offered. */
   | { kind: "ambiguous"; publication: PublicationView }
-  /** `retryable`: same submission may be re-sent with the same idempotency key. */
-  | { kind: "failed"; message: string; reconnect: boolean; retryable: boolean };
+  /**
+   * Network error or 5xx after the request left the browser: the post may have gone out. Same warning as
+   * AMBIGUOUS; only a manual re-send of the SAME attempt (same key, same text) is offered, which the API
+   * answers with the existing result instead of publishing again.
+   */
+  | { kind: "unconfirmed" }
+  | { kind: "failed"; message: string; reconnect: boolean };
 
 /**
  * One idempotency key per publication attempt (contracts.md §1): created when the user confirms, reused
- * when the SAME text is re-sent after a network/5xx failure, discarded after any definitive answer or
- * when the text changes. A double click therefore can never produce two posts.
+ * when the SAME text is re-sent after an unconfirmed (network/5xx) answer, discarded after any definitive
+ * answer or when the text changes. A double click therefore can never produce two posts.
  */
 type Attempt = { key: string; text: string };
 
@@ -118,7 +124,6 @@ export function PublishComposer() {
           kind: "failed",
           message: reconnect ? copy.errors.LINKEDIN_REAUTH_REQUIRED : copy.errors.linkedinRejected,
           reconnect,
-          retryable: false,
         });
       } else {
         // AMBIGUOUS (or still in progress): never offer an automatic or one-click retry.
@@ -237,7 +242,7 @@ export function PublishComposer() {
       <div ref={outcomeRef} tabIndex={-1} className="outline-none empty:hidden">
         <OutcomeAlert
           outcome={outcome}
-          onRetry={() => void publish()}
+          onResendSame={() => void publish()}
           onNewPost={() => setOutcome({ kind: "idle" })}
         />
       </div>
@@ -284,11 +289,11 @@ export function PublishComposer() {
 
 function OutcomeAlert({
   outcome,
-  onRetry,
+  onResendSame,
   onNewPost,
 }: {
   outcome: Outcome;
-  onRetry: () => void;
+  onResendSame: () => void;
   onNewPost: () => void;
 }) {
   if (outcome.kind === "published") {
@@ -326,6 +331,22 @@ function OutcomeAlert({
       </Alert>
     );
   }
+  if (outcome.kind === "unconfirmed") {
+    return (
+      <Alert variant="warning" role="alert">
+        <AlertTitle>{copy.result.ambiguousTitle}</AlertTitle>
+        <AlertDescription>
+          <p>{copy.result.unconfirmed}</p>
+          <p>{copy.result.resendSameHint}</p>
+          <div>
+            <Button variant="outline" size="sm" onClick={onResendSame}>
+              {copy.result.resendSame}
+            </Button>
+          </div>
+        </AlertDescription>
+      </Alert>
+    );
+  }
   if (outcome.kind === "failed") {
     return (
       <Alert variant="destructive" role="alert">
@@ -338,13 +359,6 @@ function OutcomeAlert({
                 {copy.connection.reconnect}
               </a>
             </p>
-          ) : null}
-          {outcome.retryable ? (
-            <div>
-              <Button variant="outline" size="sm" onClick={onRetry}>
-                {copy.result.retry}
-              </Button>
-            </div>
           ) : null}
         </AlertDescription>
       </Alert>
@@ -361,39 +375,25 @@ function OutcomeAlert({
 }
 
 /**
- * Maps a thrown error to the UI. Network errors and 5xx keep the attempt (same key → the API replays
- * instead of publishing twice); every other answer is definitive and drops it.
+ * Maps a thrown error to the UI. A network error or a 5xx may come after the API already called LinkedIn, so
+ * it is never reported as "not published": the attempt (and its key) is kept for a manual re-send. Every
+ * other answer is definitive and drops it.
  */
 function failureFromError(
   cause: unknown,
   attempt: { current: Attempt | null },
-): Extract<Outcome, { kind: "failed" }> {
+): Extract<Outcome, { kind: "failed" | "unconfirmed" }> {
   const errors = copy.errors;
-  if (isApiNetworkError(cause)) {
-    return { kind: "failed", message: errors.network, reconnect: false, retryable: true };
-  }
-  if (isApiProblem(cause) && cause.status >= 500) {
-    const message =
-      cause.code === "UPSTREAM_UNAVAILABLE" ? errors.UPSTREAM_UNAVAILABLE : errors.unexpected;
-    return { kind: "failed", message, reconnect: false, retryable: true };
+  if (isApiNetworkError(cause) || (isApiProblem(cause) && cause.status >= 500)) {
+    return { kind: "unconfirmed" };
   }
   attempt.current = null;
   if (isApiProblem(cause, "LINKEDIN_REAUTH_REQUIRED")) {
-    return {
-      kind: "failed",
-      message: errors.LINKEDIN_REAUTH_REQUIRED,
-      reconnect: true,
-      retryable: false,
-    };
+    return { kind: "failed", message: errors.LINKEDIN_REAUTH_REQUIRED, reconnect: true };
   }
   if (isApiProblem(cause)) {
     const known = (errors as Record<string, string>)[cause.code];
-    return {
-      kind: "failed",
-      message: known ?? errors.unexpected,
-      reconnect: false,
-      retryable: false,
-    };
+    return { kind: "failed", message: known ?? errors.unexpected, reconnect: false };
   }
-  return { kind: "failed", message: errors.unexpected, reconnect: false, retryable: false };
+  return { kind: "failed", message: errors.unexpected, reconnect: false };
 }

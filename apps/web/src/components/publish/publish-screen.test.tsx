@@ -154,15 +154,48 @@ describe("PublishScreen", () => {
     expect(keys).toHaveLength(0);
   });
 
-  it("retries a network failure with the SAME idempotency key and never publishes twice", async () => {
+  it("lost response after the post went out: warns it is unconfirmed and a manual re-send replays it", async () => {
     const keys = recordPublishKeys();
-    server.use(http.post(PUBLISH_URL, () => HttpResponse.error(), { once: true }));
+    // The API publishes (effect persisted under the key) and then the response is lost on the way back.
+    server.use(
+      http.post(
+        PUBLISH_URL,
+        async ({ request }) => {
+          await fetch(request.clone());
+          return HttpResponse.error();
+        },
+        { once: true },
+      ),
+    );
     const { user } = await renderPublish();
     const dialog = await writeAndConfirm(user, "Post com rede instável");
     await user.click(within(dialog).getByRole("button", { name: copy.confirm.confirm }));
 
-    expect(await screen.findByText(copy.errors.network)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: copy.result.retry }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(copy.result.ambiguousTitle);
+    expect(alert).toHaveTextContent(copy.result.unconfirmed);
+    expect(alert).not.toHaveTextContent(/nada foi publicado/i);
+    expect(screen.getByLabelText(copy.composer.label)).toHaveValue("Post com rede instável");
+    expect(mockPublishingState().linkedinCalls).toBe(1);
+
+    await user.click(screen.getByRole("button", { name: copy.result.resendSame }));
+    expect(await screen.findByText(copy.result.published)).toBeInTheDocument();
+    expect(keys.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(keys).size).toBe(1);
+    expect(mockPublishingState().linkedinCalls).toBe(1);
+    expect(mockPublishingState().publications).toHaveLength(1);
+  });
+
+  it("5xx after sending is unconfirmed too, never 'not published'", async () => {
+    const keys = recordPublishKeys();
+    server.use(
+      http.post(PUBLISH_URL, () => problemResponse("UPSTREAM_UNAVAILABLE"), { once: true }),
+    );
+    const { user } = await renderPublish();
+    const dialog = await writeAndConfirm(user, "Post com 503");
+    await user.click(within(dialog).getByRole("button", { name: copy.confirm.confirm }));
+    expect(await screen.findByText(copy.result.unconfirmed)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: copy.result.resendSame }));
     expect(await screen.findByText(copy.result.published)).toBeInTheDocument();
     expect(keys).toHaveLength(2);
     expect(keys[1]).toBe(keys[0]);
@@ -187,7 +220,7 @@ describe("PublishScreen", () => {
     const dialog = await writeAndConfirm(user, "Post incerto");
     await user.click(within(dialog).getByRole("button", { name: copy.confirm.confirm }));
     expect(await screen.findByText(copy.result.ambiguousTitle)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: copy.result.retry })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: copy.result.resendSame })).not.toBeInTheDocument();
   });
 
   it("LinkedIn 401 on publish: explains and points to reconnection", async () => {
@@ -212,7 +245,7 @@ describe("PublishScreen", () => {
     const dialog = await writeAndConfirm(user, "Post");
     await user.click(within(dialog).getByRole("button", { name: copy.confirm.confirm }));
     expect(await screen.findByText(copy.errors.LINKEDIN_REAUTH_REQUIRED)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: copy.result.retry })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: copy.result.resendSame })).not.toBeInTheDocument();
   });
 
   it("EXPIRED: shows expiry and reconnects through reauth to LinkedIn's authorize URL", async () => {
