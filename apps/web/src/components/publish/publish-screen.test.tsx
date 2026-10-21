@@ -58,13 +58,17 @@ async function expectAccessible(node: Element = document.body) {
 }
 
 async function writeAndConfirm(user: ReturnType<typeof userEvent.setup>, text: string) {
-  await user.type(screen.getByLabelText(copy.composer.label), text);
+  // Pasted, not typed: per-key typing is covered by the counter test and is slow on the CI runner.
+  await user.click(screen.getByLabelText(copy.composer.label));
+  await user.paste(text);
   await user.click(screen.getByRole("button", { name: copy.action.publishNow }));
   const dialog = await screen.findByRole("dialog", { name: copy.confirm.title });
   return dialog;
 }
 
-describe("PublishScreen", () => {
+// Whole-document axe runs and the reauth flow are ~15x slower on the CI runner than locally (run
+// 39690511329: 289 ms here, >5 s there), so these tests get an explicit budget.
+describe("PublishScreen", { timeout: 20_000 }, () => {
   beforeEach(() => {
     resetNavigation();
     setPathname("/publicar");
