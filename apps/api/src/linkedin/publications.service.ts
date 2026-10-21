@@ -20,7 +20,12 @@ import { API_LOGGER } from "../logging/logger.js";
 import { PRISMA_CLIENT } from "../prisma/prisma.module.js";
 import type { AuthenticatedSession } from "../session/session.service.js";
 import { FixedWindowLimiter } from "./fixed-window-limiter.js";
-import { LinkedInApiClient, textPostPayload, type LinkedInPostOutcome } from "./linkedin.client.js";
+import {
+  LINKEDIN_HTTP_TIMEOUT_MS,
+  LinkedInApiClient,
+  textPostPayload,
+  type LinkedInPostOutcome,
+} from "./linkedin.client.js";
 import { linkedinPostUrl } from "./linkedin.constants.js";
 import { personUrn, PUBLISH_SCOPE, TOKEN_VAULT } from "./linkedin-oauth.service.js";
 
@@ -38,7 +43,15 @@ const ERROR_MESSAGES: Readonly<Record<string, string>> = {
     "O LinkedIn respondeu com erro interno. Confira o perfil antes de tentar de novo.",
   POST_URN_MISSING: "O LinkedIn aceitou o envio sem devolver o post. Confira o perfil.",
   UNEXPECTED_STATUS: "Resposta inesperada do LinkedIn. Confira o perfil antes de tentar de novo.",
+  CLAIM_ABANDONED:
+    "A publicação foi interrompida sem resultado conhecido. Confira o perfil antes de tentar de novo.",
 };
+
+/**
+ * A live attempt finishes within one HTTP timeout plus the database round-trips; an `IN_PROGRESS` claim older
+ * than twice that was abandoned (process crash, restart) between the claim and its result.
+ */
+export const ABANDONED_CLAIM_MS = 2 * LINKEDIN_HTTP_TIMEOUT_MS;
 
 type PublicationRow = Awaited<ReturnType<PrismaClient["publication"]["findUniqueOrThrow"]>>;
 
@@ -67,7 +80,7 @@ export class PublicationsService {
   ): Promise<Publication> {
     const idempotencyKey = `pub:manual:${session.userId}:${parseIdempotencyKey(idempotencyKeyHeader)}`;
     const existing = await this.prisma.publication.findUnique({ where: { idempotencyKey } });
-    if (existing) return replay(existing, text);
+    if (existing) return this.replay(existing, text, correlationId);
 
     this.#publishLimiter.consume(
       session.userId,
@@ -124,9 +137,10 @@ export class PublicationsService {
     } catch (error) {
       if (!isUniqueViolation(error)) throw error;
       // Lost a concurrent double click: the winner owns the call; answer with its row.
-      return replay(
+      return this.replay(
         await this.prisma.publication.findUniqueOrThrow({ where: { idempotencyKey } }),
         text,
+        correlationId,
       );
     }
 
@@ -170,7 +184,11 @@ export class PublicationsService {
     return toPublication(finished);
   }
 
-  async list(userId: string, query: PublicationListQuery): Promise<Page<Publication>> {
+  async list(
+    userId: string,
+    query: PublicationListQuery,
+    correlationId: string,
+  ): Promise<Page<Publication>> {
     if (query.cursor !== undefined && !IdempotencyKeySchema.safeParse(query.cursor).success) {
       throw new ProblemError("VALIDATION_FAILED", {
         detail: "Parâmetros de consulta inválidos",
@@ -188,17 +206,75 @@ export class PublicationsService {
       orderBy: { id: "desc" },
       take: query.limit + 1,
     });
-    const page = rows.slice(0, query.limit);
+    const page = await Promise.all(
+      rows.slice(0, query.limit).map((row) => this.settleAbandoned(row, correlationId)),
+    );
     return {
       items: page.map(toPublication),
       nextCursor: rows.length > query.limit ? (page.at(-1)?.id ?? null) : null,
     };
   }
 
-  async get(userId: string, id: string): Promise<Publication> {
+  async get(userId: string, id: string, correlationId: string): Promise<Publication> {
     const row = await this.prisma.publication.findFirst({ where: { id, userId } });
     if (!row) throw new ProblemError("NOT_FOUND", { detail: "Publicação não encontrada" });
-    return toPublication(row);
+    return toPublication(await this.settleAbandoned(row, correlationId));
+  }
+
+  /** Same key: same text → the stored result; different text → 409 (contracts.md §1). Never re-sends. */
+  private async replay(
+    row: PublicationRow,
+    text: string,
+    correlationId: string,
+  ): Promise<Publication> {
+    if (row.body !== text) {
+      throw new ProblemError("IDEMPOTENCY_KEY_CONFLICT", {
+        detail: "Esta chave de idempotência já foi usada com outro texto",
+      });
+    }
+    return toPublication(await this.settleAbandoned(row, correlationId));
+  }
+
+  /**
+   * ADR-0003: an abandoned `IN_PROGRESS` claim may or may not have reached LinkedIn, so it becomes
+   * `AMBIGUOUS` (never retried, never re-sent). Conditional update: concurrent readers settle it once.
+   */
+  private async settleAbandoned(
+    row: PublicationRow,
+    correlationId: string,
+  ): Promise<PublicationRow> {
+    const cutoff = new Date(Date.now() - ABANDONED_CLAIM_MS);
+    if (row.status !== "IN_PROGRESS" || !row.startedAt || row.startedAt >= cutoff) return row;
+    const error: PublicationError = {
+      code: "CLAIM_ABANDONED",
+      httpStatus: null,
+      message: ERROR_MESSAGES.CLAIM_ABANDONED!,
+    };
+    await this.prisma.$transaction(async (tx) => {
+      const settled = await tx.publication.updateMany({
+        where: { id: row.id, status: "IN_PROGRESS", startedAt: { lt: cutoff } },
+        data: { status: "AMBIGUOUS", finishedAt: new Date(), error },
+      });
+      if (settled.count === 0) return;
+      await tx.auditEvent.create({
+        data: {
+          id: newId(),
+          userId: row.userId,
+          actorType: "SYSTEM",
+          action: "publication.ambiguous",
+          entityType: "publication",
+          entityId: row.id,
+          before: { status: "IN_PROGRESS" },
+          after: { status: "AMBIGUOUS", errorCode: error.code },
+          correlationId,
+        },
+      });
+    });
+    this.logger.warn(
+      { correlationId, publicationId: row.id },
+      "abandoned publication claim settled as AMBIGUOUS",
+    );
+    return this.prisma.publication.findUniqueOrThrow({ where: { id: row.id } });
   }
 
   private async finish(
@@ -284,16 +360,6 @@ function parseIdempotencyKey(value: string | undefined): string {
     });
   }
   return parsed.data;
-}
-
-/** Same key: same text → the stored result; different text → 409 (contracts.md §1). */
-function replay(row: PublicationRow, text: string): Publication {
-  if (row.body !== text) {
-    throw new ProblemError("IDEMPOTENCY_KEY_CONFLICT", {
-      detail: "Esta chave de idempotência já foi usada com outro texto",
-    });
-  }
-  return toPublication(row);
 }
 
 function isUniqueViolation(error: unknown): boolean {

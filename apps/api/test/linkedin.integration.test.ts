@@ -24,10 +24,12 @@ import {
   type RuntimeEnv,
 } from "@linkedin-ops/domain";
 import supertest from "supertest";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../src/app.module.js";
 import { configureApp, createFastifyAdapter } from "../src/app.factory.js";
 import { LINKEDIN_FETCH, type FetchLike } from "../src/linkedin/linkedin.client.js";
+import { TOKEN_VAULT } from "../src/linkedin/linkedin-oauth.service.js";
+import { ABANDONED_CLAIM_MS, PublicationsService } from "../src/linkedin/publications.service.js";
 import { createLogger } from "../src/logging/logger.js";
 import {
   SESSION_SERVICE,
@@ -698,6 +700,83 @@ describe("POST /publications/publish-now (G-04)", () => {
     const limited = await publish(actor, "Post 6");
     expect(limited.status).toBe(429);
     expect(limited.headers["retry-after"]).toMatch(/^\d+$/);
+  });
+});
+
+describe("abandoned publish-now claims (crash between claim and result)", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  /** Moves the claim back in time, as if the process died that long ago. */
+  async function age(publicationId: string) {
+    await prisma.publication.update({
+      where: { id: publicationId },
+      data: { startedAt: new Date(Date.now() - ABANDONED_CLAIM_MS - 1000) },
+    });
+  }
+
+  async function expectSettledAmbiguous(actor: Actor, text: string, key: string) {
+    const row = await prisma.publication.findFirstOrThrow({ where: { userId: actor.userId } });
+    expect(row.status).toBe("IN_PROGRESS");
+    const fresh = await publish(actor, text, key);
+    expect(fresh.body.status).toBe("IN_PROGRESS"); // still young: a double click in flight, not a crash
+    await age(row.id);
+    const replay = await publish(actor, text, key);
+    expect(replay.status).toBe(201);
+    expect(replay.body).toMatchObject({
+      id: row.id,
+      status: "AMBIGUOUS",
+      error: { code: "CLAIM_ABANDONED", httpStatus: null },
+    });
+    const cookie = cookieHeader(actor.cookie);
+    const one = await request
+      .get(`/api/v1/publications/${row.id}`)
+      .set("cookie", cookie)
+      .expect(200);
+    expect(one.body.status).toBe("AMBIGUOUS");
+    const again = await publish(actor, text, randomUUID());
+    expect(again.body.code).toBe("PUBLICATION_ALREADY_EXISTS");
+    const audit = await prisma.auditEvent.findMany({
+      where: { entityId: row.id, action: "publication.ambiguous" },
+    });
+    expect(audit).toHaveLength(1);
+  }
+
+  it("crash BEFORE the effect: replay settles AMBIGUOUS and never sends", async () => {
+    const actor = await newActor();
+    await seedToken(actor);
+    const vault = app.get<TokenVault>(TOKEN_VAULT);
+    vi.spyOn(vault, "withAccessToken").mockRejectedValueOnce(new Error("process died"));
+    const key = randomUUID();
+    expect((await publish(actor, "Crash antes", key)).status).toBe(500);
+    await expectSettledAmbiguous(actor, "Crash antes", key);
+    expect(linkedin.callsTo("/rest/posts")).toHaveLength(0);
+  });
+
+  it("crash AFTER the effect: the post exists, replay settles AMBIGUOUS and never re-sends", async () => {
+    const actor = await newActor();
+    await seedToken(actor);
+    const service = app.get(PublicationsService) as unknown as { finish: () => Promise<unknown> };
+    vi.spyOn(service, "finish").mockRejectedValueOnce(new Error("process died"));
+    const key = randomUUID();
+    expect((await publish(actor, "Crash depois", key)).status).toBe(500);
+    expect(linkedin.callsTo("/rest/posts")).toHaveLength(1);
+    await expectSettledAmbiguous(actor, "Crash depois", key);
+    expect(linkedin.callsTo("/rest/posts")).toHaveLength(1);
+  });
+
+  it("the history settles abandoned claims too", async () => {
+    const actor = await newActor();
+    await seedToken(actor);
+    const vault = app.get<TokenVault>(TOKEN_VAULT);
+    vi.spyOn(vault, "withAccessToken").mockRejectedValueOnce(new Error("process died"));
+    await publish(actor, "Crash lista").expect(500);
+    const row = await prisma.publication.findFirstOrThrow({ where: { userId: actor.userId } });
+    await age(row.id);
+    const list = await request
+      .get("/api/v1/publications")
+      .set("cookie", cookieHeader(actor.cookie))
+      .expect(200);
+    expect(list.body.items[0]).toMatchObject({ id: row.id, status: "AMBIGUOUS" });
   });
 });
 

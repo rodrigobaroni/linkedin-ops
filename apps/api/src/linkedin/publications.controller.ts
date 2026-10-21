@@ -30,7 +30,7 @@ export class PublicationsController {
     @ContractQuery() query: PublicationListQuery,
     @Req() request: FastifyRequest,
   ): Promise<Page<Publication>> {
-    return this.publications.list(sessionOf(request).userId, query);
+    return this.publications.list(sessionOf(request).userId, query, request.id);
   }
 
   @ContractRoute("publications.get")
@@ -38,6 +38,6 @@ export class PublicationsController {
     @ContractParams() params: { id: string },
     @Req() request: FastifyRequest,
   ): Promise<Publication> {
-    return this.publications.get(sessionOf(request).userId, params.id);
+    return this.publications.get(sessionOf(request).userId, params.id, request.id);
   }
 }
