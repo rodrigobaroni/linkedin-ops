@@ -7,3 +7,6 @@ docs/adr/0004-oauth-token-encryption-at-rest.md:generic-api-key:29
 # Backlog index, line 43: gate G-06 table row (tool names only, no value).
 3cbc5485b407200855c1f2065269fc48bf9f6a80:docs/backlog/README.md:generic-api-key:43
 docs/backlog/README.md:generic-api-key:43
+# Runtime env interface, line 51: the PKCE mode field declaration (field name and type only, no value; T-008).
+2c7393584954a11933f680a04c649a9d62fa0ad8:packages/domain/src/env/runtime.ts:linkedin-client-secret:51
+packages/domain/src/env/runtime.ts:linkedin-client-secret:51
