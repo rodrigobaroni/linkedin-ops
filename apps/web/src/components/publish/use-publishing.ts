@@ -45,13 +45,21 @@ export function formatDateTime(iso: string, timeZone: string | undefined): strin
   }).format(new Date(iso));
 }
 
-/** Only LinkedIn's own authorization page may receive the browser (defence against a bad API answer). */
+const LINKEDIN_ORIGIN = "https://www.linkedin.com";
+const LINKEDIN_AUTHORIZE_PATH = "/oauth/v2/authorization";
+
+/**
+ * Only LinkedIn's own OAuth authorization endpoint may receive the browser (defence against a bad API
+ * answer): exact origin (https, `www.linkedin.com`, default port), exact path, no userinfo.
+ */
 export function isLinkedInAuthorizeUrl(value: string): boolean {
   try {
     const url = new URL(value);
     return (
-      url.protocol === "https:" &&
-      (url.hostname === "www.linkedin.com" || url.hostname === "linkedin.com")
+      url.origin === LINKEDIN_ORIGIN &&
+      url.pathname === LINKEDIN_AUTHORIZE_PATH &&
+      url.username === "" &&
+      url.password === ""
     );
   } catch {
     return false;
