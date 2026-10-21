@@ -1,52 +1,112 @@
 import "reflect-metadata";
 import { describe, expect, it } from "vitest";
-import { PATH_METADATA, METHOD_METADATA } from "@nestjs/common/constants.js";
+import { PATH_METADATA, METHOD_METADATA, MODULE_METADATA } from "@nestjs/common/constants.js";
 import { RequestMethod } from "@nestjs/common";
+import type { DynamicModule, Type } from "@nestjs/common";
 import { routesV1 } from "@linkedin-ops/contracts";
-import { AuthController } from "../src/auth/auth.controller.js";
+import { AppModule } from "../src/app.module.js";
 import {
   contractRouteKeyOf,
+  ROUTE_AUTH_KEY,
   toNestPath,
   type RouteKey,
 } from "../src/common/contract-route.decorator.js";
-import { HealthController } from "../src/health/health.controller.js";
+import { createLogger } from "../src/logging/logger.js";
+import { LogCapture, testEnv } from "./helpers.js";
 
-/** Routes T-008 implements; later tasks append here as they land their controllers. */
+/** Registry routes implemented so far; later tasks append here as they land their controllers. */
 const IMPLEMENTED: readonly RouteKey[] = [
   "health.liveness",
   "health.readiness",
   "auth.login",
+  "auth.logout",
+  "auth.logoutAll",
   "auth.reauth",
   "auth.me",
 ];
 
-const CONTROLLERS = [HealthController, AuthController];
+type ModuleRef = Type<unknown> | DynamicModule | Promise<DynamicModule>;
 
-function handlersOf(controller: new (...args: never[]) => object) {
+/**
+ * Every controller reachable from `AppModule.forRoot` (static `@Module` metadata plus dynamic module
+ * fields), walked recursively — so a controller added anywhere in the module tree is covered without
+ * editing this test.
+ */
+function controllersOf(root: DynamicModule): Type<unknown>[] {
+  const found = new Set<Type<unknown>>();
+  const seen = new Set<unknown>();
+  const visit = (ref: ModuleRef): void => {
+    if (ref instanceof Promise) throw new Error("async dynamic modules are not supported here");
+    if (seen.has(ref)) return;
+    seen.add(ref);
+    const dynamic = typeof ref === "function" ? undefined : ref;
+    const type = typeof ref === "function" ? ref : ref.module;
+    const imports: ModuleRef[] = [
+      ...((Reflect.getMetadata(MODULE_METADATA.IMPORTS, type) as ModuleRef[] | undefined) ?? []),
+      ...((dynamic?.imports as ModuleRef[] | undefined) ?? []),
+    ];
+    const controllers: Type<unknown>[] = [
+      ...((Reflect.getMetadata(MODULE_METADATA.CONTROLLERS, type) as Type<unknown>[] | undefined) ??
+        []),
+      ...(dynamic?.controllers ?? []),
+    ];
+    for (const controller of controllers) found.add(controller);
+    for (const child of imports) visit(child);
+  };
+  visit(root);
+  return [...found];
+}
+
+function handlersOf(controller: Type<unknown>) {
   const prototype = controller.prototype as Record<string, unknown>;
   return Object.getOwnPropertyNames(prototype)
     .filter((name) => name !== "constructor" && typeof prototype[name] === "function")
-    .map((name) => prototype[name] as (...args: never[]) => unknown);
+    .map((name) => ({
+      name: `${controller.name}.${name}`,
+      handler: prototype[name] as (...args: never[]) => unknown,
+    }))
+    .filter(({ handler }) => Reflect.getMetadata(METHOD_METADATA, handler) !== undefined);
 }
 
-describe("controller ↔ routes/v1 parity (contracts.md §6 rule 2)", () => {
-  const handlers = CONTROLLERS.flatMap(handlersOf);
+const logger = createLogger({ level: "silent", pretty: false, stream: new LogCapture().stream });
+const VARIANTS = {
+  production: AppModule.forRoot({ env: testEnv({ NODE_ENV: "production" }), logger }),
+  development: AppModule.forRoot({ env: testEnv({ NODE_ENV: "development" }), logger }),
+};
 
-  it("every handler is bound to a registry key, with the registry's method and path", () => {
-    expect(handlers.length).toBeGreaterThan(0);
-    for (const handler of handlers) {
-      const key = contractRouteKeyOf(handler);
-      expect(key, `${handler.name} must use @ContractRoute`).toBeDefined();
-      const route = routesV1[key!];
-      expect(Reflect.getMetadata(PATH_METADATA, handler)).toBe(toNestPath(route.path));
-      expect(Reflect.getMetadata(METHOD_METADATA, handler)).toBe(RequestMethod[route.method]);
-    }
-  });
+describe("controller ↔ routes/v1 parity (contracts.md §6 rule 2), derived from AppModule", () => {
+  for (const [variant, module] of Object.entries(VARIANTS)) {
+    const handlers = controllersOf(module).flatMap(handlersOf);
 
-  it("the implemented set matches exactly the handlers that exist (no silent additions or removals)", () => {
-    const keys = handlers.map((handler) => contractRouteKeyOf(handler)).sort();
-    expect(keys).toEqual([...IMPLEMENTED].sort());
-  });
+    it(`${variant}: every HTTP handler declares @ContractRoute or an explicit @RouteAuth`, () => {
+      expect(handlers.length).toBeGreaterThan(0);
+      for (const { name, handler } of handlers) {
+        const key = contractRouteKeyOf(handler);
+        const explicit = Reflect.getMetadata(ROUTE_AUTH_KEY, handler) as string | undefined;
+        expect(key !== undefined || explicit !== undefined, `${name} has no auth level`).toBe(true);
+      }
+    });
+
+    it(`${variant}: registry handlers use the registry's method and path`, () => {
+      for (const { name, handler } of handlers) {
+        const key = contractRouteKeyOf(handler);
+        if (key === undefined) continue;
+        const route = routesV1[key];
+        expect(Reflect.getMetadata(PATH_METADATA, handler), name).toBe(toNestPath(route.path));
+        expect(Reflect.getMetadata(METHOD_METADATA, handler), name).toBe(
+          RequestMethod[route.method],
+        );
+      }
+    });
+
+    it(`${variant}: the implemented set matches exactly (no silent additions or removals)`, () => {
+      const keys = handlers
+        .map(({ handler }) => contractRouteKeyOf(handler))
+        .filter((key): key is RouteKey => key !== undefined)
+        .sort();
+      expect(keys).toEqual([...IMPLEMENTED].sort());
+    });
+  }
 
   it("every implemented key exists in the registry", () => {
     for (const key of IMPLEMENTED) expect(routesV1).toHaveProperty(key);

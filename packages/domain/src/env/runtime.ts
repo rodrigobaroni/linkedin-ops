@@ -6,6 +6,7 @@
  * variable names and the reason.
  */
 import { Buffer } from "node:buffer";
+import { isIPv4, isIPv6 } from "node:net";
 import type { EnvironmentLike } from "./guards.js";
 
 export const RUNTIME_ENVIRONMENTS = ["development", "test", "production"] as const;
@@ -48,7 +49,12 @@ export interface RuntimeEnv {
    */
   encryptionKeyRing: EncryptionKeyRing | null;
   /** `null` = not configured (allowed until T-038 wires the OAuth flow). */
-  linkedinPkce: LinkedInPkceMode | null;
+  linkedinPkce: null | LinkedInPkceMode;
+  /**
+   * Reverse proxies whose `X-Forwarded-For` is honoured to find the client IP (login throttling, audit).
+   * Empty by default: then the socket address is the client IP and forwarded headers are ignored.
+   */
+  trustedProxyCidrs: readonly string[];
 }
 
 export class RuntimeEnvError extends Error {
@@ -284,6 +290,32 @@ function parseEnum<const T extends readonly string[]>(
 }
 
 /**
+ * `TRUSTED_PROXY_CIDRS`: comma-separated IPs or CIDRs (`172.18.0.0/16`, `10.0.0.5`, `fd00::/64`). Never a
+ * keyword such as `private_ranges` or `true`: trusting a whole family would let any client forge its IP.
+ */
+function parseTrustedProxies(value: string | undefined, issues: string[]): string[] {
+  if (value === undefined) return [];
+  const entries = value.split(",").map((entry) => entry.trim());
+  const valid: string[] = [];
+  entries.forEach((entry, index) => {
+    const [address = "", prefix, extra] = entry.split("/");
+    const family = isIPv4(address) ? 4 : isIPv6(address) ? 6 : 0;
+    const maxPrefix = family === 4 ? 32 : 128;
+    const prefixOk =
+      prefix === undefined ||
+      (/^[0-9]{1,3}$/.test(prefix) && Number(prefix) >= 8 && Number(prefix) <= maxPrefix);
+    if (family === 0 || extra !== undefined || !prefixOk) {
+      issues.push(
+        `TRUSTED_PROXY_CIDRS entry #${index + 1} must be an IP or CIDR with a prefix of at least /8`,
+      );
+      return;
+    }
+    valid.push(entry);
+  });
+  return valid;
+}
+
+/**
  * Validates and normalizes the runtime environment. Throws `RuntimeEnvError` listing every problem found
  * (names and reasons only). `NODE_ENV` is mandatory: an unset value is refused, never assumed.
  */
@@ -303,6 +335,7 @@ export function validateRuntimeEnv(env: EnvironmentLike): RuntimeEnv {
   const sessionSecret = parseSessionSecret(read(env, "SESSION_SECRET"), nodeEnv, issues);
   const linkedinPkce =
     parseEnum("LINKEDIN_PKCE", read(env, "LINKEDIN_PKCE"), LINKEDIN_PKCE_MODES, issues) ?? null;
+  const trustedProxyCidrs = parseTrustedProxies(read(env, "TRUSTED_PROXY_CIDRS"), issues);
 
   const singleKey = read(env, "ENCRYPTION_KEY");
   const ringKeys = read(env, "ENCRYPTION_KEYS");
@@ -338,5 +371,6 @@ export function validateRuntimeEnv(env: EnvironmentLike): RuntimeEnv {
     sessionSecret,
     encryptionKeyRing,
     linkedinPkce,
+    trustedProxyCidrs,
   };
 }

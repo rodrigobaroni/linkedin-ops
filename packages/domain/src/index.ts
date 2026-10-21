@@ -33,3 +33,35 @@ export {
   type LinkedInPkceMode,
   type EncryptionKeyRing,
 } from "./env/runtime.js";
+export {
+  ELEVATION_WINDOW_MS,
+  SESSION_ABSOLUTE_TTL_MS,
+  SESSION_IDLE_TTL_MS,
+  SESSION_TOUCH_INTERVAL_MS,
+  type AuthenticatedSession,
+  type AuthOutcome,
+  type IssuedSession,
+  type RequestMeta,
+  type SessionService,
+} from "./auth/session.js";
+export {
+  PrismaSessionService,
+  deriveCsrfToken,
+  hashSessionSecret,
+  normalizeEmail,
+  type PrismaSessionServiceOptions,
+} from "./auth/prisma-session.service.js";
+export {
+  LoginThrottle,
+  THROTTLE_LOCK_MS,
+  THROTTLE_MAX_FAILURES,
+  THROTTLE_WINDOW_MS,
+} from "./auth/login-throttle.js";
+export { minimizeIp, truncateUserAgent } from "./auth/client-meta.js";
+export {
+  PrismaUserProfiles,
+  createFirstOwner,
+  SetupUserError,
+  type UserProfile,
+  type UserProfiles,
+} from "./auth/users.js";

@@ -302,3 +302,37 @@ describe("key ring · strict parse without fallback (ADR-0004 item 13(a))", () =
     expect(decodeEncryptionKey(nonCanonical)).toBeNull();
   });
 });
+
+describe("validateRuntimeEnv · TRUSTED_PROXY_CIDRS (T-015)", () => {
+  it("defaults to trusting no proxy", () => {
+    expect(validateRuntimeEnv(PRODUCTION).trustedProxyCidrs).toEqual([]);
+    expect(
+      validateRuntimeEnv({ ...PRODUCTION, TRUSTED_PROXY_CIDRS: " " }).trustedProxyCidrs,
+    ).toEqual([]);
+  });
+
+  it("accepts explicit IPs and CIDRs of both families", () => {
+    const env = validateRuntimeEnv({
+      ...PRODUCTION,
+      TRUSTED_PROXY_CIDRS: "172.18.0.0/16, 10.0.0.5,fd00::/64,::1",
+    });
+    expect(env.trustedProxyCidrs).toEqual(["172.18.0.0/16", "10.0.0.5", "fd00::/64", "::1"]);
+  });
+
+  it.each([
+    "private_ranges",
+    "true",
+    "*",
+    "0.0.0.0/0",
+    "10.0.0.0/7",
+    "::/0",
+    "172.18.0.0/33",
+    "172.18.0.0/16/1",
+    "172.18.0.0,",
+    "example.com",
+  ])("refuses %s", (value) => {
+    const issues = issuesOf({ ...PRODUCTION, TRUSTED_PROXY_CIDRS: value });
+    expect(issues.some((issue) => issue.startsWith("TRUSTED_PROXY_CIDRS"))).toBe(true);
+    expect(issues.join("\n")).not.toContain(value);
+  });
+});

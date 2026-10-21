@@ -161,7 +161,7 @@ jobs:
       - name: Integration tests (Testcontainers, postgres:17-alpine)
         run: pnpm db:test
 
-      - name: API readiness against PostgreSQL (Testcontainers, T-008)
+      - name: API readiness and auth against PostgreSQL (Testcontainers, T-008/T-015)
         run: pnpm --filter @linkedin-ops/api test:integration
 
   # --- compose-smoke (T-003) ---------------------------------------------------------------------

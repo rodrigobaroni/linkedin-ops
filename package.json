@@ -24,6 +24,7 @@
     "db:migrate:status": "pnpm --filter @linkedin-ops/domain db:migrate:status",
     "db:seed": "pnpm --filter @linkedin-ops/domain db:seed",
     "db:reset": "pnpm --filter @linkedin-ops/domain db:reset",
+    "setup:user": "pnpm --filter @linkedin-ops/api setup:user",
     "db:test": "pnpm --filter @linkedin-ops/domain test:integration",
     "clean": "turbo run clean && rm -rf node_modules/.cache .turbo",
     "compose": "docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml",

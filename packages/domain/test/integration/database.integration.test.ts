@@ -9,6 +9,7 @@
  * - every enum type migrated into PostgreSQL (pg_type/pg_enum) matches the contracts/schema matrix.
  */
 import { execFileSync } from "node:child_process";
+import { readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -18,6 +19,7 @@ import { newId } from "../../src/ids.js";
 import { expectedDatabaseEnums } from "../enum-matrix.js";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../..", import.meta.url));
+const MIGRATIONS_DIR = fileURLToPath(new URL("../../prisma/migrations", import.meta.url));
 const PRISMA_BIN = fileURLToPath(new URL("../../node_modules/.bin/prisma", import.meta.url));
 // Pinned by tag + digest (Sentinela, TM-21); the same reference is used by ci.yml and by the Compose
 // file (T-003). Dependabot (ecosystem `docker`, enabled in T-003) proposes digest updates.
@@ -132,10 +134,22 @@ afterAll(async () => {
 });
 
 describe("migration baseline", () => {
-  it("applies the initial migration from scratch and enables citext", async () => {
-    const migrations = await prisma.$queryRaw<{ name: string; finished: boolean }[]>`
-      SELECT migration_name AS name, finished_at IS NOT NULL AS finished FROM _prisma_migrations`;
-    expect(migrations).toEqual([{ name: "20261016120000_init", finished: true }]);
+  it("applies every migration in prisma/migrations from scratch, in order, and enables citext", async () => {
+    // Derived from the folders so that adding a migration never needs an edit here.
+    const expected = readdirSync(MIGRATIONS_DIR, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+    expect(expected[0]).toBe("20261016120000_init");
+    const migrations = await prisma.$queryRaw<
+      { name: string; finished: boolean; rolledBack: boolean }[]
+    >`
+      SELECT migration_name AS name, finished_at IS NOT NULL AS finished,
+             rolled_back_at IS NOT NULL AS "rolledBack"
+      FROM _prisma_migrations ORDER BY migration_name`;
+    expect(migrations).toEqual(
+      expected.map((name) => ({ name, finished: true, rolledBack: false })),
+    );
     const extensions = await prisma.$queryRaw<{ extname: string }[]>`
       SELECT extname FROM pg_extension WHERE extname = 'citext'`;
     expect(extensions).toHaveLength(1);

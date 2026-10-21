@@ -7,6 +7,7 @@ import { useState } from "react";
 import type { LinkedInConnectionStatus } from "@/config/mock";
 import { type NavGroup, navGroups, navItems } from "@/config/navigation";
 import { messages } from "@/i18n/pt-br";
+import { LogoutButton } from "@/components/auth/logout-button";
 import { AutonomyIndicator } from "./autonomy-indicator";
 import { LinkedInStatus } from "./linkedin-status";
 import { NavLink } from "./nav-link";
@@ -155,6 +156,17 @@ export function Sidebar({ linkedInStatus, unreadNotifications, accountName }: Si
           </TooltipTrigger>
           <TooltipContent side="right" className={tooltipClassName}>
             {accountName}
+          </TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <LogoutButton
+              labelClassName={labelClassName}
+              className="min-h-11 w-full max-lg:w-auto max-lg:justify-center max-lg:px-0 lg:group-data-collapsed:w-auto lg:group-data-collapsed:justify-center lg:group-data-collapsed:px-0"
+            />
+          </TooltipTrigger>
+          <TooltipContent side="right" className={tooltipClassName}>
+            {messages.auth.session.logout}
           </TooltipContent>
         </Tooltip>
       </div>
