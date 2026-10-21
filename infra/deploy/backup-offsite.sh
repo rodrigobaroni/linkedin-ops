@@ -3,7 +3,7 @@
 # distinct key, and a real restore before the first post).
 #   setup-key       once: creates the GPG key pair on the Mac (gpg asks for a passphrase) and installs only
 #                   the PUBLIC key, backup-db.sh and the nightly cron on the VM
-#   pull            copies complete dump+checksum pairs from the VM to ~/Backups/linkedin-ops and verifies them
+#   pull            copies complete dump+checksum pairs from the VM (scp) to ~/Backups/linkedin-ops and verifies them
 #   restore-test    verifies and decrypts the newest local dump, restores it into a throwaway postgres
 #                   container on the VM (removed on any outcome) and prints row counts
 #   install-launchd runs `pull` daily on the Mac and shows a macOS notification when it fails (Sentinela S-5)
@@ -33,8 +33,15 @@ verify() { [ -s "$1.sha256" ] && [ "$(shasum -a 256 "$1" | awk '{print $1}')" = 
 
 pull() {
   mkdir -p "$LOCAL_DIR"; chmod 700 "$LOCAL_DIR"
-  rsync -a --exclude '.tmp.*' -e "ssh -i $DEPLOY_SSH_KEY -o IdentitiesOnly=yes -o BatchMode=yes" \
-    "$DEPLOY_HOST:linkedin-ops/backups/linkedin-ops-*" "$LOCAL_DIR/"
+  # Only complete pairs (dump + checksum) are listed; scp needs nothing beyond sshd on the VM (no rsync).
+  "${SSH[@]}" 'cd "$HOME/linkedin-ops/backups" && for f in linkedin-ops-*.dump.gpg; do [ -s "$f.sha256" ] && echo "$f"; done' |
+    while read -r name; do
+      [ -n "$name" ] || continue
+      if [ ! -s "$LOCAL_DIR/$name" ] || [ ! -s "$LOCAL_DIR/$name.sha256" ]; then
+        scp -q -i "$DEPLOY_SSH_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes \
+          "$DEPLOY_HOST:linkedin-ops/backups/$name" "$DEPLOY_HOST:linkedin-ops/backups/$name.sha256" "$LOCAL_DIR/"
+      fi
+    done
   n=0
   for f in "$LOCAL_DIR"/*.dump.gpg; do
     [ -e "$f" ] || { echo "no backups found" >&2; exit 1; }
