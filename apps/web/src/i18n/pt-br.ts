@@ -128,7 +128,9 @@ export const messages = {
       loading: "Verificando a conexão com o LinkedIn",
       loadError: "Não foi possível verificar a conexão com o LinkedIn.",
       connectedAs: (name: string) => `Conectado como ${name}`,
-      connectedUnknown: "Conectado",
+      unidentified: "Conectado, mas sem identificação da conta",
+      unidentifiedHint:
+        "O LinkedIn não informou o nome nem o identificador da conta. Reconecte para confirmar em qual perfil o post será publicado.",
       disconnected: "Não conectado",
       expired: "Conexão expirada",
       reauthRequired: "Reconexão necessária",
@@ -184,6 +186,7 @@ export const messages = {
       publishNow: "Publicar agora",
       publishing: "Publicando…",
       needsConnection: "Conecte o LinkedIn para publicar.",
+      needsIdentity: "Reconecte o LinkedIn para identificar a conta antes de publicar.",
       needsText: "Escreva o texto do post para publicar.",
     },
     confirm: {

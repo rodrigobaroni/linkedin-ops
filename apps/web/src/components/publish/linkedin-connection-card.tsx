@@ -16,7 +16,11 @@ import { CircleAlertIcon, CircleCheckIcon, CircleXIcon } from "lucide-react";
 import { useId, useState } from "react";
 import { useReauth } from "@/hooks/use-reauth";
 import { messages } from "@/i18n/pt-br";
-import { LINKEDIN_CONNECTION_QUERY_KEY, type LinkedInConnection } from "@/lib/api";
+import {
+  LINKEDIN_CONNECTION_QUERY_KEY,
+  type LinkedInConnection,
+  connectionIdentity,
+} from "@/lib/api";
 import { useAuth } from "@/providers/auth-provider";
 import {
   formatDateTime,
@@ -131,7 +135,9 @@ export function LinkedInConnectionCard({
               {pending === "disconnect" ? copy.disconnecting : copy.disconnect}
             </Button>
           ) : null}
-          {connection.data.status !== "ACTIVE" || isExpiringSoon(connection.data, now) ? (
+          {connection.data.status !== "ACTIVE" ||
+          connectionIdentity(connection.data) === null ||
+          isExpiringSoon(connection.data, now) ? (
             <Button
               className="max-md:h-11"
               disabled={pending !== null}
@@ -161,7 +167,28 @@ function ConnectionDetails({
   now: number;
 }) {
   const expiresAt = connection.accessExpiresAt;
+  const account = connectionIdentity(connection);
   if (connection.status === "ACTIVE") {
+    if (account === null) {
+      // Without a name or URN the confirmation could not say where the post goes: reconnect first.
+      return (
+        <div className="flex flex-col gap-2">
+          <p
+            className="flex items-center gap-2 text-sm font-medium leading-6"
+            data-testid="linkedin-connection-status"
+          >
+            <CircleAlertIcon
+              aria-hidden="true"
+              className="size-4 shrink-0 text-warning-foreground"
+            />
+            {copy.unidentified}
+          </p>
+          <Alert variant="warning" role="status">
+            <AlertDescription>{copy.unidentifiedHint}</AlertDescription>
+          </Alert>
+        </div>
+      );
+    }
     const daysLeft = expiresAt ? Math.ceil((Date.parse(expiresAt) - now) / DAY_MS) : null;
     return (
       <div className="flex flex-col gap-2">
@@ -170,7 +197,7 @@ function ConnectionDetails({
           data-testid="linkedin-connection-status"
         >
           <CircleCheckIcon aria-hidden="true" className="size-4 shrink-0 text-success" />
-          {connection.memberName ? copy.connectedAs(connection.memberName) : copy.connectedUnknown}
+          {copy.connectedAs(account)}
         </p>
         {expiresAt ? (
           <p className="text-sm leading-6 text-muted-foreground">
@@ -208,7 +235,7 @@ function ConnectionDetails({
       >
         <CircleAlertIcon aria-hidden="true" className="size-4 shrink-0 text-warning-foreground" />
         {connection.status === "EXPIRED" ? copy.expired : copy.reauthRequired}
-        {connection.memberName ? ` — ${connection.memberName}` : null}
+        {account ? ` — ${account}` : null}
       </p>
       {connection.status === "EXPIRED" && expiresAt ? (
         <p className="text-sm leading-6 text-muted-foreground">

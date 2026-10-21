@@ -10,6 +10,7 @@ import { server } from "@/mocks/node";
 import {
   MOCK_AUTHORIZE_URL,
   MOCK_MEMBER_NAME,
+  MOCK_MEMBER_URN,
   mockPublishingState,
   resetMockPublishing,
 } from "@/mocks/publishing-handlers";
@@ -126,6 +127,31 @@ describe("PublishScreen", () => {
 
     expect(await screen.findByText(copy.recent.status.SUCCEEDED)).toBeInTheDocument();
     expect(screen.getByText("Meu primeiro post pelo LinkedIn Ops.")).toBeInTheDocument();
+  });
+
+  it("ACTIVE without memberName: identifies the account by its URN on the card and the confirmation", async () => {
+    resetMockPublishing({ memberName: null });
+    const user = userEvent.setup();
+    await renderApp(<PublishScreen />, { elevated: true });
+    expect(
+      await screen.findByText(copy.connection.connectedAs(MOCK_MEMBER_URN)),
+    ).toBeInTheDocument();
+    const dialog = await writeAndConfirm(user, "Post");
+    expect(within(dialog).getByTestId("confirm-account")).toHaveTextContent(MOCK_MEMBER_URN);
+  });
+
+  it("ACTIVE without memberName and memberUrn: blocks publishing and offers reconnection", async () => {
+    resetMockPublishing({ memberName: null, memberUrn: null });
+    const keys = recordPublishKeys();
+    const user = userEvent.setup();
+    await renderApp(<PublishScreen />, { elevated: true });
+    expect(await screen.findByText(copy.connection.unidentified)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: copy.connection.reconnect })).toBeInTheDocument();
+    await user.type(screen.getByLabelText(copy.composer.label), "Post sem conta identificada");
+    expect(screen.getByRole("button", { name: copy.action.publishNow })).toBeDisabled();
+    expect(screen.getByText(copy.action.needsIdentity)).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(keys).toHaveLength(0);
   });
 
   it("retries a network failure with the SAME idempotency key and never publishes twice", async () => {

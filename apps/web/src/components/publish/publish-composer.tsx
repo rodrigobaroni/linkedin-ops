@@ -31,6 +31,7 @@ import {
   PUBLICATIONS_QUERY_KEY,
   type PublicationView,
   canPublish,
+  connectionIdentity,
   isApiNetworkError,
   isApiProblem,
   publicationUrl,
@@ -78,9 +79,11 @@ export function PublishComposer() {
   const trimmed = text.trim();
   const overLimit = length > LINKEDIN_POST_MAX_LENGTH;
   const connected = canPublish(connection.data);
+  const unidentified = connection.data?.status === "ACTIVE" && !connected;
   const publishing = outcome.kind === "publishing";
   const canSubmit = connected && trimmed.length > 0 && !overLimit && !publishing;
   const memberName = connection.data?.memberName ?? null;
+  const account = connectionIdentity(connection.data);
 
   function onTextChange(value: string) {
     setText(value);
@@ -88,6 +91,8 @@ export function PublishComposer() {
   }
 
   async function publish() {
+    // Defence in depth: the button is disabled without an identified account.
+    if (!connected) return;
     const finalText = trimmed;
     if (attempt.current?.text !== finalText) {
       attempt.current = { key: crypto.randomUUID(), text: finalText };
@@ -143,11 +148,13 @@ export function PublishComposer() {
       ? "text-warning-foreground"
       : "text-muted-foreground";
 
-  const disabledReason = !connected
-    ? copy.action.needsConnection
-    : trimmed.length === 0
-      ? copy.action.needsText
-      : null;
+  const disabledReason = unidentified
+    ? copy.action.needsIdentity
+    : !connected
+      ? copy.action.needsConnection
+      : trimmed.length === 0
+        ? copy.action.needsText
+        : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -245,7 +252,7 @@ export function PublishComposer() {
             <div className="flex flex-col gap-1">
               <dt className="font-medium text-muted-foreground">{copy.confirm.account}</dt>
               <dd data-testid="confirm-account" className="font-semibold">
-                {memberName ?? copy.connection.connectedUnknown}
+                {account}
               </dd>
             </div>
             <div className="flex flex-col gap-1">
@@ -265,7 +272,7 @@ export function PublishComposer() {
             <Button variant="outline" className="max-md:h-11" onClick={() => setConfirmOpen(false)}>
               {copy.confirm.cancel}
             </Button>
-            <Button className="max-md:h-11" onClick={confirmAndPublish}>
+            <Button className="max-md:h-11" disabled={!connected} onClick={confirmAndPublish}>
               {copy.confirm.confirm}
             </Button>
           </DialogFooter>

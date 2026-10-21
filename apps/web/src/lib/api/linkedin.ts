@@ -41,7 +41,18 @@ export function createLinkedInApi(client: ApiClient) {
 }
 export type LinkedInApi = ReturnType<typeof createLinkedInApi>;
 
-/** Whether the connection can publish right now (the API decides; this only reads its status). */
+/**
+ * Who the connection publishes as: the member's name, else the member URN. `null` means the account cannot be
+ * identified, and the confirmation must never ask to publish to an unnamed account (Sentinela condition 7).
+ */
+export function connectionIdentity(connection: LinkedInConnection | undefined): string | null {
+  return connection?.memberName || connection?.memberUrn || null;
+}
+
+/**
+ * Whether the page may offer "Publicar agora": an `ACTIVE` connection (the API decides; this only reads its
+ * status) whose account can be shown on the confirmation.
+ */
 export function canPublish(connection: LinkedInConnection | undefined): boolean {
-  return connection?.status === "ACTIVE";
+  return connection?.status === "ACTIVE" && connectionIdentity(connection) !== null;
 }

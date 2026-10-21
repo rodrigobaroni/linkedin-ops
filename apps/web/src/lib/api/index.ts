@@ -12,6 +12,7 @@ export {
 export {
   LINKEDIN_CONNECTION_QUERY_KEY,
   canPublish,
+  connectionIdentity,
   createLinkedInApi,
   type LinkedInApi,
   type LinkedInConnection,

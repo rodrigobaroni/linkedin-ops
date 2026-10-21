@@ -18,6 +18,7 @@ import { problemResponse, requireElevated, requireSession } from "./auth-handler
  * `409 IDEMPOTENCY_KEY_CONFLICT`). `resetMockPublishing()` restores the initial state.
  */
 export const MOCK_MEMBER_NAME = "Rodrigo Baroni";
+export const MOCK_MEMBER_URN = "urn:li:person:mock123";
 /** Where `connect` points to. Outside tests the browser really leaves the app (see apps/web/README.md). */
 export const MOCK_AUTHORIZE_URL =
   "https://www.linkedin.com/oauth/v2/authorization?response_type=code&client_id=mock&state=mock";
@@ -27,6 +28,9 @@ type Outcome = Extract<PublicationStatus, "SUCCEEDED" | "FAILED" | "AMBIGUOUS"> 
 type MockPublishingState = {
   status: LinkedInIntegrationStatus;
   accessExpiresAt: string | null;
+  /** Identity returned while connected (tests can null them to exercise the unidentified account). */
+  memberName: string | null;
+  memberUrn: string | null;
   /** Result of the next LinkedIn call made by publish-now (tests); `SUCCEEDED` by default. */
   nextOutcome: Outcome;
   /** How many times the mock "called LinkedIn" (an idempotent replay does not count). */
@@ -42,6 +46,8 @@ function initialState(): MockPublishingState {
   return {
     status: "ACTIVE",
     accessExpiresAt: new Date(Date.now() + 55 * DAY_MS).toISOString(),
+    memberName: MOCK_MEMBER_NAME,
+    memberUrn: MOCK_MEMBER_URN,
     nextOutcome: "SUCCEEDED",
     linkedinCalls: 0,
     publications: [],
@@ -63,8 +69,8 @@ function connection(): LinkedInConnection {
     status: state.status,
     scopes: active ? ["openid", "profile", "w_member_social"] : [],
     accessExpiresAt: active ? state.accessExpiresAt : null,
-    memberUrn: active ? "urn:li:person:mock123" : null,
-    memberName: active ? MOCK_MEMBER_NAME : null,
+    memberUrn: active ? state.memberUrn : null,
+    memberName: active ? state.memberName : null,
   };
 }
 
