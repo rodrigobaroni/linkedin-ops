@@ -12,3 +12,6 @@ docs/backlog/README.md:generic-api-key:43
 # Publish composer import, line 38 of commit 54062e8: a hook import list (identifiers only, no value; T-015).
 # The import order was changed afterwards so the working tree no longer matches.
 54062e848648afc0538f0807392b425a0312cd3a:apps/web/src/components/publish/publish-composer.tsx:linkedin-client-secret:38
+# Merge of main into the T-015 branch (e2a60b6): diffed against its first parent it re-introduces the T-008
+# PKCE field declaration already allowed above for commit 2c73935 (field name and type only, no value).
+e2a60b62ff8465f2f551d6916a0cd077891d1d6b:packages/domain/src/env/runtime.ts:linkedin-client-secret:51
