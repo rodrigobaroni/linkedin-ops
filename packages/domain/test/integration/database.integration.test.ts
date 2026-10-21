@@ -13,7 +13,7 @@
  * (e.g. a throwaway local cluster); the container is then skipped.
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import pg from "pg";
@@ -24,6 +24,7 @@ import { newId } from "../../src/ids.js";
 import { expectedDatabaseEnums } from "../enum-matrix.js";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../..", import.meta.url));
+const MIGRATIONS_DIR = fileURLToPath(new URL("../../prisma/migrations", import.meta.url));
 const PRISMA_BIN = fileURLToPath(new URL("../../node_modules/.bin/prisma", import.meta.url));
 // Pinned by tag + digest (Sentinela, TM-21); the same reference is used by ci.yml and by the Compose
 // file (T-003). Dependabot (ecosystem `docker`, enabled in T-003) proposes digest updates.
@@ -145,10 +146,13 @@ describe("migration baseline", () => {
     const migrations = await prisma.$queryRaw<{ name: string; finished: boolean }[]>`
       SELECT migration_name AS name, finished_at IS NOT NULL AS finished FROM _prisma_migrations
       ORDER BY migration_name`;
-    expect(migrations).toEqual([
-      { name: "20261016120000_init", finished: true },
-      { name: "20261021210000_manual_publications", finished: true },
-    ]);
+    // Every migration folder on disk, so adding a migration never needs this test edited.
+    const onDisk = readdirSync(MIGRATIONS_DIR, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && /^\d{14}_[a-z0-9_]+$/.test(entry.name))
+      .map((entry) => entry.name)
+      .sort();
+    expect(onDisk[0]).toBe("20261016120000_init");
+    expect(migrations).toEqual(onDisk.map((name) => ({ name, finished: true })));
     const extensions = await prisma.$queryRaw<{ extname: string }[]>`
       SELECT extname FROM pg_extension WHERE extname = 'citext'`;
     expect(extensions).toHaveLength(1);
