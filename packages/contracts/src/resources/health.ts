@@ -10,7 +10,10 @@ export const HealthStatusSchema = z
   .meta({ id: "HealthStatus" });
 export type HealthStatus = z.infer<typeof HealthStatusSchema>;
 
-export const ReadinessCheckSchema = z.enum(["ok", "failed"]).meta({ id: "ReadinessCheck" });
+/** `skipped`: the dependency is not wired yet (e.g. pg-boss before T-006); never counts as a failure. */
+export const ReadinessCheckSchema = z
+  .enum(["ok", "failed", "skipped"])
+  .meta({ id: "ReadinessCheck" });
 export type ReadinessCheck = z.infer<typeof ReadinessCheckSchema>;
 
 /** `GET /ready` readiness: database and pg-boss. */

@@ -2,22 +2,47 @@
   "name": "@linkedin-ops/api",
   "version": "0.0.0",
   "private": true,
-  "description": "REST API (NestJS, OpenAPI) — HTTP adapters over the domain layer",
+  "description": "REST API (NestJS, OpenAPI) \u2014 HTTP adapters over the domain layer",
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx watch --env-file-if-exists=../../.env src/main.ts",
+    "start": "node dist/main.js",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "clean": "rm -rf dist .next .turbo coverage *.tsbuildinfo"
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "clean": "rm -rf dist .turbo coverage *.tsbuildinfo"
   },
   "dependencies": {
-    "@linkedin-ops/contracts": "workspace:*"
+    "@fastify/cookie": "catalog:",
+    "@fastify/helmet": "catalog:",
+    "@fastify/static": "catalog:",
+    "@linkedin-ops/contracts": "workspace:*",
+    "@linkedin-ops/domain": "workspace:*",
+    "@nestjs/common": "catalog:",
+    "@nestjs/core": "catalog:",
+    "@nestjs/platform-fastify": "catalog:",
+    "fastify": "catalog:",
+    "nestjs-pino": "catalog:",
+    "pino": "catalog:",
+    "pino-http": "catalog:",
+    "reflect-metadata": "catalog:",
+    "rxjs": "catalog:",
+    "swagger-ui-dist": "catalog:",
+    "uuid": "catalog:",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@linkedin-ops/config": "workspace:*",
+    "@nestjs/testing": "catalog:",
+    "@testcontainers/postgresql": "catalog:",
     "@types/node": "catalog:",
+    "@types/supertest": "catalog:",
     "eslint": "catalog:",
+    "pino-pretty": "catalog:",
+    "supertest": "catalog:",
+    "tsx": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

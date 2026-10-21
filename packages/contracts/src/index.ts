@@ -6,3 +6,4 @@ export * from "./routes/define.js";
 export * from "./routes/v1.js";
 export * from "./jobs/queues.js";
 export * from "./engine/structured-outputs.js";
+export * from "./openapi/document.js";
