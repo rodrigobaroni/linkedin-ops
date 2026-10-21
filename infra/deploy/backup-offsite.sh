@@ -36,7 +36,9 @@ pull() {
   # Only complete pairs (dump + checksum) are listed; scp needs nothing beyond sshd on the VM (no rsync).
   # Each pair lands in a temp dir, is verified there and only then moved into place (checksum first), so an
   # interrupted or corrupted copy is never mistaken for a good one; an existing invalid pair is re-fetched.
-  tmp=$(mktemp -d "$LOCAL_DIR/.tmp.XXXXXX"); trap 'rm -rf "$tmp"' RETURN
+  tmp=$(mktemp -d "$LOCAL_DIR/.tmp.XXXXXX")
+  # EXIT (not RETURN): under set -e a failing ssh/scp/verify ends the shell without running RETURN traps.
+  trap 'rm -rf "$tmp"' EXIT
   "${SSH[@]}" 'cd "$HOME/linkedin-ops/backups" && for f in linkedin-ops-*.dump.gpg; do [ -s "$f.sha256" ] && echo "$f"; done' |
     while read -r name; do
       [ -n "$name" ] || continue
@@ -56,6 +58,7 @@ pull() {
   newest=$(ls -1t "$LOCAL_DIR"/*.dump.gpg | head -1)
   age_h=$(( ( $(date +%s) - $(stat -f %m "$newest") ) / 3600 ))
   [ "$age_h" -le 36 ] || { echo "newest backup is ${age_h}h old" >&2; exit 1; }
+  rm -rf "$tmp"; trap - EXIT
   echo "pulled to $LOCAL_DIR: $n verified dumps; newest $(basename "$newest") (${age_h}h)"
 }
 
