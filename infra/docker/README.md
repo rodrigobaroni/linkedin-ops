@@ -78,6 +78,22 @@ O override de dev sobrescreve `DATABASE_URL` (host `postgres`) e `S3_ENDPOINT` (
 
 `apps/*/Dockerfile` são multi-stage (`deps` → `build` → `prod-deps` → `runtime`, mais `dev` para hot
 reload), base `node:24.22.0-alpine`, pnpm na versão de `package.json#packageManager`, runtime não-root
-(`node`). Nesta fase api e worker são placeholders que encerram logo após iniciar; os health checks HTTP
-chegam com T-008 (api, `GET /health`) e T-006 (worker). Digests para as imagens oficiais restantes (
-`caddy`, `node`) e scan de imagem entram em T-062.
+(`node`). O stage `prod-deps` instala com `--ignore-scripts` (o `prepare` raiz, husky, não existe sem
+devDependencies) e em seguida roda `pnpm rebuild --pending -r --filter <app>...`, que executa só os build
+scripts permitidos em `onlyBuiltDependencies` (`pnpm-workspace.yaml`). A api expõe `GET /api/v1/health`
+por um listener placeholder (`apps/api/src/server.ts`) até T-008; o worker ainda é um placeholder que
+encerra logo após iniciar (health check chega com T-006).
+
+Condições registradas na revisão do PR #80 (Atlas 2), também anotadas em T-008 e T-006:
+
+- O runtime copia **apenas** `packages/contracts/dist` e o `dist` do app. Quando `api`/`worker` passarem
+  a depender de `@linkedin-ops/domain` (client Prisma gerado) e `@linkedin-ops/editorial-engine`, é
+  preciso acrescentar os `COPY --from=build` correspondentes ou migrar para
+  `pnpm deploy --prod --filter <app>`, que resolve o problema de forma geral.
+- O `rebuild --pending` com `argon2` e `@prisma/engines` em Alpine/musl ainda não foi exercitado no CI:
+  a primeira imagem que os incluir valida isso no `compose-smoke` (prebuild musl do argon2; o download
+  dos engines exige rede durante o build).
+
+O `compose-smoke` constrói as imagens de runtime a partir do arquivo base e as testa fora do Compose
+(web serve HTML, api responde o health JSON, worker sai com código 0), além da combinação de dev com
+Caddy.

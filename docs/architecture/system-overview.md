@@ -23,7 +23,7 @@ Identificadores, nomes de containers, filas e tabelas estão em inglês (regra d
 | **OpenAI Responses API**                           | Curadoria, geração e avaliação editorial, sempre com Structured Outputs.                                                                      | Externo confiável; saída é **dado**, validado por schema |
 | **Fontes de conteúdo** (RSS/Atom, URLs permitidas) | Matéria-prima da curadoria.                                                                                                                   | **Não confiável**: nunca instrução, sempre dado          |
 | **Telegram Bot API**                               | Notificação outbound (resumo da curadoria, pedido de revisão, publicado, falha). Não é fonte de verdade nem interface principal de aprovação. | Externo; webhook inbound opcional e verificado           |
-| **Armazenamento S3-compatible**                    | Mídia enviada ou renderizada localmente (cards de código).                                                                                    | Infra própria (RustFS em dev/CI / OCI Object Storage)   |
+| **Armazenamento S3-compatible**                    | Mídia enviada ou renderizada localmente (cards de código).                                                                                    | Infra própria (RustFS em dev/CI / OCI Object Storage)    |
 | **Oracle Cloud**                                   | Hospedagem (Docker Compose + Caddy).                                                                                                          | Infra própria                                            |
 
 ### 1.2 Diagrama de contexto

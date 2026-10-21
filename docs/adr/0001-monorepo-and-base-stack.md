@@ -1,6 +1,6 @@
 # ADR-0001: Monorepo and base stack
 
-- Status: accepted (stack and baseline structure, decided by Rodrigo in `docs/product/maestro-prompt.md` §3 and §6); structure amendment (`packages/domain`) **accepted** by Rodrigo on 2026-10-13
+- Status: accepted (stack and baseline structure, decided by Rodrigo in `docs/product/maestro-prompt.md` §3 and §6); structure amendment (`packages/domain`) **accepted** by Rodrigo on 2026-10-13; amended 2026-10-16 (dev/CI object store)
 - Date: 2026-10-13
 - Deciders: Rodrigo (product owner), Atlas (architect)
 
@@ -79,7 +79,7 @@ options are cross-app imports (`apps/worker` importing `apps/api`) or an interna
 
 ### Amendment (2026-10-16): dev/CI object store
 
-Amendment (2026-10-16): MinIO is no longer distributable (Docker Hub images removed, upstream repository
+MinIO is no longer distributable (Docker Hub images removed, upstream repository
 archived in 2026-04), so dev/CI/Testcontainers use RustFS (docker.io/rustfs/rustfs:1.0.1, Apache-2.0,
 pinned by tag and digest) as the S3-compatible store; production remains OCI Object Storage. Application
 code depends only on the standard S3 API (SigV4, path-style, presigned URLs) through S3_* variables;
