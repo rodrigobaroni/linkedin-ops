@@ -29,18 +29,23 @@ setup_key() {
   echo "public key $fpr installed on the VM; nightly backup at 03:40 (VM time). The private key stays on this Mac."
 }
 
-verify() { [ -s "$1.sha256" ] && [ "$(shasum -a 256 "$1" | awk '{print $1}')" = "$(awk '{print $1}' "$1.sha256")" ]; }
+verify() { [ -s "$1" ] && [ -s "$1.sha256" ] && [ "$(shasum -a 256 "$1" | awk '{print $1}')" = "$(awk '{print $1}' "$1.sha256")" ]; }
 
 pull() {
   mkdir -p "$LOCAL_DIR"; chmod 700 "$LOCAL_DIR"
   # Only complete pairs (dump + checksum) are listed; scp needs nothing beyond sshd on the VM (no rsync).
+  # Each pair lands in a temp dir, is verified there and only then moved into place (checksum first), so an
+  # interrupted or corrupted copy is never mistaken for a good one; an existing invalid pair is re-fetched.
+  tmp=$(mktemp -d "$LOCAL_DIR/.tmp.XXXXXX"); trap 'rm -rf "$tmp"' RETURN
   "${SSH[@]}" 'cd "$HOME/linkedin-ops/backups" && for f in linkedin-ops-*.dump.gpg; do [ -s "$f.sha256" ] && echo "$f"; done' |
     while read -r name; do
       [ -n "$name" ] || continue
-      if [ ! -s "$LOCAL_DIR/$name" ] || [ ! -s "$LOCAL_DIR/$name.sha256" ]; then
-        scp -q -i "$DEPLOY_SSH_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes \
-          "$DEPLOY_HOST:linkedin-ops/backups/$name" "$DEPLOY_HOST:linkedin-ops/backups/$name.sha256" "$LOCAL_DIR/"
-      fi
+      verify "$LOCAL_DIR/$name" 2>/dev/null && continue
+      scp -q -i "$DEPLOY_SSH_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes \
+        "$DEPLOY_HOST:linkedin-ops/backups/$name" "$DEPLOY_HOST:linkedin-ops/backups/$name.sha256" "$tmp/"
+      verify "$tmp/$name" || { echo "checksum failed after copy: $name" >&2; exit 1; }
+      mv -f "$tmp/$name.sha256" "$LOCAL_DIR/$name.sha256"
+      mv -f "$tmp/$name" "$LOCAL_DIR/$name"
     done
   n=0
   for f in "$LOCAL_DIR"/*.dump.gpg; do
