@@ -30,8 +30,13 @@ CMD ["node", "--version"]
 
 FROM base AS prod-deps
 COPY . .
+# `--prod` drops devDependencies, so the root `prepare` script (husky) would fail with "husky: not found":
+# install with `--ignore-scripts`, then `rebuild --pending` runs the dependency build scripts that
+# `onlyBuiltDependencies` (pnpm-workspace.yaml) allows, e.g. argon2 and @prisma/engines once T-005 lands.
+# Filtered, `rebuild` never re-runs the root project scripts; without an allowlist it is a no-op.
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
-    pnpm install --frozen-lockfile --prod --store-dir /pnpm/store --filter "@linkedin-ops/worker..."
+    pnpm install --frozen-lockfile --prod --ignore-scripts --store-dir /pnpm/store --filter "@linkedin-ops/worker..." \
+ && pnpm rebuild --pending -r --filter "@linkedin-ops/worker..."
 
 FROM ${NODE_IMAGE} AS runtime
 ENV NODE_ENV=production
