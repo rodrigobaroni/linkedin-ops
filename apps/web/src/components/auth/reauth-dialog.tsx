@@ -25,6 +25,8 @@ export type ReauthDialogProps = {
   onSubmit: (input: ReauthInput) => Promise<void>;
   /** `true` after a successful confirmation, `false` when the user cancels. */
   onSettled: (elevated: boolean) => void;
+  /** Control that started the 🔐 action; falls back to whatever had focus when the dialog opened. */
+  returnFocusTo?: HTMLElement | null;
 };
 
 /**
@@ -32,7 +34,12 @@ export type ReauthDialogProps = {
  * the `AuthProvider` opens it, wires the API call and announces the elevation deadline after success.
  * The password never leaves component state and is cleared whenever the dialog closes.
  */
-export function ReauthDialog({ open, onSubmit, onSettled }: ReauthDialogProps) {
+export function ReauthDialog({
+  open,
+  onSubmit,
+  onSettled,
+  returnFocusTo: trigger,
+}: ReauthDialogProps) {
   const copy = messages.auth.reauth;
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -45,10 +52,11 @@ export function ReauthDialog({ open, onSubmit, onSettled }: ReauthDialogProps) {
   const returnFocusTo = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
-    if (open && document.activeElement instanceof HTMLElement) {
-      returnFocusTo.current = document.activeElement;
-    }
-  }, [open]);
+    if (!open) return;
+    // The prop is gone by the time the dialog closes, so it is kept here while open.
+    const active = document.activeElement;
+    returnFocusTo.current = trigger ?? (active instanceof HTMLElement ? active : null);
+  }, [open, trigger]);
 
   /** Closes the dialog and forgets the password and any error. */
   function close(elevated: boolean) {
@@ -99,7 +107,7 @@ export function ReauthDialog({ open, onSubmit, onSettled }: ReauthDialogProps) {
           const target = returnFocusTo.current;
           if (target?.isConnected) {
             event.preventDefault();
-            target.focus();
+            focusWhenEnabled(target);
           }
           returnFocusTo.current = null;
         }}
@@ -176,4 +184,31 @@ function reauthErrorMessage(cause: unknown): string {
   if (isApiProblem(cause, "RATE_LIMITED")) return copy.rateLimited;
   if (isApiNetworkError(cause)) return messages.auth.login.networkError;
   return copy.invalid;
+}
+
+/** How long to wait for a disabled trigger to be re-enabled (its action finishing) before giving up. */
+const FOCUS_RESTORE_TIMEOUT_MS = 30_000;
+
+/**
+ * Focuses `target` now, or — when it is still disabled because its action is pending — as soon as it is
+ * re-enabled, unless the user has moved focus elsewhere in the meantime.
+ */
+function focusWhenEnabled(target: HTMLElement) {
+  if (!target.matches(":disabled")) {
+    target.focus();
+    return;
+  }
+  const observer = new MutationObserver(() => {
+    if (!target.isConnected) return stop();
+    if (target.matches(":disabled")) return;
+    stop();
+    const active = document.activeElement;
+    if (active === null || active === document.body) target.focus();
+  });
+  const timeout = setTimeout(stop, FOCUS_RESTORE_TIMEOUT_MS);
+  function stop() {
+    observer.disconnect();
+    clearTimeout(timeout);
+  }
+  observer.observe(target, { attributes: true, attributeFilter: ["disabled"] });
 }

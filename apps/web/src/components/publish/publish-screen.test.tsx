@@ -362,6 +362,29 @@ describe("PublishScreen", () => {
     expect(mockPublishingState().status).toBe("DISCONNECTED");
   });
 
+  it.each([
+    ["Escape", async (user: ReturnType<typeof userEvent.setup>) => user.keyboard("{Escape}")],
+    [
+      "Cancelar",
+      async (user: ReturnType<typeof userEvent.setup>) =>
+        user.click(screen.getByRole("button", { name: messages.auth.reauth.cancel })),
+    ],
+  ])(
+    "reauth cancelled with %s returns focus to the button that started it",
+    async (_how, cancel) => {
+      const { user } = await renderPublish({ elevated: false });
+      const disconnect = screen.getByRole("button", { name: copy.connection.disconnect });
+      await user.click(disconnect);
+      await screen.findByRole("dialog", { name: messages.auth.reauth.title });
+      await cancel(user);
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: copy.connection.disconnect })).toHaveFocus(),
+      );
+      expect(mockPublishingState().status).toBe("ACTIVE");
+    },
+  );
+
   it("shows the OAuth callback notice and removes the parameter from the URL", async () => {
     setSearch("linkedin=connected");
     await renderPublish();

@@ -96,6 +96,8 @@ export function AuthProvider({
 
   const [elevationRequest, setElevationRequest] = useState<{
     resolve: (elevated: boolean) => void;
+    /** Control that started the 🔐 action, captured before it re-renders disabled (Aurora item 23). */
+    returnFocusTo: HTMLElement | null;
   } | null>(null);
 
   const refresh = useCallback(async () => {
@@ -149,8 +151,11 @@ export function AuthProvider({
 
   const ensureElevated = useCallback(() => {
     if (isElevated(elevatedUntil)) return Promise.resolve(true);
+    // Called synchronously from the click handler, so the trigger still has focus here.
+    const active = document.activeElement;
+    const trigger = active instanceof HTMLElement && active !== document.body ? active : null;
     return new Promise<boolean>((resolve) => {
-      // Concurrent callers share the open dialog: chain their resolvers.
+      // Concurrent callers share the open dialog: chain their resolvers, keep the first trigger.
       setElevationRequest((current) =>
         current
           ? {
@@ -158,8 +163,9 @@ export function AuthProvider({
                 current.resolve(elevated);
                 resolve(elevated);
               },
+              returnFocusTo: current.returnFocusTo,
             }
-          : { resolve },
+          : { resolve, returnFocusTo: trigger },
       );
     });
   }, [elevatedUntil]);
@@ -211,6 +217,7 @@ export function AuthProvider({
       {children}
       <ReauthDialog
         open={elevationRequest !== null}
+        returnFocusTo={elevationRequest?.returnFocusTo ?? null}
         onSubmit={reauth}
         onSettled={settleElevation}
       />
