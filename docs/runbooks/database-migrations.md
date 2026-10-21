@@ -27,11 +27,12 @@ produção ela vem do secret manager/Docker secret, nunca de arquivo versionado.
 | `pnpm db:migrate:status`  | Lista migrations aplicadas/pendentes                                                     | Antes e depois de um deploy                 |
 | `pnpm db:migrate:dev`     | `prisma migrate dev`: cria/aplica migration a partir do diff do schema (precisa de banco) | Só desenvolvimento, com Docker local        |
 | `pnpm db:seed`            | Popula usuário fictício, 3 pilares e 2 fontes; roda quantas vezes quiser                 | Desenvolvimento e CI                        |
-| `pnpm db:reset`           | Derruba o schema, reaplica tudo e roda o seed. **Recusa `NODE_ENV=production`**          | Só desenvolvimento/teste                    |
+| `pnpm db:reset`           | Derruba o schema, reaplica tudo e roda o seed. Exige `NODE_ENV` ∈ {development, test} **e** `DB_RESET_CONFIRM=1` | Só desenvolvimento/teste                    |
 | `pnpm db:test`            | Testes de integração com Testcontainers (exige Docker)                                   | CI (`db-integration`); local se houver Docker |
 
 Variáveis do seed: `SEED_USER_EMAIL` (padrão `dev@example.com`) e `SEED_USER_PASSWORD` (padrão de
-desenvolvimento no próprio script; nunca é logada). Não há dado real no seed.
+desenvolvimento no próprio script; nunca é logada). Não há dado real no seed. `db:seed` e `db:reset` só
+rodam com `NODE_ENV` igual a `development` ou `test` (ausente = recusa; `packages/domain/src/env/guards.ts`).
 
 ## 3. Como criar uma migration sem banco local
 
@@ -54,8 +55,31 @@ em produção (crie outra); `migration_lock.toml` fica no Git.
 ## 4. Procedimento de deploy
 
 1. `pnpm db:migrate:status` no ambiente de destino.
-2. Backup lógico antes de qualquer DDL: `pg_dump -Fc "$DATABASE_URL" > backup-<data>.dump` (cifrado e
-   fora do host, conforme `data-and-lgpd.md` §8).
+2. Backup lógico **cifrado** antes de qualquer DDL (automação, agendamento e drills: T-055). Regras:
+   credencial nunca em argv nem em `DATABASE_URL` na linha de comando (aparece em `ps`/histórico); o
+   dump nunca toca o disco em claro.
+
+   ```bash
+   # credencial: ~/.pgpass (modo 0600) apontado por PGPASSFILE, ou variáveis PGHOST/PGPORT/PGUSER/PGDATABASE
+   export PGPASSFILE=/run/secrets/pgpass PGHOST=... PGPORT=5432 PGUSER=linkedin_ops_backup PGDATABASE=linkedin_ops
+   STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+   pg_dump -Fc --no-password | age -r "$BACKUP_AGE_RECIPIENT" > "backup-$STAMP.dump.age"   # ou gpg --encrypt -r <key>
+   sha256sum "backup-$STAMP.dump.age" | tee "backup-$STAMP.dump.age.sha256"
+   # enviar os dois arquivos ao storage privado (bucket dedicado, sem listagem, SSE); registrar o sha256 no log de operação
+   ```
+
+   Antes de qualquer DDL destrutivo, **verifique o restore** num banco descartável:
+
+   ```bash
+   sha256sum -c "backup-$STAMP.dump.age.sha256"
+   createdb linkedin_ops_restore_check
+   age -d -i "$BACKUP_AGE_IDENTITY" "backup-$STAMP.dump.age" | pg_restore --no-owner --no-password -d linkedin_ops_restore_check
+   psql -d linkedin_ops_restore_check -c "SELECT count(*) FROM _prisma_migrations"   # + consultas da §7
+   dropdb linkedin_ops_restore_check
+   ```
+
+   A role de backup é somente leitura (ADR-0004 §9); a chave de cifra do backup fica fora do host do
+   banco (`data-and-lgpd.md` §8).
 3. Pare o worker (jobs do pg-boss não podem rodar durante DDL que toque tabelas que eles escrevem).
 4. `pnpm db:migrate`. O Prisma registra cada migration em `_prisma_migrations`.
 5. Suba api e worker; confira `/ready` e `pnpm db:migrate:status` (nenhuma pendente).
@@ -71,8 +95,10 @@ destrói dados criados pelas tabelas removidas: só execute com backup verificad
    (usa `DATABASE_URL` da `prisma.config.ts`).
 4. Marque a migration como revertida: `pnpm --filter @linkedin-ops/domain exec prisma migrate resolve --rolled-back <timestamp>_<nome>`.
 5. Faça o deploy da versão anterior da aplicação (o Prisma Client gerado deve corresponder ao schema).
-6. Se o `down.sql` falhar no meio: restaure o backup (`pg_restore -c -d "$DATABASE_URL" backup.dump`) em
-   rede isolada, reaplique tombstones de exclusão/revogação antes de liberar workers (`data-and-lgpd.md` §8).
+6. Se o `down.sql` falhar no meio: restaure o backup verificado da etapa 2 em rede isolada
+   (`age -d -i <identity> backup-<stamp>.dump.age | pg_restore -c --no-owner --no-password -d <db>`, credencial
+   via `PGPASSFILE`), reaplique tombstones de exclusão/revogação antes de liberar workers
+   (`data-and-lgpd.md` §8).
 
 Alternativa preferida quando a migration já está em produção há tempo: **migration corretiva para a
 frente** (nova migration que desfaz o necessário), em vez de `down.sql`.
@@ -81,7 +107,7 @@ frente** (nova migration que desfaz o necessário), em vez de `down.sql`.
 
 | Migration              | O que cria                                                                                                                                                                      | Rollback                                                                                                             | Riscos                                                                                                         |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `20261016120000_init`  | Extensão `citext`; todos os enums e tabelas do data-model (users … idempotency_keys); índices parciais I7/I8 e voice profile ativo; `CHECK`s I5; triggers append-only (I3, I11) | `down.sql`: remove triggers/função, depois todas as tabelas, enums e a extensão. **Apaga todos os dados.**           | Baseline: rollback equivale a banco vazio. Só faz sentido antes de haver dados reais.                          |
+| `20261016120000_init`  | Extensão `citext`; todos os enums e tabelas do data-model (users … idempotency_keys); índices parciais I7/I8 (incl. `AMBIGUOUS`) e voice profile ativo; `CHECK`s I5 e envelopes all-or-none (TOTP, code_verifier); triggers append-only (I3, I11) | `down.sql`: remove triggers/função, depois todas as tabelas, enums e a extensão. **Apaga todos os dados.**           | Baseline: rollback equivale a banco vazio. Só faz sentido antes de haver dados reais.                          |
 
 ## 6. Append-only e privilégios
 
