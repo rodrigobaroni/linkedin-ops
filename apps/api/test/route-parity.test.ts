@@ -10,6 +10,8 @@ import {
   type RouteKey,
 } from "../src/common/contract-route.decorator.js";
 import { HealthController } from "../src/health/health.controller.js";
+import { LinkedInController } from "../src/linkedin/linkedin.controller.js";
+import { PublicationsController } from "../src/linkedin/publications.controller.js";
 
 /** Routes T-008 implements; later tasks append here as they land their controllers. */
 const IMPLEMENTED: readonly RouteKey[] = [
@@ -18,9 +20,17 @@ const IMPLEMENTED: readonly RouteKey[] = [
   "auth.login",
   "auth.reauth",
   "auth.me",
+  // T-061/T-038/T-039 núcleo (MVP-0)
+  "integrations.linkedin.get",
+  "integrations.linkedin.connect",
+  "integrations.linkedin.callback",
+  "integrations.linkedin.disconnect",
+  "publications.publishNow",
+  "publications.list",
+  "publications.get",
 ];
 
-const CONTROLLERS = [HealthController, AuthController];
+const CONTROLLERS = [HealthController, AuthController, LinkedInController, PublicationsController];
 
 function handlersOf(controller: new (...args: never[]) => object) {
   const prototype = controller.prototype as Record<string, unknown>;
