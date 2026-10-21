@@ -169,7 +169,8 @@ jobs:
   # via curl, sha256 compared -> authenticated HEAD; unsigned and wrong-method requests must be rejected)
   # catches S3-implementation divergences (Atlas condition); the production images (runtime stage) must
   # build and serve; Caddy must terminate TLS for web and api on one host with the security headers and
-  # its access log must not retain OAuth query parameters (code, state).
+  # its access log must not retain OAuth query parameters (code, state). The daily pnpm scripts
+  # (dev:infra, dev:infra:down) are executed literally so they cannot drift from the Compose files.
   compose-smoke:
     name: Compose smoke
     runs-on: ubuntu-latest
@@ -243,11 +244,15 @@ jobs:
           fi
           echo "base file refused to render without .env: $(printf '%s\n' "$output" | grep -i -m1 'required variable')"
 
-      - name: Start postgres and s3, wait for health checks
-        run: docker compose up -d --wait postgres s3
+      - name: Setup pnpm (the package.json Compose scripts are part of what this job proves)
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          run_install: false
 
-      - name: Create the private bucket (s3-init)
-        run: docker compose run --rm s3-init
+      - name: pnpm dev:infra starts postgres and s3, waits for health checks and creates the bucket
+        # Literally the daily command (PR #80 review, Atlas round 2): `pnpm run compose` must carry both
+        # Compose files, otherwise `s3`/`s3-init` are unknown services.
+        run: pnpm dev:infra
 
       - name: Show services
         run: docker compose ps
@@ -385,6 +390,14 @@ jobs:
             exit 1
           fi
           echo "Caddy access log OK: code/state removed from request>uri, other parameters kept"
+
+      - name: pnpm dev:infra:down stops the stack (volumes kept, as documented)
+        run: |
+          set -euo pipefail
+          pnpm dev:infra:down
+          remaining="$(docker compose ps -aq | wc -l | tr -d ' ')"
+          if [ "$remaining" != 0 ]; then echo "::error::$remaining container(s) still present after pnpm dev:infra:down"; docker compose ps -a; exit 1; fi
+          docker volume ls -q --filter label=com.docker.compose.project=linkedin-ops | grep -q . || { echo "::error::named volumes were removed by dev:infra:down; they must survive"; exit 1; }
 
       - name: Diagnostics on failure (services, exit codes, health, logs)
         if: failure()

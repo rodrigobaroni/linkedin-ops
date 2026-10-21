@@ -42,7 +42,8 @@ pnpm dev:infra                  # sobe postgres + s3 (+ bucket) e espera os heal
 pnpm dev:infra:logs             # logs de postgres e s3
 pnpm dev:infra:down             # para e mantém os volumes (use `-v` manualmente para apagar dados)
 pnpm dev:stack                  # stack completa com hot reload (api, worker, web, caddy)
-pnpm compose ps                 # qualquer subcomando do Compose com os arquivos certos
+pnpm compose ps                 # qualquer subcomando do Compose com base + override de dev
+pnpm compose:base build         # só o arquivo base (imagens de runtime; é o que a produção/T-056 usa)
 ```
 
 Os scripts de `package.json` passam `--env-file .env` e os dois arquivos Compose; sem `.env` o Compose
