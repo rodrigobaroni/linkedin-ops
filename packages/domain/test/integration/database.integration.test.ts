@@ -6,11 +6,17 @@
  * - draft_versions, approvals and audit_events are append-only (UPDATE/DELETE/TRUNCATE rejected);
  * - schedules.scheduled_at + timezone are mandatory;
  * - partial unique indexes I7/I8, CHECK I5;
- * - every enum type migrated into PostgreSQL (pg_type/pg_enum) matches the contracts/schema matrix.
+ * - every enum type migrated into PostgreSQL (pg_type/pg_enum) matches the contracts/schema matrix;
+ * - T-039 manual publications: exactly one origin (draft version or body) and a fail-closed rollback.
+ *
+ * Without Docker, point `INTEGRATION_DATABASE_URL` at an EMPTY database the user may create databases on
+ * (e.g. a throwaway local cluster); the container is then skipped.
  */
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
+import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { seed } from "../../prisma/seed.js";
 import { createPrismaClient, type PrismaClient } from "../../src/client.js";
@@ -47,7 +53,8 @@ const NOT_NULL = /23502|null value|not-null/i;
 const CHECK = /23514|check constraint/i;
 const APPEND_ONLY = /append-only/;
 
-let container: StartedPostgreSqlContainer;
+let container: StartedPostgreSqlContainer | undefined;
+let databaseUrl: string;
 let prisma: PrismaClient;
 /** Seeded user (dev@example.com); shared read-only by the seed tests. */
 let seededUserId: string;
@@ -118,11 +125,13 @@ async function createDraftWithVersion() {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer(POSTGRES_IMAGE).start();
-  const url = container.getConnectionUri();
-  const output = migrateDeploy(url);
+  const external = process.env.INTEGRATION_DATABASE_URL;
+  if (!external) container = await new PostgreSqlContainer(POSTGRES_IMAGE).start();
+  databaseUrl = external ?? container!.getConnectionUri();
+  const output = migrateDeploy(databaseUrl);
   expect(output).toMatch(/20261016120000_init/);
-  prisma = createPrismaClient({ connectionString: url, maxConnections: 4 });
+  expect(output).toMatch(/20261021210000_manual_publications/);
+  prisma = createPrismaClient({ connectionString: databaseUrl, maxConnections: 4 });
   seededUserId = (await seed(prisma)).userId;
 });
 
@@ -132,10 +141,14 @@ afterAll(async () => {
 });
 
 describe("migration baseline", () => {
-  it("applies the initial migration from scratch and enables citext", async () => {
+  it("applies every migration from scratch, in order, and enables citext", async () => {
     const migrations = await prisma.$queryRaw<{ name: string; finished: boolean }[]>`
-      SELECT migration_name AS name, finished_at IS NOT NULL AS finished FROM _prisma_migrations`;
-    expect(migrations).toEqual([{ name: "20261016120000_init", finished: true }]);
+      SELECT migration_name AS name, finished_at IS NOT NULL AS finished FROM _prisma_migrations
+      ORDER BY migration_name`;
+    expect(migrations).toEqual([
+      { name: "20261016120000_init", finished: true },
+      { name: "20261021210000_manual_publications", finished: true },
+    ]);
     const extensions = await prisma.$queryRaw<{ extname: string }[]>`
       SELECT extname FROM pg_extension WHERE extname = 'citext'`;
     expect(extensions).toHaveLength(1);
@@ -454,6 +467,82 @@ describe("publications (I8) and approvals (I5)", () => {
           'c', repeat('a', 64), false)`,
       CHECK,
     );
+  });
+});
+
+describe("manual publications (T-039, migration 20261021210000)", () => {
+  const manual = (userId: string, data: Record<string, unknown> = {}) =>
+    prisma.publication.create({
+      data: {
+        id: newId(),
+        userId,
+        idempotencyKey: `pub:manual:${userId}:${newId()}`,
+        body: "Texto escrito pelo Rodrigo",
+        ...data,
+      },
+    });
+
+  it("accept free text without a draft and require exactly one origin", async () => {
+    const { userId, draft, version } = await createDraftWithVersion();
+    await expect(manual(userId)).resolves.toMatchObject({ draftId: null, draftVersionId: null });
+    await expectRejects(manual(userId, { body: null }), CHECK);
+    await expectRejects(manual(userId, { draftId: draft.id, draftVersionId: version.id }), CHECK);
+    await expectRejects(manual(userId, { body: null, draftId: draft.id }), CHECK);
+  });
+
+  it("bound the text to 1..3000 characters", async () => {
+    const { userId } = await createDraftWithVersion();
+    await expectRejects(manual(userId, { body: "" }), CHECK);
+    await expectRejects(manual(userId, { body: "a".repeat(3001) }), CHECK);
+    await expect(manual(userId, { body: "a".repeat(3000) })).resolves.toBeTruthy();
+  });
+
+  it("rollback refuses to run while manual publications exist, then restores NOT NULL", async () => {
+    // Own database: the rollback must not disturb the shared one.
+    const name = `rollback_${newId().replaceAll("-", "")}`;
+    await prisma.$executeRawUnsafe(`CREATE DATABASE "${name}"`);
+    const url = new URL(databaseUrl);
+    url.pathname = `/${name}`;
+    migrateDeploy(url.toString());
+    const client = new pg.Client({ connectionString: url.toString() });
+    await client.connect();
+    try {
+      const downSql = readFileSync(
+        fileURLToPath(
+          new URL(
+            "../../prisma/migrations/20261021210000_manual_publications/down.sql",
+            import.meta.url,
+          ),
+        ),
+        "utf8",
+      );
+      const userId = newId();
+      await client.query(
+        `INSERT INTO "users" ("id", "email", "password_hash", "name", "updated_at")
+         VALUES ($1, $2, 'x', 'R', now())`,
+        [userId, `rollback-${userId}@example.com`],
+      );
+      await client.query(
+        `INSERT INTO "publications" ("id", "user_id", "idempotency_key", "body", "updated_at")
+         VALUES ($1, $2, $3, 'texto', now())`,
+        [newId(), userId, `pub:manual:${userId}:${newId()}`],
+      );
+      await expect(client.query(downSql)).rejects.toThrow(/manual publications exist/);
+      await client.query(`DELETE FROM "publications"`);
+      await client.query(downSql);
+      const columns = await client.query<{ column_name: string; is_nullable: string }>(
+        `SELECT column_name, is_nullable FROM information_schema.columns
+         WHERE table_name = 'publications' AND column_name IN ('body', 'draft_id', 'draft_version_id')
+         ORDER BY column_name`,
+      );
+      expect(columns.rows).toEqual([
+        { column_name: "draft_id", is_nullable: "NO" },
+        { column_name: "draft_version_id", is_nullable: "NO" },
+      ]);
+    } finally {
+      await client.end();
+      await prisma.$executeRawUnsafe(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
+    }
   });
 });
 

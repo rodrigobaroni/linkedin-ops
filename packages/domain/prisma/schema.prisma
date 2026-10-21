@@ -899,11 +899,16 @@ model Schedule {
 model Publication {
   id                 String            @id @db.Uuid
   userId             String            @map("user_id") @db.Uuid
-  draftId            String            @map("draft_id") @db.Uuid
-  draftVersionId     String            @map("draft_version_id") @db.Uuid
+  /// Null only for a manual "publish now" of free text (MVP-0, T-039): then `body` holds the text.
+  draftId            String?           @map("draft_id") @db.Uuid
+  /// Set together with `draft_id` (`CHECK` in migration 20261021210000_manual_publications).
+  draftVersionId     String?           @map("draft_version_id") @db.Uuid
+  /// Exact text of a manual publication (1..3000 chars); null when it comes from a draft version.
+  body               String?
   /// Null = "publish now".
   scheduleId         String?           @map("schedule_id") @db.Uuid
-  /// `pub:<draftId>:<draftVersionId>:<scheduleId | manual:<Idempotency-Key>>[:retry:<n>]`.
+  /// `pub:<draftId>:<draftVersionId>:<scheduleId | manual:<Idempotency-Key>>[:retry:<n>]`; manual text
+  /// (no draft): `pub:manual:<userId>:<Idempotency-Key>`.
   idempotencyKey     String            @unique @map("idempotency_key")
   status             PublicationStatus @default(PENDING)
   attempt            Int               @default(0)
@@ -920,10 +925,10 @@ model Publication {
   createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt          DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  user         User         @relation(fields: [userId], references: [id], onDelete: Restrict)
-  draft        Draft        @relation(fields: [draftId], references: [id], onDelete: Restrict)
-  draftVersion DraftVersion @relation(fields: [draftVersionId], references: [id], onDelete: Restrict)
-  schedule     Schedule?    @relation(fields: [scheduleId], references: [id], onDelete: Restrict)
+  user         User          @relation(fields: [userId], references: [id], onDelete: Restrict)
+  draft        Draft?        @relation(fields: [draftId], references: [id], onDelete: Restrict)
+  draftVersion DraftVersion? @relation(fields: [draftVersionId], references: [id], onDelete: Restrict)
+  schedule     Schedule?     @relation(fields: [scheduleId], references: [id], onDelete: Restrict)
 
   @@index([draftId, createdAt])
   @@index([status, startedAt])
