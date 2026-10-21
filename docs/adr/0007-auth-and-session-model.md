@@ -3,10 +3,10 @@
 - Status: **accepted** (2026-10-16). Security sign-off with conditions by Sentinela on 2026-10-13
   (`docs/security/oauth-and-tokens.md` §2, §5, §6, §8; `docs/security/threat-model.md` TM-02, TM-06, TM-14,
   TM-22, G-03); the conditions are the normative invariants N1–N4 below. The login model (local credentials,
-  question Q2) remains **open, recommended**: this ADR is accepted on that recommendation and is superseded if
-  Rodrigo chooses a different login model.
+  question Q2) was **decided by Rodrigo on 2026-10-21: local login** (e-mail + Argon2id password, server-side
+  session, optional TOTP); "Sign in with LinkedIn" is not used to authenticate. Q2 is closed.
 - Date: 2026-10-13 (accepted 2026-10-16)
-- Deciders: Atlas (architect); review Sentinela (security); implementation Alicerce (backend), Vitral (web); final say on login model: Rodrigo (Q2 open, local login recommended)
+- Deciders: Atlas (architect); review Sentinela (security); implementation Alicerce (backend), Vitral (web); login model decided by Rodrigo on 2026-10-21 (Q2 closed: local login)
 
 ## Context
 
@@ -123,8 +123,9 @@ AND expires_at > now() AND session_id = $2 RETURNING ...`; zero rows → the cal
 
 - **"Sign in with LinkedIn" (OIDC) as the only login.** Rejected (and Sentinela recommends against):
   couples dashboard access to LinkedIn availability, scope approval and token expiry; a revoked token
-  would lock Rodrigo out of his own tool. Q2 stays **open, recommended**: this ADR is accepted on local
-  login; if Rodrigo picks OIDC login instead, a superseding ADR is required.
+  would lock Rodrigo out of his own tool. Q2 **closed on 2026-10-21**: Rodrigo chose local login. An optional
+  "Entrar com LinkedIn" shortcut may be added later on top of the T-038 OAuth connection, never as the only
+  login; that would be a separate, small ADR amendment.
 - **Stateless JWT sessions.** Rejected: no server-side revocation, larger cookie, more ways to misuse;
   no scale need.
 - **Auth.js / NextAuth in `web`.** Rejected: it would move authentication (and secrets) into the

@@ -22,7 +22,11 @@ reconciliation for the ambiguous window.**
    `idempotency_key = pub:<draftId>:<draftVersionId>:<scheduleId | manual:<Idempotency-Key header>>`
    (unique). Creating it and enqueuing `publication.publish{publicationId}` happen in one transaction.
 2. **Database guards** (see `data-model.md` I8/I9):
-   - partial unique index: one `Publication` per `draft_id` with `status IN ('IN_PROGRESS','SUCCEEDED')`;
+   - partial unique index: one `Publication` per `draft_id` with
+     `status IN ('IN_PROGRESS','SUCCEEDED','AMBIGUOUS')` — `AMBIGUOUS` added on 2026-10-16 (T-005 review):
+     an ambiguous attempt may have produced a post, so the database itself must refuse a new claim until
+     reconciliation resolves the row; `Draft.needs_reconciliation` is the application-level guard, not the
+     only one;
    - the worker **claims** the record with `UPDATE publications SET status='IN_PROGRESS', attempt=attempt+1,
 started_at=now() WHERE id=$1 AND status='PENDING'`; if `rowCount = 0` the handler exits (already
      claimed, succeeded or cancelled). Only after a successful claim is any LinkedIn call made.
@@ -45,8 +49,8 @@ started_at=now() WHERE id=$1 AND status='PENDING'`; if `rowCount = 0` the handle
 6. **Reconciliation** (`publication.reconcile`, triggered by the user or by the alert): query the
    LinkedIn API for the author's recent posts, match by `request_fingerprint` (commentary hash) and
    time window; if found → `SUCCEEDED` (store URN); if not found after a conservative window →
-   `FAILED` and the user may retry. Stale `IN_PROGRESS` records (> 10 min) are treated as ambiguous by
-   `schedule.reconcile`.
+   `FAILED`, which also frees the partial unique index so the user may retry. Stale `IN_PROGRESS`
+   records (> 10 min) are treated as ambiguous by `schedule.reconcile`.
 7. **Media** is uploaded to LinkedIn (`media.upload-linkedin`) _before_ the publish job, storing
    `linkedin_asset_urn` on the `MediaAsset`; the publish payload references URNs only, so a media retry
    never creates a post.

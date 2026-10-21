@@ -22,6 +22,22 @@ Módulo `SecretsVault` (AES-256-GCM com chave derivada de `ENCRYPTION_KEY`, vers
 - [ ] Procedimento de rotação documentado e testado em ambiente de teste (re-cifra com nova versão).
 - [ ] **Gate G-02 (threat-model §8):** teste integrado prova cifra AEAD (AES-256-GCM com AAD = id do registro), rotação de `key_version` e ausência de tokens em banco (texto claro), logs e traces OTel; evidência anexada ao PR.
 
+## Condições herdadas de T-005 (schema base, PR #76)
+
+O schema já nasce com as colunas do envelope (ADR-0004 §1) e com `CHECK`s all-or-none; T-052 implementa a
+cifra e deve cobrir **todos** os envelopes, não só `oauth_tokens`:
+
+- `oauth_tokens`: `access_token_ciphertext`, `refresh_token_ciphertext`, `wrapped_dek`, `key_version`.
+- `users`: `totp_secret_ciphertext`, `totp_wrapped_dek`, `totp_key_version` (mesmo envelope; `CHECK` todos nulos ou todos preenchidos).
+- `oauth_states`: `code_verifier_ciphertext` + `code_verifier_key_version` (`CHECK` all-or-none); TTL de 10 min via `expires_at` (indexado) — o job de purge de `oauth_states` expirados/usados (≤ 24 h, `data-and-lgpd.md` §4) é entregue aqui ou em T-038, nunca deixado para depois.
+- AAD canônica `"<schemaVersion>|<provider>|<userId>|<credentialId>|<tokenType>"` com `tokenType` ∈ `access | refresh | dek | totp | code_verifier`: um ciphertext nunca pode ser movido entre linhas, colunas ou usuários.
+- Rotação de KEK (`keys:rotate`) re-envelopa as DEKs de `oauth_tokens` e `users` (TOTP); `oauth_states` não tem DEK
+  (AEAD direta com `key_version`), então a KEK anterior permanece disponível até o purge ou a re-cifra dos
+  `code_verifier` ainda válidos; verificação de 100% das linhas com decrypt autenticado.
+- Testes de adulteração (tag, AAD, chave errada, frame truncado) para cada envelope; nenhum caminho devolve plaintext em falha.
+- Roles de banco (ADR-0004 §9, com Estaleiro): role de runtime sem `UPDATE`/`DELETE` em `draft_versions`, `approvals`, `audit_events` (hoje só o trigger protege) e sem acesso ao material de chave.
+- Nomenclatura: o módulo descrito como `SecretsVault` aqui é o `TokenVault` do ADR-0004; adotar um nome só.
+
 ## Fora de escopo
 
 KMS externo (Fase 2 se necessário).

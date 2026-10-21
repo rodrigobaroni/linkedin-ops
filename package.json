@@ -18,6 +18,13 @@
     "check": "turbo run lint typecheck test build",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "db:generate": "pnpm --filter @linkedin-ops/domain db:generate",
+    "db:migrate": "pnpm --filter @linkedin-ops/domain db:migrate",
+    "db:migrate:dev": "pnpm --filter @linkedin-ops/domain db:migrate:dev",
+    "db:migrate:status": "pnpm --filter @linkedin-ops/domain db:migrate:status",
+    "db:seed": "pnpm --filter @linkedin-ops/domain db:seed",
+    "db:reset": "pnpm --filter @linkedin-ops/domain db:reset",
+    "db:test": "pnpm --filter @linkedin-ops/domain test:integration",
     "clean": "turbo run clean && rm -rf node_modules/.cache .turbo",
     "compose": "docker compose --env-file .env -f infra/docker/docker-compose.yml",
     "compose:dev": "docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml",
@@ -34,7 +41,7 @@
     "@linkedin-ops/config": "workspace:*",
     "husky": "^9.1.7",
     "prettier": "catalog:",
-    "turbo": "^2.11.7",
+    "turbo": "^2.11.8",
     "typescript": "catalog:"
   },
   "prettier": "@linkedin-ops/config/prettier"
