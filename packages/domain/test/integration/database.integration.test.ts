@@ -17,7 +17,10 @@ import { newId } from "../../src/ids.js";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const PRISMA_BIN = fileURLToPath(new URL("../../node_modules/.bin/prisma", import.meta.url));
-const POSTGRES_IMAGE = "postgres:17-alpine";
+// Pinned by tag + digest (Sentinela, TM-21); the same reference is used by ci.yml and by the Compose
+// file (T-003). Dependabot (ecosystem `docker`, enabled in T-003) proposes digest updates.
+const POSTGRES_IMAGE =
+  "postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24";
 
 function migrateDeploy(databaseUrl: string): string {
   return execFileSync(PRISMA_BIN, ["migrate", "deploy"], {
@@ -44,16 +47,32 @@ const APPEND_ONLY = /append-only/;
 
 let container: StartedPostgreSqlContainer;
 let prisma: PrismaClient;
-let userId: string;
+/** Seeded user (dev@example.com); shared read-only by the seed tests. */
+let seededUserId: string;
 
-/** Fixture: voice profile → curation run → opportunity → draft → version 1 (owned by the seeded user). */
+/**
+ * Fixture: its own user → pillar → voice profile → curation run (PARTIAL: one opportunity, I1) →
+ * opportunity → draft → version 1. A fresh user per call keeps every per-user unique index
+ * (voice version, pillar slug, run instant) isolated, so tests run in any order and never share state.
+ */
 async function createDraftWithVersion() {
-  const pillar = await prisma.contentPillar.findFirstOrThrow({ where: { userId } });
+  const user = await prisma.user.create({
+    data: {
+      id: newId(),
+      email: `fixture-${newId()}@example.com`,
+      passwordHash: "not-a-login",
+      name: "F",
+    },
+  });
+  const userId = user.id;
+  const pillar = await prisma.contentPillar.create({
+    data: { id: newId(), userId, slug: "fixture", name: "Fixture" },
+  });
   const voice = await prisma.voiceProfile.create({
-    data: { id: newId(), userId, version: 1, isActive: false, tone: "fixture" },
+    data: { id: newId(), userId, version: 1, tone: "fixture" },
   });
   const run = await prisma.curationRun.create({
-    data: { id: newId(), userId, scheduledFor: new Date(), trigger: "MANUAL", status: "SUCCEEDED" },
+    data: { id: newId(), userId, scheduledFor: new Date(), trigger: "MANUAL", status: "PARTIAL" },
   });
   const opportunity = await prisma.opportunity.create({
     data: {
@@ -93,7 +112,7 @@ async function createDraftWithVersion() {
     },
   });
   await prisma.draft.update({ where: { id: draft.id }, data: { currentVersionId: version.id } });
-  return { draft, version, opportunity, run };
+  return { userId, draft, version, opportunity, run, voice };
 }
 
 beforeAll(async () => {
@@ -102,7 +121,7 @@ beforeAll(async () => {
   const output = migrateDeploy(url);
   expect(output).toMatch(/20261016120000_init/);
   prisma = createPrismaClient({ connectionString: url, maxConnections: 4 });
-  userId = (await seed(prisma)).userId;
+  seededUserId = (await seed(prisma)).userId;
 });
 
 afterAll(async () => {
@@ -140,7 +159,7 @@ describe("seed", () => {
     ]);
     expect(before).toEqual([1, 3, 2, 1]);
     const again = await seed(prisma);
-    expect(again.userId).toBe(userId);
+    expect(again.userId).toBe(seededUserId);
     const after = await Promise.all([
       prisma.user.count(),
       prisma.contentPillar.count(),
@@ -152,14 +171,14 @@ describe("seed", () => {
 
   it("logs in case-insensitively (citext e-mail) and never stores a plaintext password", async () => {
     const user = await prisma.user.findUnique({ where: { email: "DEV@EXAMPLE.COM" } });
-    expect(user?.id).toBe(userId);
+    expect(user?.id).toBe(seededUserId);
     expect(user?.passwordHash).toMatch(/^\$argon2id\$/);
   });
 });
 
 describe("unique indexes (acceptance criteria)", () => {
   it("publications.idempotency_key is unique", async () => {
-    const { draft, version } = await createDraftWithVersion();
+    const { userId, draft, version } = await createDraftWithVersion();
     const base = {
       userId,
       draftId: draft.id,
@@ -172,6 +191,7 @@ describe("unique indexes (acceptance criteria)", () => {
   });
 
   it("(curation_runs.user_id, scheduled_for, trigger) is unique; another trigger is allowed", async () => {
+    const { userId } = await createDraftWithVersion();
     const scheduledFor = new Date("2026-10-19T12:00:00Z");
     await prisma.curationRun.create({
       data: { id: newId(), userId, scheduledFor, trigger: "CRON" },
@@ -186,6 +206,7 @@ describe("unique indexes (acceptance criteria)", () => {
   });
 
   it("sources.canonical_url is unique per user", async () => {
+    const userId = seededUserId;
     const existing = await prisma.source.findFirstOrThrow({ where: { userId } });
     await expectRejects(
       prisma.source.create({
@@ -203,7 +224,7 @@ describe("unique indexes (acceptance criteria)", () => {
     const otherUser = await prisma.user.create({
       data: {
         id: newId(),
-        email: "second@example.com",
+        email: `second-${newId()}@example.com`,
         passwordHash: "not-a-login",
         name: "Second",
       },
@@ -236,8 +257,8 @@ describe("append-only tables (I3, I11)", () => {
     expect(intact?.body).toBe("Fixture body");
   });
 
-  it("approvals rejects UPDATE and DELETE", async () => {
-    const { draft, version } = await createDraftWithVersion();
+  it("approvals rejects UPDATE, DELETE and TRUNCATE", async () => {
+    const { userId, draft, version } = await createDraftWithVersion();
     const approval = await prisma.approval.create({
       data: {
         id: newId(),
@@ -255,9 +276,17 @@ describe("append-only tables (I3, I11)", () => {
       APPEND_ONLY,
     );
     await expectRejects(prisma.approval.delete({ where: { id: approval.id } }), APPEND_ONLY);
+    await expectRejects(prisma.$executeRawUnsafe(`TRUNCATE "approvals" CASCADE`), APPEND_ONLY);
+    await expectRejects(
+      prisma.$executeRawUnsafe(`UPDATE "approvals" SET "reason" = 'x'`),
+      APPEND_ONLY,
+    );
+    const intact = await prisma.approval.findUnique({ where: { id: approval.id } });
+    expect(intact?.decision).toBe("APPROVED");
   });
 
-  it("audit_events rejects UPDATE and DELETE", async () => {
+  it("audit_events rejects UPDATE, DELETE and TRUNCATE", async () => {
+    const userId = seededUserId;
     const event = await prisma.auditEvent.create({
       data: {
         id: newId(),
@@ -275,12 +304,15 @@ describe("append-only tables (I3, I11)", () => {
     );
     await expectRejects(prisma.auditEvent.delete({ where: { id: event.id } }), APPEND_ONLY);
     await expectRejects(prisma.$executeRawUnsafe(`DELETE FROM "audit_events"`), APPEND_ONLY);
+    await expectRejects(prisma.$executeRawUnsafe(`TRUNCATE "audit_events"`), APPEND_ONLY);
+    const intact = await prisma.auditEvent.findUnique({ where: { id: event.id } });
+    expect(intact?.action).toBe("draft.approve");
   });
 });
 
 describe("schedules (I6, I7)", () => {
   it("scheduled_at and timezone are mandatory", async () => {
-    const { draft, version } = await createDraftWithVersion();
+    const { userId, draft, version } = await createDraftWithVersion();
     await expectRejects(
       prisma.$executeRaw`
         INSERT INTO "schedules" ("id", "user_id", "draft_id", "draft_version_id", "scheduled_at", "timezone",
@@ -315,7 +347,7 @@ describe("schedules (I6, I7)", () => {
   });
 
   it("allows at most one PENDING schedule per draft", async () => {
-    const { draft, version } = await createDraftWithVersion();
+    const { userId, draft, version } = await createDraftWithVersion();
     const data = {
       userId,
       draftId: draft.id,
@@ -335,25 +367,28 @@ describe("schedules (I6, I7)", () => {
 });
 
 describe("publications (I8) and approvals (I5)", () => {
-  it("never two active publications of the same draft", async () => {
-    const { draft, version } = await createDraftWithVersion();
+  it("never two active publications of the same draft (IN_PROGRESS, SUCCEEDED, AMBIGUOUS)", async () => {
+    const { userId, draft, version } = await createDraftWithVersion();
     const data = { userId, draftId: draft.id, draftVersionId: version.id };
-    await prisma.publication.create({
-      data: { id: newId(), ...data, idempotencyKey: `k:${newId()}`, status: "FAILED" },
-    });
-    await prisma.publication.create({
-      data: { id: newId(), ...data, idempotencyKey: `k:${newId()}`, status: "SUCCEEDED" },
-    });
-    await expectRejects(
+    const create = (status: "PENDING" | "IN_PROGRESS" | "SUCCEEDED" | "FAILED" | "AMBIGUOUS") =>
       prisma.publication.create({
-        data: { id: newId(), ...data, idempotencyKey: `k:${newId()}`, status: "IN_PROGRESS" },
-      }),
-      UNIQUE,
-    );
+        data: { id: newId(), ...data, idempotencyKey: `k:${newId()}`, status },
+      });
+    await create("FAILED");
+    await create("PENDING");
+    const succeeded = await create("SUCCEEDED");
+    await expectRejects(create("IN_PROGRESS"), UNIQUE);
+    await expectRejects(create("AMBIGUOUS"), UNIQUE);
+    // An AMBIGUOUS outcome blocks a new attempt exactly like a success does (ADR-0003 §5).
+    await prisma.publication.update({ where: { id: succeeded.id }, data: { status: "AMBIGUOUS" } });
+    await expectRejects(create("IN_PROGRESS"), UNIQUE);
+    await expectRejects(create("SUCCEEDED"), UNIQUE);
+    await prisma.publication.update({ where: { id: succeeded.id }, data: { status: "FAILED" } });
+    await expect(create("IN_PROGRESS")).resolves.toBeTruthy();
   });
 
   it("SYSTEM approvals require reason and policy snapshot; USER approvals require the user", async () => {
-    const { draft, version } = await createDraftWithVersion();
+    const { userId, draft, version } = await createDraftWithVersion();
     const base = {
       userId,
       draftId: draft.id,
@@ -387,6 +422,7 @@ describe("publications (I8) and approvals (I5)", () => {
   });
 
   it("source_items are always untrusted (CHECK)", async () => {
+    const userId = seededUserId;
     const source = await prisma.source.findFirstOrThrow({ where: { userId } });
     await expectRejects(
       prisma.$executeRaw`
@@ -396,5 +432,80 @@ describe("publications (I8) and approvals (I5)", () => {
           'c', repeat('a', 64), false)`,
       CHECK,
     );
+  });
+});
+
+describe("encrypted-at-rest envelopes (ADR-0004 framing, cipher in T-052)", () => {
+  it("users TOTP envelope is all-or-none", async () => {
+    const { userId } = await createDraftWithVersion();
+    await expectRejects(
+      prisma.user.update({
+        where: { id: userId },
+        data: { totpSecretCiphertext: Buffer.from([1]) },
+      }),
+      CHECK,
+    );
+    await expect(
+      prisma.user.update({
+        where: { id: userId },
+        data: {
+          totpSecretCiphertext: Buffer.from([1]),
+          totpWrappedDek: Buffer.from([2]),
+          totpKeyVersion: "1",
+        },
+      }),
+    ).resolves.toBeTruthy();
+  });
+
+  it("oauth_states code_verifier ciphertext requires its key version", async () => {
+    const { userId } = await createDraftWithVersion();
+    const session = await prisma.session.create({
+      data: {
+        id: newId(),
+        userId,
+        secretHash: `h:${newId()}`,
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+    const base = {
+      userId,
+      sessionId: session.id,
+      stateHash: `s:${newId()}`,
+      expiresAt: new Date(Date.now() + 600_000),
+    };
+    await expectRejects(
+      prisma.oAuthState.create({
+        data: { id: newId(), ...base, codeVerifierCiphertext: Buffer.from([1]) },
+      }),
+      CHECK,
+    );
+    await expect(
+      prisma.oAuthState.create({
+        data: {
+          id: newId(),
+          ...base,
+          stateHash: `s:${newId()}`,
+          codeVerifierCiphertext: Buffer.from([1]),
+          codeVerifierKeyVersion: "1",
+        },
+      }),
+    ).resolves.toBeTruthy();
+  });
+});
+
+describe("voice profiles", () => {
+  it("default to inactive and allow one active version per user", async () => {
+    const { userId, voice } = await createDraftWithVersion();
+    expect(voice.isActive).toBe(false);
+    await prisma.voiceProfile.update({ where: { id: voice.id }, data: { isActive: true } });
+    await expectRejects(
+      prisma.voiceProfile.create({
+        data: { id: newId(), userId, version: 2, tone: "v2", isActive: true },
+      }),
+      UNIQUE,
+    );
+    await expect(
+      prisma.voiceProfile.create({ data: { id: newId(), userId, version: 2, tone: "v2" } }),
+    ).resolves.toBeTruthy();
   });
 });
