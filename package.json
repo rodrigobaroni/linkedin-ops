@@ -18,6 +18,13 @@
     "check": "turbo run lint typecheck test build",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "db:generate": "pnpm --filter @linkedin-ops/domain db:generate",
+    "db:migrate": "pnpm --filter @linkedin-ops/domain db:migrate",
+    "db:migrate:dev": "pnpm --filter @linkedin-ops/domain db:migrate:dev",
+    "db:migrate:status": "pnpm --filter @linkedin-ops/domain db:migrate:status",
+    "db:seed": "pnpm --filter @linkedin-ops/domain db:seed",
+    "db:reset": "pnpm --filter @linkedin-ops/domain db:reset",
+    "db:test": "pnpm --filter @linkedin-ops/domain test:integration",
     "clean": "turbo run clean && rm -rf node_modules/.cache .turbo",
     "prepare": "husky"
   },

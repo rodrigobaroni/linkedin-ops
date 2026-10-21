@@ -93,6 +93,74 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: pnpm exec commitlint --from "$BASE_SHA" --to "$HEAD_SHA" --verbose
 
+  # --- db-integration (T-005) ------------------------------------------------------------------
+  # Docker is not available on the local machine (decision 2026-10-13), so the database baseline is
+  # proven here: `pnpm db:migrate` from an empty PostgreSQL 17 service, `pnpm db:seed` twice (idempotent),
+  # then the Testcontainers suite of packages/domain (append-only triggers, unique/partial indexes,
+  # mandatory timezone). Credentials below are throwaway values for the ephemeral CI service only.
+  db-integration:
+    name: Database (migrate, seed, Testcontainers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        # Tag + digest (TM-21); same reference in the Testcontainers suite and in the Compose file
+        # (T-003). Dependabot `docker` ecosystem (enabled by T-003) proposes digest updates.
+        image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: linkedin_ops_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d linkedin_ops_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/linkedin_ops_ci
+      # db:seed / db:reset refuse any NODE_ENV outside {development, test} (packages/domain/src/env/guards.ts).
+      NODE_ENV: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm (version from package.json#packageManager)
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          run_install: false
+
+      - name: Setup Node (version from .nvmrc) and pnpm store cache
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate Prisma schema and build the domain package (generates the client)
+        run: |
+          pnpm --filter @linkedin-ops/domain db:validate
+          pnpm turbo build --filter=@linkedin-ops/domain
+
+      - name: Migrate from scratch (acceptance criterion `pnpm db:migrate`)
+        run: pnpm db:migrate
+
+      - name: Seed twice (acceptance criterion `pnpm db:seed`, idempotent)
+        run: |
+          pnpm db:seed
+          pnpm db:seed
+
+      - name: No pending migrations
+        run: pnpm db:migrate:status
+
+      - name: Integration tests (Testcontainers, postgres:17-alpine)
+        run: pnpm db:test
+
   # --- compose-smoke (ativado em T-003) -------------------------------------------------------
   # Decision by Rodrigo (2026-10-13): Docker is not available on the local machine, so T-003
   # (Docker Compose dev environment) is validated here in CI instead. T-003 uncomments and

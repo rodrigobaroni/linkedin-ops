@@ -10,3 +10,24 @@ catalog:
   prettier: ^3.9.10
   typescript: ~5.9.3
   vitest: ^5.0.5
+  zod: ^4.6.7
+  # Database (T-005, ADR-0001): Prisma 7 (`prisma-client` generator + pg driver adapter), pinned together.
+  prisma: 7.10.1
+  "@prisma/client": 7.10.1
+  "@prisma/adapter-pg": 7.10.1
+  pg: ^8.23.1
+  "@types/pg": ^8.23.1
+  # Argon2id password hashing (ADR-0007); uuid v7 ids generated in the application (data-model.md).
+  argon2: ^0.45.1
+  uuid: ^14.0.3
+  # Integration tests against a real PostgreSQL (Testcontainers); TS runner for seed scripts.
+  "@testcontainers/postgresql": ^12.2.1
+  tsx: ^4.21.0
+
+# pnpm 10 blocks install scripts by default. Only these packages may run them (T-005): the Prisma CLI and
+# its schema engine download, argon2's native binding, and esbuild (used by tsx and Vitest).
+onlyBuiltDependencies:
+  - "@prisma/engines"
+  - argon2
+  - esbuild
+  - prisma

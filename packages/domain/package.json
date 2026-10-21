@@ -2,7 +2,7 @@
   "name": "@linkedin-ops/domain",
   "version": "0.0.0",
   "private": true,
-  "description": "Domain layer: entities, content state machine, autonomy policy, application services, Prisma repositories",
+  "description": "Domain layer: entities, content state machine, autonomy policy, application services, Prisma schema, migrations and repositories",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -13,20 +13,42 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "prisma"
   ],
   "scripts": {
+    "generate": "prisma generate",
     "build": "tsc -p tsconfig.build.json",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "clean": "rm -rf dist .turbo coverage *.tsbuildinfo"
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "db:validate": "prisma validate",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate deploy",
+    "db:migrate:dev": "prisma migrate dev",
+    "db:migrate:status": "prisma migrate status",
+    "db:seed": "tsx prisma/seed.ts",
+    "db:reset": "tsx prisma/reset.ts",
+    "clean": "rm -rf dist .turbo coverage *.tsbuildinfo src/generated"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@linkedin-ops/contracts": "workspace:*",
+    "@prisma/adapter-pg": "catalog:",
+    "@prisma/client": "catalog:",
+    "argon2": "catalog:",
+    "pg": "catalog:",
+    "uuid": "catalog:",
+    "zod": "catalog:"
+  },
   "devDependencies": {
     "@linkedin-ops/config": "workspace:*",
+    "@testcontainers/postgresql": "catalog:",
     "@types/node": "catalog:",
+    "@types/pg": "catalog:",
     "eslint": "catalog:",
+    "prisma": "catalog:",
+    "tsx": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }
