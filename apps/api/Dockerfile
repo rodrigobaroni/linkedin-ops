@@ -46,5 +46,6 @@ COPY --from=build --chown=node:node /app/packages/contracts/dist /app/packages/c
 COPY --from=build --chown=node:node /app/apps/api/dist /app/apps/api/dist
 EXPOSE 3001
 USER node
-# TODO(T-008): HEALTHCHECK on GET /health once the NestJS app exists (placeholder exits immediately).
+# GET /api/v1/health: HealthStatus contract, served by the placeholder listener until T-008 (NestJS).
+HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=6 CMD wget -q --spider http://127.0.0.1:3001/api/v1/health || exit 1
 CMD ["node", "apps/api/dist/index.js"]
