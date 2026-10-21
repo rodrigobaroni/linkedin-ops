@@ -1,0 +1,163 @@
+# LinkedIn Ops — base Compose stack (T-003). Shared by development and production (T-056).
+#
+# Usage (from the repository root; `.env` is required: `cp .env.example .env`):
+#   docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml up
+#   `pnpm dev:infra` / `pnpm dev:stack` wrap these commands (see infra/docker/README.md).
+#
+# Rules (threat model TM-18, TM-21; task T-003; PR #80 review):
+# - Images pinned by tag and digest; Dependabot (docker ecosystem) proposes digest updates.
+# - Fail closed: credentials, database and object-store settings have no interpolation defaults (they
+#   use the `:?` form), so the stack refuses to render without a complete .env. Dev defaults live only
+#   in .env.example and the CI job proves that this file alone does not start with them.
+# - NODE_ENV is the process mode, never read from .env: `production` here, `development` in
+#   docker-compose.dev.yml (which also holds the dev/CI object store and the in-network overrides).
+#   Production points DATABASE_URL and S3_ENDPOINT at the managed services through .env (T-056).
+# - Only Caddy publishes ports here (bound to CADDY_BIND_ADDRESS, 127.0.0.1 by default).
+# - `apps/web` never receives secrets (no env_file). Only api/worker read the root .env.
+
+name: linkedin-ops
+
+x-node-app: &node-app
+  restart: unless-stopped
+  init: true
+  security_opt:
+    - no-new-privileges:true
+  networks:
+    - internal
+
+x-app-env: &app-env
+  NODE_ENV: production
+  APP_TIMEZONE: ${APP_TIMEZONE:-America/Sao_Paulo}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+  S3_ENDPOINT: ${S3_ENDPOINT:?set S3_ENDPOINT in .env}
+  S3_REGION: ${S3_REGION:?set S3_REGION in .env}
+  S3_BUCKET: ${S3_BUCKET:?set S3_BUCKET in .env}
+  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID in .env}
+  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in .env}
+  S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+
+services:
+  postgres:
+    image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+      # pg-boss lives in its own schema of this same database (ADR-0002); no extra database needed.
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -h 127.0.0.1']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - internal
+
+  api:
+    <<: *node-app
+    build:
+      context: ../..
+      dockerfile: apps/api/Dockerfile
+    image: linkedin-ops/api:${IMAGE_TAG:-dev}
+    env_file:
+      - path: ../../.env
+        required: true
+    environment:
+      <<: *app-env
+      # validateRuntimeEnv (T-008): the api listens on API_HOST:API_PORT. 0.0.0.0 is required inside the
+      # container (Caddy reaches api:3001); outside production the default would be 127.0.0.1.
+      API_PORT: "3001"
+      API_HOST: "0.0.0.0"
+    healthcheck:
+      # GET /api/v1/health answers the HealthStatus contract (packages/contracts resources/health.ts),
+      # served by the NestJS app (T-008) without touching the database.
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3001/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    <<: *node-app
+    build:
+      context: ../..
+      dockerfile: apps/worker/Dockerfile
+    image: linkedin-ops/worker:${IMAGE_TAG:-dev}
+    env_file:
+      - path: ../../.env
+        required: true
+    environment:
+      <<: *app-env
+    # TODO(T-006): liveness check for the pg-boss worker (no HTTP; e.g. heartbeat file or pg-boss
+    # `getQueueSize`) once the worker runtime exists.
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    <<: *node-app
+    build:
+      context: ../..
+      dockerfile: apps/web/Dockerfile
+    image: linkedin-ops/web:${IMAGE_TAG:-dev}
+    # Presentation only: no env_file, no secrets (ADR-0001).
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  caddy:
+    image: caddy:2.11.7-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "${CADDY_BIND_ADDRESS:-127.0.0.1}:80:80"
+      - "${CADDY_BIND_ADDRESS:-127.0.0.1}:443:443"
+      - "${CADDY_BIND_ADDRESS:-127.0.0.1}:443:443/udp"
+    environment:
+      CADDY_SITE_ADDRESS: ${CADDY_SITE_ADDRESS:-localhost}
+      CADDY_TLS: ${CADDY_TLS:-internal}
+      CADDY_HSTS_MAX_AGE: ${CADDY_HSTS_MAX_AGE:-0}
+    volumes:
+      - ../caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    healthcheck:
+      # Admin API listens on localhost:2019 inside the container only (never published).
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:2019/config/"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    depends_on:
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    networks:
+      - internal
+
+volumes:
+  pg-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  internal:
+    driver: bridge

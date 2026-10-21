@@ -79,6 +79,12 @@ describe("S-2 · audit snapshots reject credential-like keys at any depth (I10, 
     "api key": { config: { apiKey: "x" } },
     authorization: { headers: { Authorization: "Bearer x" } },
     cookie: { headers: { cookie: "x" } },
+    // T-008 canary (Sentinela, PR #68): the anti-CSRF token never reaches a snapshot, at any depth.
+    "csrfToken at the top level": { csrfToken: "x" },
+    "csrfToken nested in a response copy": {
+      response: { body: { csrfToken: "x", elevatedUntil: null } },
+    },
+    "csrfToken inside an array": { sessions: [{ id: "s", csrfToken: "x" }] },
   };
   for (const [label, snapshot] of Object.entries(canaries)) {
     it(`rejects ${label}`, () => {

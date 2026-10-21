@@ -11,7 +11,8 @@ Fase de descoberta e fundação. Veja `docs/backlog/README.md` para o backlog e 
 ## Como rodar (desenvolvimento)
 
 Pré-requisitos: Node.js 24 LTS (`.nvmrc`) e pnpm 10 (`packageManager` em `package.json`; `corepack enable`
-ou `npm i -g pnpm`). Docker chega com T-003.
+ou `npm i -g pnpm`). Para a infraestrutura local, Docker Engine com Compose v2 (detalhes em
+`infra/docker/README.md`).
 
 ```bash
 pnpm install                     # instala o workspace e ativa os hooks do husky
@@ -19,6 +20,15 @@ pnpm check                       # lint + typecheck + test + build em todos os w
 pnpm lint | pnpm typecheck | pnpm test | pnpm build
 pnpm format                      # Prettier (config compartilhada em packages/config)
 pnpm --filter @linkedin-ops/api <script>   # rodar um script em um workspace específico
+```
+
+Infraestrutura local (Docker Compose, T-003):
+
+```bash
+cp .env.example .env             # placeholders e defaults de dev; nunca commitar o .env
+pnpm dev:infra                   # postgres 17 + object storage S3-compatible (bucket criado) com health checks
+pnpm dev:stack                   # stack completa: api, worker, web e Caddy em https://localhost (TLS interno)
+pnpm dev:infra:down              # para a infra (volumes preservados)
 ```
 
 ## Estrutura (baseline, mudanças exigem ADR)

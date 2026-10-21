@@ -103,8 +103,10 @@ export const CSRF_TOKEN_HEADER = "X-CSRF-Token";
 export const IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
 export const SESSION_COOKIE_NAME = "__Host-session";
 
-export const IdParamsSchema = z.strictObject({ id: UuidSchema });
-export const DraftVersionParamsSchema = z.strictObject({ id: UuidSchema, versionId: UuidSchema });
+export const IdParamsSchema = z.strictObject({ id: UuidSchema }).meta({ id: "IdParams" });
+export const DraftVersionParamsSchema = z
+  .strictObject({ id: UuidSchema, versionId: UuidSchema })
+  .meta({ id: "DraftVersionParams" });
 
 /** ADR-0007 §11: LinkedIn connect, publication:create and settings:autonomy require OWNER. */
 export const OWNER_ONLY = [UserRole.OWNER] as const;
