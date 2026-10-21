@@ -82,11 +82,12 @@ export function DialogHeader({ className, ...props }: ComponentProps<"div">) {
   );
 }
 
+/** Visual order always follows DOM (focus) order: put actions in the order they should be read. */
 export function DialogFooter({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       data-slot="dialog-footer"
-      className={cn("flex flex-col-reverse gap-2 sm:flex-row sm:justify-end", className)}
+      className={cn("flex flex-col gap-2 sm:flex-row sm:justify-end", className)}
       {...props}
     />
   );
