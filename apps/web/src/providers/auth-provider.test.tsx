@@ -92,6 +92,30 @@ describe("AuthProvider", () => {
     await waitFor(() => expect(result.current.auth.status).toBe("anonymous"));
   });
 
+  it.each([
+    ["a Problem with another 401 code", () => problemResponse("AUTH_REAUTH_REQUIRED")],
+    [
+      "a 401 without a Problem body (proxy page)",
+      () =>
+        new HttpResponse("<html>401</html>", {
+          status: 401,
+          headers: { "Content-Type": "text/html" },
+        }),
+    ],
+  ])("treats any 401 from GET /auth/me as anonymous: %s", async (_label, respond) => {
+    server.use(http.get("/api/v1/auth/me", respond));
+    const { result } = renderAuth(true);
+    await settled(result);
+    expect(result.current.auth.status).toBe("anonymous");
+  });
+
+  it("is unavailable on a 5xx from GET /auth/me", async () => {
+    server.use(http.get("/api/v1/auth/me", () => problemResponse("INTERNAL")));
+    const { result } = renderAuth(true);
+    await settled(result);
+    expect(result.current.auth.status).toBe("unavailable");
+  });
+
   it("is unavailable (not anonymous) when the API is down, and recovers on refresh", async () => {
     server.use(http.get("/api/v1/auth/me", () => HttpResponse.error()));
     const { result } = renderAuth(true);

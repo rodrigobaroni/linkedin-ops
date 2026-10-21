@@ -50,8 +50,8 @@ function isElevated(elevatedUntil: string | null, now = Date.now()): boolean {
 /**
  * Session state for the whole app. The CSRF token lives in a `CsrfTokenStore` held here (memory only,
  * ADR-0007 N2) and is never part of React state or the query cache: `authApi` strips it before
- * returning. `GET /auth/me` decides between authenticated / anonymous (`401 AUTH_REQUIRED`) /
- * unavailable (anything else, e.g. the API is down).
+ * returning. `GET /auth/me` decides between authenticated / anonymous (any `401`) / unavailable
+ * (network error, 5xx or another unexpected answer, e.g. the API is down).
  */
 export function AuthProvider({
   children,
@@ -81,7 +81,9 @@ export function AuthProvider({
       try {
         return await authApi.me(signal);
       } catch (error) {
-        if (isApiProblem(error, "AUTH_REQUIRED")) return null;
+        // Any 401 means "no valid session" → anonymous + /login. Only network errors and 5xx (and other
+        // unexpected answers) make the check "unavailable".
+        if (isApiProblem(error) && error.status === 401) return null;
         throw error;
       }
     },
