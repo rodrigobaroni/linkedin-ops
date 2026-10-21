@@ -5,6 +5,7 @@ import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { messages } from "@/i18n/pt-br";
 import { LINKEDIN_POST_MAX_LENGTH } from "@/lib/api";
+import { formatClock } from "@/lib/format-duration";
 import { MOCK_CREDENTIALS, problemResponse } from "@/mocks/auth-handlers";
 import { server } from "@/mocks/node";
 import {
@@ -45,6 +46,15 @@ async function renderPublish(
   });
   await screen.findByText(copy.connection.connectedAs(MOCK_MEMBER_NAME));
   return { user, ...view };
+}
+
+/**
+ * axe over the whole document, so portalled dialogs are included. `region` is off only because the screen is
+ * rendered here without the app shell, whose `<main>` holds it in the real page.
+ */
+async function expectAccessible(node: Element = document.body) {
+  const results = await runAxe(node, { rules: { region: { enabled: false } } });
+  expect(results.violations, formatViolations(results)).toEqual([]);
 }
 
 async function writeAndConfirm(user: ReturnType<typeof userEvent.setup>, text: string) {
@@ -107,13 +117,16 @@ describe("PublishScreen", () => {
     expect(within(dialog).getByTestId("confirm-text")).toHaveTextContent(
       "Meu primeiro post pelo LinkedIn Ops.",
     );
+    await expectAccessible();
     await user.click(within(dialog).getByRole("button", { name: copy.confirm.confirm }));
 
     const reauth = await screen.findByRole("dialog", { name: messages.auth.reauth.title });
+    await expectAccessible();
     await user.type(within(reauth).getByLabelText(/^Senha/), MOCK_CREDENTIALS.password);
     await user.click(within(reauth).getByRole("button", { name: messages.auth.reauth.confirm }));
 
     expect(await screen.findByText(copy.result.published)).toBeInTheDocument();
+    await expectAccessible();
     const link = screen.getByRole("link", { name: new RegExp(copy.result.viewPost) });
     expect(link).toHaveAttribute(
       "href",
@@ -177,6 +190,7 @@ describe("PublishScreen", () => {
     expect(alert).not.toHaveTextContent(/nada foi publicado/i);
     expect(screen.getByLabelText(copy.composer.label)).toHaveValue("Post com rede instável");
     expect(mockPublishingState().linkedinCalls).toBe(1);
+    await expectAccessible();
 
     await user.click(screen.getByRole("button", { name: copy.result.resendSame }));
     expect(await screen.findByText(copy.result.published)).toBeInTheDocument();
@@ -220,7 +234,66 @@ describe("PublishScreen", () => {
     const dialog = await writeAndConfirm(user, "Post incerto");
     await user.click(within(dialog).getByRole("button", { name: copy.confirm.confirm }));
     expect(await screen.findByText(copy.result.ambiguousTitle)).toBeInTheDocument();
+    await expectAccessible();
     expect(screen.queryByRole("button", { name: copy.result.resendSame })).not.toBeInTheDocument();
+  });
+
+  it("FAILED: explains, keeps the text, moves focus to the result and offers no re-send", async () => {
+    resetMockPublishing({ nextOutcome: "FAILED" });
+    const keys = recordPublishKeys();
+    const { user } = await renderPublish();
+    const dialog = await writeAndConfirm(user, "Post recusado");
+    await user.click(within(dialog).getByRole("button", { name: copy.confirm.confirm }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(copy.result.failedTitle);
+    expect(alert).toHaveTextContent(copy.errors.linkedinRejected);
+    await waitFor(() => expect(alert.parentElement).toHaveFocus());
+    expect(screen.getByLabelText(copy.composer.label)).toHaveValue("Post recusado");
+    expect(screen.queryByRole("button", { name: copy.result.resendSame })).not.toBeInTheDocument();
+    await expectAccessible();
+
+    // A definitive answer drops the key: publishing again is a new attempt.
+    await user.click(screen.getByRole("button", { name: copy.action.publishNow }));
+    const again = await screen.findByRole("dialog", { name: copy.confirm.title });
+    await user.click(within(again).getByRole("button", { name: copy.confirm.confirm }));
+    await waitFor(() => expect(keys).toHaveLength(2));
+    expect(keys[1]).not.toBe(keys[0]);
+  });
+
+  it("409 IDEMPOTENCY_KEY_CONFLICT: explains and offers no re-send", async () => {
+    server.use(
+      http.post(PUBLISH_URL, () => problemResponse("IDEMPOTENCY_KEY_CONFLICT"), { once: true }),
+    );
+    const { user } = await renderPublish();
+    const dialog = await writeAndConfirm(user, "Post em conflito");
+    await user.click(within(dialog).getByRole("button", { name: copy.confirm.confirm }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(copy.errors.IDEMPOTENCY_KEY_CONFLICT);
+    await waitFor(() => expect(alert.parentElement).toHaveFocus());
+    expect(screen.queryByRole("button", { name: copy.result.resendSame })).not.toBeInTheDocument();
+    expect(mockPublishingState().linkedinCalls).toBe(0);
+  });
+
+  it("429 RATE_LIMITED with Retry-After: says when to try again, nothing published, no re-send", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-21T22:00:00Z"));
+    server.use(
+      http.post(
+        PUBLISH_URL,
+        () => problemResponse("RATE_LIMITED", { headers: { "Retry-After": "600" } }),
+        { once: true },
+      ),
+    );
+    const { user } = await renderPublish();
+    const dialog = await writeAndConfirm(user, "Post demais");
+    await user.click(within(dialog).getByRole("button", { name: copy.confirm.confirm }));
+    const until = Date.parse("2026-10-21T22:10:00Z");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(copy.errors.rateLimitedUntil(formatClock(until), 10));
+    await waitFor(() => expect(alert.parentElement).toHaveFocus());
+    expect(screen.queryByRole("button", { name: copy.result.resendSame })).not.toBeInTheDocument();
+    expect(mockPublishingState().linkedinCalls).toBe(0);
+    await expectAccessible();
+    vi.restoreAllMocks();
   });
 
   it("LinkedIn 401 on publish: explains and points to reconnection", async () => {

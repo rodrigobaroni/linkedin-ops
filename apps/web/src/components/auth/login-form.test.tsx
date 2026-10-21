@@ -128,7 +128,7 @@ describe("LoginForm", () => {
   it("locks the form on 429 with HH:mm + countdown from Retry-After and releases it at zero", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    const { email, password, submit } = setup(
+    const { container, email, password, submit } = setup(
       vi.fn(() => Promise.reject(problem("RATE_LIMITED", 150))),
     );
     await fill(user, email, password);
@@ -142,6 +142,8 @@ describe("LoginForm", () => {
     expect(screen.getByTestId("login-lock-announcement")).toBeEmptyDOMElement();
     expect(screen.getByRole("button", { name: copy.submit })).toBeDisabled();
     expect(email).toBeDisabled();
+    const results = await runAxe(container);
+    expect(results.violations, formatViolations(results)).toEqual([]);
 
     await act(async () => {
       vi.advanceTimersByTime(20_000);

@@ -36,6 +36,7 @@ import {
   isApiProblem,
   publicationUrl,
 } from "@/lib/api";
+import { formatClock, minutesUntil } from "@/lib/format-duration";
 import { useLinkedInConnection, usePublishingApi } from "./use-publishing";
 
 const copy = messages.publish;
@@ -390,6 +391,14 @@ function failureFromError(
   attempt.current = null;
   if (isApiProblem(cause, "LINKEDIN_REAUTH_REQUIRED")) {
     return { kind: "failed", message: errors.LINKEDIN_REAUTH_REQUIRED, reconnect: true };
+  }
+  if (isApiProblem(cause, "RATE_LIMITED") && cause.retryAfterSeconds !== undefined) {
+    const until = Date.now() + cause.retryAfterSeconds * 1000;
+    return {
+      kind: "failed",
+      message: errors.rateLimitedUntil(formatClock(until), minutesUntil(until)),
+      reconnect: false,
+    };
   }
   if (isApiProblem(cause)) {
     const known = (errors as Record<string, string>)[cause.code];

@@ -219,6 +219,9 @@ export const messages = {
       LINKEDIN_REAUTH_REQUIRED:
         "O LinkedIn recusou o acesso atual. Reconecte a conta e tente publicar de novo.",
       RATE_LIMITED: "Muitas publicações em pouco tempo. Aguarde alguns minutos e tente novamente.",
+      /** `Retry-After` from the API, shown as an absolute time plus minutes left. */
+      rateLimitedUntil: (clock: string, minutes: number) =>
+        `Muitas publicações em pouco tempo. Nada foi publicado; tente novamente às ${clock} (${minutes <= 1 ? "em menos de 1 minuto" : `em ${minutes} minutos`}).`,
       VALIDATION_FAILED:
         "O texto não foi aceito. Confira o tamanho e o conteúdo e tente novamente.",
       PUBLICATION_ALREADY_EXISTS: "Este post já foi publicado. Confira as publicações recentes.",
