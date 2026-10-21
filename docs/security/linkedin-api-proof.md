@@ -1,8 +1,9 @@
 # Prova real da API do LinkedIn (T-061 / gate G-01)
 
-> Status: **PARCIAL**. OAuth, escopos, `userinfo` e `LinkedIn-Version` foram provados com o app real em
-> 2026-10-21. Faltam duas coisas: a publicação de teste (`POST /rest/posts`) e o diagnóstico do `nonce`
-> no `id_token`, que está aberto e bloqueia o connect. O G-01 continua **aberto**.
+> Status: **PARCIAL**. OAuth, escopos, `userinfo`, `id_token` (assinatura, `iss`, `aud`, `exp`/`iat`, `sub`)
+> e `LinkedIn-Version` foram provados com o app real em 2026-10-21 (duas execuções). A ausência de `nonce`
+> foi provada e tratada como exceção aprovada pela Sentinela. Falta a publicação de teste
+> (`POST /rest/posts`), com texto aprovado pelo Rodrigo, depois do deploy. O G-01 continua **aberto** até lá.
 
 ## Contexto
 
@@ -52,6 +53,23 @@ nunca valores. O `sub` do membro não entra neste documento.
 | Formação do author URN (`urn:li:person:<sub>`) | pendente: só se confirma com o 201 do `POST /rest/posts` (N3). O discovery declara `subject_types_supported: pairwise` |
 | Headers de limite observados | nenhum `x-ratelimit*`/`retry-after` nas respostas de `userinfo` e `/rest/posts`; só `x-restli-gateway-error: true` no 403 |
 
+## Resultados — execução 2 (2026-10-21, Rodrigo, probe `07be5b1`, sem publicar)
+
+Diagnóstico do `id_token` sem nenhum valor de claim exibido:
+
+| Item | Resultado |
+| --- | --- |
+| Escopos, `expires_in`, refresh, campos do `userinfo` | iguais aos da execução 1 |
+| Header | `alg=RS256`, `kid` presente |
+| Claims do payload (nomes) | `aud, exp, family_name, given_name, iat, iss, locale, name, picture, sub` |
+| `nonce` | **ausente**: não veio vazio nem divergente; o claim não existe no payload |
+| `iss = https://www.linkedin.com/oauth` | sim |
+| `aud` contém o `client_id` | sim (string) |
+| `exp − agora` / `iat − agora` | 3599 s / −1 s (token de 1 h, recém-emitido) |
+| `sub = userinfo.sub` | sim |
+| Assinatura RS256 pela JWKS do LinkedIn | válida |
+| `GET /rest/posts/urn:li:share:0` | `403 ACCESS_DENIED` (igual à execução 1; versão `202608` aceita) |
+
 ### Discovery OIDC público do LinkedIn (consultado em 2026-10-21, sem credenciais)
 
 `https://www.linkedin.com/oauth/.well-known/openid-configuration`:
@@ -67,18 +85,38 @@ o teste unitário `works with LinkedIn's real JWKS shape` cobre o caso.
 
 ## Pendências para fechar o G-01
 
-1. **Nonce (bloqueia o connect).** A validação atual do `id_token` (Sentinela A-2) exige `nonce` presente
-   e igual ao enviado. Com o resultado da execução 1, o connect falharia sempre com `reason=exchange_failed`.
-   O probe agora informa os nomes dos claims e se o `nonce` está ausente, vazio, diferente (incluindo se
-   voltou como SHA-256) ou igual. Também informa `iss`/`aud` como booleanos, `alg`/`kid` do header, a
-   assinatura RS256 pela JWKS e se o `sub` é igual ao do `userinfo`. **Ação:** o Rodrigo roda de novo
-   `pnpm --filter @linkedin-ops/api linkedin:probe` (sem publicar) e a Sentinela decide pela evidência.
-   A validação não muda antes disso.
-2. **Publicação de teste.** O Rodrigo aprova um texto e roda o probe com `--publish-file`. Registrar aqui
+1. ~~Nonce~~: **resolvido** (execução 2 + exceção aprovada; ver "Não conformidade do LinkedIn" abaixo).
+2. **Publicação de teste (depois do deploy).** O Rodrigo aprova um texto e roda o probe com `--publish-file`. Registrar aqui
    o HTTP 201, o formato do `x-restli-id` (`urn:li:share:` ou `urn:li:ugcPost:`), os headers de limite e
    a confirmação de que `urn:li:person:<sub>` foi aceito como `author`.
 3. **PKCE (opcional para o MVP-0).** Rodar com `--pkce`. Se o fluxo for aceito, propor
    `LINKEDIN_PKCE=required` em outra tarefa (hoje o boot recusa `required`).
+
+## Não conformidade do LinkedIn: `nonce` omitido no `id_token`
+
+O OIDC Core 1.0 deixa o `nonce` **opcional só na requisição** (§3.1.2.1). Uma vez enviado, o Authorization
+Server **MUST** incluí-lo no `id_token` com o mesmo valor (§2), e o cliente **MUST** conferi-lo
+(§3.1.3.7, item 11). O LinkedIn recebe o `nonce` no authorize, mas **não o devolve**: a execução 2 provou
+que o claim está ausente, e o discovery não lista `nonce` em `claims_supported`. Isto é uma **não
+conformidade/limitação de interoperabilidade do LinkedIn**, não o comportamento normal do OIDC.
+
+Exceção aprovada pela Sentinela (2026-10-21, PR #84), implementada em
+`apps/api/src/linkedin/id-token.verifier.ts`:
+
+- a exceção é a constante `LINKEDIN_OMITS_ID_TOKEN_NONCE = true`, única e no código, nunca em env ou
+  configuração; mudar exige nova execução do probe e o aval da Sentinela;
+- o `nonce` continua sendo gerado (CSPRNG, só o SHA-256 é persistido com o state) e enviado no authorize;
+- `nonce` **presente e igual** → aceito; **presente** vazio, não-string ou divergente → **rejeitado**;
+- `nonce` **ausente** → aceito só sob a constante, e todas as demais checagens continuam obrigatórias:
+  assinatura RS256 por chave da JWKS do LinkedIn, `iss` exato, `aud = client_id`, `exp`/`iat` (tolerância de
+  60 s, idade máxima de 10 min) e `sub = userinfo.sub`. Em volta delas também continuam obrigatórios: o
+  `state` de uso único, de 10 min, ligado a sessão + usuário e consumido atomicamente antes de qualquer
+  chamada (N1); e a troca do `code` server-side com `client_secret`, cujo `id_token` chega por TLS direto
+  do token endpoint, sem passar pelo front-channel;
+- testes: unitários em `id-token.verifier.test.ts` (ausente aceito; ausente com assinatura, `aud`, `iss`,
+  `exp`, `iat` ou `sub` inválidos rejeitado; presente vazio, numérico, nulo ou divergente rejeitado) e de
+  integração em `linkedin.integration.test.ts` (o LinkedIn falso emite o formato real, sem `nonce`;
+  `nonce` igual aceito; `nonce` divergente ou vazio rejeitado).
 
 ## Decisões derivadas
 
@@ -86,4 +124,5 @@ o teste unitário `works with LinkedIn's real JWKS shape` cobre o caso.
   execução do probe.
 - Sem refresh token: o painel mostra a expiração (~60 dias) e pede reconexão (Sentinela, condição 10).
 - `email` continua fora dos escopos; o `userinfo` confirma que ele não é devolvido.
-- Nonce: **aguardando decisão da Sentinela** (ver pendência 1).
+- Nonce: exceção de interoperabilidade aprovada e documentada acima; o probe mantém a checagem
+  (`nonce: ausente|vazio|DIFERENTE|igual`) para detectar se o LinkedIn passar a ecoá-lo.
