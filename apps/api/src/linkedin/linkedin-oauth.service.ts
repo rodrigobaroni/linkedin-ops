@@ -10,8 +10,10 @@ import { API_LOGGER } from "../logging/logger.js";
 import { PRISMA_CLIENT } from "../prisma/prisma.module.js";
 import type { AuthenticatedSession } from "../session/session.service.js";
 import { FixedWindowLimiter } from "./fixed-window-limiter.js";
+import { hashNonce, LinkedInIdTokenVerifier } from "./id-token.verifier.js";
 import { LinkedInApiError, LinkedInApiClient } from "./linkedin.client.js";
 import { LINKEDIN_AUTHORIZE_URL, LINKEDIN_SCOPES } from "./linkedin.constants.js";
+import { LINKEDIN_RATE_LIMITS, type LinkedInRateLimits } from "./rate-limits.js";
 
 export const TOKEN_VAULT = Symbol("TOKEN_VAULT");
 
@@ -36,9 +38,7 @@ export type CallbackResult =
   | "scope_missing";
 
 interface ClaimedState {
-  user_id: string;
-  session_id: string;
-  live: boolean;
+  nonce_hash: string | null;
 }
 
 /**
@@ -48,16 +48,21 @@ interface ClaimedState {
  */
 @Injectable()
 export class LinkedInOAuthService {
-  readonly #connectLimiter = new FixedWindowLimiter(10, 10 * 60 * 1000);
-  readonly #callbackLimiter = new FixedWindowLimiter(30, 10 * 60 * 1000);
+  readonly #connectLimiter: FixedWindowLimiter;
+  readonly #callbackLimiter: FixedWindowLimiter;
 
   constructor(
     @Inject(PRISMA_CLIENT) private readonly prisma: PrismaClient,
     @Inject(RUNTIME_ENV) private readonly env: RuntimeEnv,
     @Inject(TOKEN_VAULT) private readonly vault: TokenVault,
     @Inject(LinkedInApiClient) private readonly client: LinkedInApiClient,
+    @Inject(LinkedInIdTokenVerifier) private readonly idTokens: LinkedInIdTokenVerifier,
+    @Inject(LINKEDIN_RATE_LIMITS) limits: LinkedInRateLimits,
     @Inject(API_LOGGER) private readonly logger: Logger,
-  ) {}
+  ) {
+    this.#connectLimiter = new FixedWindowLimiter(limits.connectPerSession, limits.windowMs);
+    this.#callbackLimiter = new FixedWindowLimiter(limits.callbackPerIp, limits.windowMs);
+  }
 
   /** `POST /integrations/linkedin/connect`: new single-use state bound to this session (replaces any other). */
   async connect(session: AuthenticatedSession): Promise<string> {
@@ -68,11 +73,13 @@ export class LinkedInOAuthService {
       });
     }
     this.#connectLimiter.consume(
-      session.userId,
+      session.id,
       "Muitas tentativas de conexão; aguarde alguns minutos",
     );
 
     const state = randomBytes(32).toString("base64url");
+    // OIDC nonce (ADR-0007 item 2): sent in the authorize URL, only its hash is kept with the state.
+    const nonce = randomBytes(32).toString("base64url");
     await this.prisma.$transaction([
       // One active state per session: a new connect invalidates the previous one.
       this.prisma.oAuthState.deleteMany({ where: { sessionId: session.id, usedAt: null } }),
@@ -82,6 +89,7 @@ export class LinkedInOAuthService {
           userId: session.userId,
           sessionId: session.id,
           stateHash: this.hashState(state),
+          nonceHash: hashNonce(nonce),
           scopes: [...LINKEDIN_SCOPES],
           returnTo: "publish",
           expiresAt: new Date(Date.now() + OAUTH_STATE_TTL_MS),
@@ -95,14 +103,15 @@ export class LinkedInOAuthService {
     url.searchParams.set("redirect_uri", config.redirectUri);
     url.searchParams.set("scope", LINKEDIN_SCOPES.join(" "));
     url.searchParams.set("state", state);
+    url.searchParams.set("nonce", nonce);
     return url.toString();
   }
 
   /**
    * `GET /auth/linkedin/callback`. N1: the state is claimed by one conditional `UPDATE` before anything else
-   * (and before any LinkedIn call), on the `code` and the `error` paths alike. The claim does not filter by
-   * session, so *any* callback carrying a known state burns it; session, user and expiry are then checked on
-   * the claimed row. Returns the UI URL to redirect to; never throws for an OAuth outcome.
+   * (and before any LinkedIn call), on the `code` and the `error` paths alike. Unused, unexpired, this session
+   * and this user are all conditions of the `UPDATE` itself: zero rows → rejected, so a callback from another
+   * session (or none) never consumes the owner's state. Returns the UI URL; never throws for an OAuth outcome.
    */
   async handleCallback(
     query: LinkedInCallbackQuery,
@@ -113,17 +122,16 @@ export class LinkedInOAuthService {
     this.#callbackLimiter.consume(clientKey, "Muitas tentativas; aguarde alguns minutos");
     // The application clock, bound as a parameter, goes through the same serialization as the stored
     // `expires_at`; SQL `now()` would be skewed by the session TimeZone with the pg driver adapter.
+    if (!session) return this.returnUrl("invalid_state");
     const now = new Date();
+    const stateHash = this.hashState(query.state);
     const rows = await this.prisma.$queryRaw<ClaimedState[]>`
       UPDATE oauth_states SET used_at = ${now}
-      WHERE state_hash = ${this.hashState(query.state)} AND used_at IS NULL
-      RETURNING user_id::text AS user_id, session_id::text AS session_id, (expires_at > ${now}) AS live`;
+      WHERE state_hash = ${stateHash} AND used_at IS NULL AND expires_at > ${now}
+        AND session_id::text = ${session.id} AND user_id::text = ${session.userId}
+      RETURNING nonce_hash`;
     const claimed = rows[0];
-    if (!claimed) return this.returnUrl("invalid_state");
-    if (!claimed.live) return this.returnUrl("expired");
-    if (!session || session.id !== claimed.session_id || session.userId !== claimed.user_id) {
-      return this.returnUrl("invalid_state");
-    }
+    if (!claimed) return this.returnUrl(await this.rejectionOf(stateHash, session, now));
     if (query.error !== undefined) {
       // Only the class is logged; error_description is untrusted text from the query string.
       this.logger.info(
@@ -138,6 +146,8 @@ export class LinkedInOAuthService {
 
     try {
       const grant = await this.client.exchangeCode(query.code);
+      if (!grant.idToken || !claimed.nonce_hash)
+        throw new LinkedInApiError("ID_TOKEN_MISSING", null);
       if (!grant.scopes.includes(PUBLISH_SCOPE)) {
         this.logger.warn(
           { correlationId, scopes: grant.scopes },
@@ -146,6 +156,7 @@ export class LinkedInOAuthService {
         return this.returnUrl("scope_missing");
       }
       const member = await this.client.userinfo(grant.accessToken);
+      await this.idTokens.verify(grant.idToken, { nonceHash: claimed.nonce_hash, sub: member.sub });
       await this.storeCredential(session, grant, member, correlationId);
       return this.returnUrl("connected");
     } catch (error) {
@@ -279,6 +290,19 @@ export class LinkedInOAuthService {
     });
     // TODO(T-015): rotate the local session here (oauth-and-tokens.md §2.3 step 8) once SessionService
     // exposes rotation; the callback is a top-level navigation, so the new cookie can be set on this reply.
+  }
+
+  /** Read-only, after a failed claim: tells an expired state of this session apart (UX only). */
+  private async rejectionOf(
+    stateHash: string,
+    session: AuthenticatedSession,
+    now: Date,
+  ): Promise<CallbackResult> {
+    const expired = await this.prisma.$queryRaw<{ found: number }[]>`
+      SELECT 1 AS found FROM oauth_states
+      WHERE state_hash = ${stateHash} AND used_at IS NULL AND expires_at <= ${now}
+        AND session_id::text = ${session.id} AND user_id::text = ${session.userId}`;
+    return expired.length > 0 ? "expired" : "invalid_state";
   }
 
   /** HMAC-SHA-256 under the session secret, domain-separated: the raw state is never persisted. */

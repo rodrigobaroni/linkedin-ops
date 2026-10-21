@@ -84,6 +84,7 @@ describe("LinkedInApiClient", () => {
       accessToken: ACCESS_TOKEN,
       expiresInSeconds: 5_183_999,
       scopes: ["openid", "profile", "w_member_social"],
+      idToken: null,
     });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe("https://www.linkedin.com/oauth/v2/accessToken");

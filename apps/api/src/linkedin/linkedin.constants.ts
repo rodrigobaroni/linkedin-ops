@@ -22,3 +22,7 @@ export const LINKEDIN_COMMENTARY_MAX_LENGTH = 3000;
 export function linkedinPostUrl(postUrn: string): string {
   return `https://www.linkedin.com/feed/update/${postUrn}/`;
 }
+
+/** OIDC issuer and JWKS of LinkedIn's "Sign In with LinkedIn using OpenID Connect" (id_token checks). */
+export const LINKEDIN_OIDC_ISSUER = "https://www.linkedin.com/oauth";
+export const LINKEDIN_JWKS_URL = "https://www.linkedin.com/oauth/openid/jwks";

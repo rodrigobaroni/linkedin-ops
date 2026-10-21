@@ -39,7 +39,12 @@ export interface LinkedInTokenGrant {
   accessToken: string;
   expiresInSeconds: number;
   scopes: string[];
+  /** OIDC id_token (compact JWS), verified by `LinkedInIdTokenVerifier` before anything is stored. */
+  idToken: string | null;
 }
+
+/** Bound on the compact id_token accepted from the token endpoint. */
+const MAX_ID_TOKEN_LENGTH = 8192;
 
 export interface LinkedInMember {
   sub: string;
@@ -105,6 +110,7 @@ export class LinkedInApiClient {
       accessToken,
       expiresInSeconds: expiresIn,
       scopes: [...new Set(scope.split(/[\s,]+/).filter(Boolean))].sort(),
+      idToken: boundedIdToken(body?.id_token),
     };
   }
 
@@ -209,6 +215,12 @@ export function classifyPostResponse(status: number, restliId: string | null): L
     code: status >= 500 ? "LINKEDIN_SERVER_ERROR" : "UNEXPECTED_STATUS",
     httpStatus: status,
   };
+}
+
+function boundedIdToken(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 && value.length <= MAX_ID_TOKEN_LENGTH
+    ? value
+    : null;
 }
 
 /** External display name: control characters stripped, bounded to the contract (1..200). */

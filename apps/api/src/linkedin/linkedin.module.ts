@@ -11,7 +11,9 @@ import {
   LINKEDIN_FETCH,
   type FetchLike,
 } from "./linkedin.client.js";
+import { LINKEDIN_JWKS, LinkedInIdTokenVerifier, remoteLinkedInJwks } from "./id-token.verifier.js";
 import { LinkedInController } from "./linkedin.controller.js";
+import { ADR_0007_RATE_LIMITS, LINKEDIN_RATE_LIMITS } from "./rate-limits.js";
 import { LinkedInOAuthService, TOKEN_VAULT } from "./linkedin-oauth.service.js";
 import { PublicationsController } from "./publications.controller.js";
 import { PublicationsService } from "./publications.service.js";
@@ -49,7 +51,10 @@ export class LinkedInModule {
           inject: [RUNTIME_ENV],
           useFactory: (env: RuntimeEnv) => new TokenVault(env.encryptionKeyRing),
         },
+        { provide: LINKEDIN_JWKS, inject: [LINKEDIN_FETCH], useFactory: remoteLinkedInJwks },
+        { provide: LINKEDIN_RATE_LIMITS, useValue: ADR_0007_RATE_LIMITS },
         LinkedInApiClient,
+        LinkedInIdTokenVerifier,
         LinkedInOAuthService,
         PublicationsService,
       ],

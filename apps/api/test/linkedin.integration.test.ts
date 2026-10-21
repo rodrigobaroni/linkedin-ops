@@ -23,12 +23,15 @@ import {
   type PrismaClient,
   type RuntimeEnv,
 } from "@linkedin-ops/domain";
+import { exportJWK, generateKeyPair, SignJWT, type JWK } from "jose";
 import supertest from "supertest";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../src/app.module.js";
 import { configureApp, createFastifyAdapter } from "../src/app.factory.js";
 import { LINKEDIN_FETCH, type FetchLike } from "../src/linkedin/linkedin.client.js";
 import { TOKEN_VAULT } from "../src/linkedin/linkedin-oauth.service.js";
+import { LINKEDIN_OIDC_ISSUER } from "../src/linkedin/linkedin.constants.js";
+import { ADR_0007_RATE_LIMITS, LINKEDIN_RATE_LIMITS } from "../src/linkedin/rate-limits.js";
 import { ABANDONED_CLAIM_MS, PublicationsService } from "../src/linkedin/publications.service.js";
 import { createLogger } from "../src/logging/logger.js";
 import {
@@ -46,6 +49,7 @@ const PRISMA_BIN = fileURLToPath(
   new URL("../../../packages/domain/node_modules/.bin/prisma", import.meta.url),
 );
 
+const CLIENT_ID = "86integration";
 const CLIENT_SECRET = "WPL_AP1.integration-client-secret";
 const REDIRECT_URI = `${APP_BASE_URL}/api/v1/auth/linkedin/callback`;
 const MEMBER_SUB = "x1Y2z3_member";
@@ -71,14 +75,41 @@ class FakeSessionService implements SessionService {
 type Handler = (url: string, init: RequestInit) => Promise<Response> | Response;
 
 /** Scripted LinkedIn: one handler per endpoint, every call recorded (without needing the network). */
+/** LinkedIn's OIDC signing key (test-generated), its JWKS, and the nonce of the last authorize URL. */
+const oidc: {
+  key?: Awaited<ReturnType<typeof generateKeyPair>>["privateKey"];
+  jwk?: JWK;
+  nonce: string;
+} = {
+  nonce: "",
+};
+
+async function signIdToken(
+  claims: { nonce?: string; sub?: string; aud?: string } = {},
+): Promise<string> {
+  return new SignJWT({ nonce: claims.nonce ?? oidc.nonce })
+    .setProtectedHeader({ alg: "RS256", kid: "li-test" })
+    .setSubject(claims.sub ?? MEMBER_SUB)
+    .setIssuer(LINKEDIN_OIDC_ISSUER)
+    .setAudience(claims.aud ?? CLIENT_ID)
+    .setIssuedAt()
+    .setExpirationTime("1h")
+    .sign(oidc.key!);
+}
+
+async function tokenResponse(extra: Record<string, unknown> = {}): Promise<Response> {
+  return json(200, {
+    access_token: `AQV-${randomUUID()}`,
+    expires_in: 5_183_999,
+    scope: "openid,profile,w_member_social",
+    id_token: await signIdToken(),
+    ...extra,
+  });
+}
+
 class FakeLinkedIn {
   calls: { url: string; init: RequestInit }[] = [];
-  token: Handler = () =>
-    json(200, {
-      access_token: `AQV-${randomUUID()}`,
-      expires_in: 5_183_999,
-      scope: "openid,profile,w_member_social",
-    });
+  token: Handler = () => tokenResponse();
   userinfo: Handler = () =>
     json(200, { sub: MEMBER_SUB, name: "Rodrigo Baroni", given_name: "Rodrigo" });
   posts: Handler = () => new Response(null, { status: 201, headers: { "x-restli-id": POST_URN } });
@@ -88,6 +119,8 @@ class FakeLinkedIn {
     if (url === "https://www.linkedin.com/oauth/v2/accessToken") return this.token(url, init);
     if (url === "https://api.linkedin.com/v2/userinfo") return this.userinfo(url, init);
     if (url === "https://api.linkedin.com/rest/posts") return this.posts(url, init);
+    if (url === "https://www.linkedin.com/oauth/openid/jwks")
+      return json(200, { keys: [oidc.jwk] });
     throw new Error(`unexpected LinkedIn call ${url}`);
   };
 
@@ -167,7 +200,9 @@ async function connectUrl(actor: Actor): Promise<URL> {
     .set(elevated(actor))
     .send({});
   expect(res.status).toBe(200);
-  return new URL(res.body.authorizeUrl as string);
+  const url = new URL(res.body.authorizeUrl as string);
+  oidc.nonce = url.searchParams.get("nonce") ?? "";
+  return url;
 }
 
 function callback(actor: Actor | null, query: Record<string, string>) {
@@ -221,6 +256,9 @@ function publish(actor: Actor, text: string, key: string | null = randomUUID()) 
 }
 
 beforeAll(async () => {
+  const pair = await generateKeyPair("RS256");
+  oidc.key = pair.privateKey;
+  oidc.jwk = { ...(await exportJWK(pair.publicKey)), kid: "li-test", alg: "RS256", use: "sig" };
   let databaseUrl = process.env.INTEGRATION_DATABASE_URL;
   if (!databaseUrl) {
     container = await new PostgreSqlContainer(POSTGRES_IMAGE).start();
@@ -237,7 +275,7 @@ beforeAll(async () => {
     DATABASE_URL: databaseUrl,
     SESSION_SECRET: randomBytes(48).toString("base64"),
     ENCRYPTION_KEY: randomBytes(32).toString("base64"),
-    LINKEDIN_CLIENT_ID: "86integration",
+    LINKEDIN_CLIENT_ID: CLIENT_ID,
     LINKEDIN_CLIENT_SECRET: CLIENT_SECRET,
     LINKEDIN_REDIRECT_URI: REDIRECT_URI,
     LINKEDIN_PKCE: "disabled",
@@ -252,6 +290,9 @@ beforeAll(async () => {
     .useValue(sessions)
     .overrideProvider(LINKEDIN_FETCH)
     .useValue(linkedin.fetch)
+    // Every callback of this file comes from 127.0.0.1; the ADR ceilings are pinned in rate-limits.test.ts.
+    .overrideProvider(LINKEDIN_RATE_LIMITS)
+    .useValue({ ...ADR_0007_RATE_LIMITS, callbackPerIp: 1000 })
     .compile();
   app = moduleRef.createNestApplication<NestFastifyApplication>(createFastifyAdapter(logger), {
     bufferLogs: true,
@@ -292,6 +333,11 @@ describe("POST /integrations/linkedin/connect", () => {
     const rows = await prisma.oAuthState.findMany({ where: { sessionId: actor.sessionId } });
     expect(rows).toHaveLength(1);
     expect(JSON.stringify(rows)).not.toContain(state);
+    // OIDC nonce: CSPRNG, sent in the URL, only its SHA-256 persisted with the state.
+    const nonce = url.searchParams.get("nonce") ?? "";
+    expect(Buffer.from(nonce, "base64url")).toHaveLength(32);
+    expect(JSON.stringify(rows)).not.toContain(nonce);
+    expect(rows[0]!.nonceHash).toBe(createHash("sha256").update(nonce).digest("hex"));
     const ttl = rows[0]!.expiresAt.getTime() - rows[0]!.createdAt.getTime();
     expect(ttl).toBeGreaterThan(9 * 60_000);
     expect(ttl).toBeLessThanOrEqual(10 * 60_000 + 1000);
@@ -330,11 +376,7 @@ describe("GET /auth/linkedin/callback (N1, G-03)", () => {
     let issued = "";
     linkedin.token = () => {
       issued = `AQV-${randomUUID()}`;
-      return json(200, {
-        access_token: issued,
-        expires_in: 5_183_999,
-        scope: "openid,profile,w_member_social",
-      });
+      return tokenResponse({ access_token: issued });
     };
     const res = await callback(actor, { code: "auth-code-123", state });
     expect(resultOf(res)).toBe("connected");
@@ -420,7 +462,7 @@ describe("GET /auth/linkedin/callback (N1, G-03)", () => {
     expect(linkedin.calls).toHaveLength(0);
   });
 
-  it("an expired state is rejected (and burned) without calling LinkedIn", async () => {
+  it("an expired state is rejected without calling LinkedIn", async () => {
     const actor = await newActor();
     const state = (await connectUrl(actor)).searchParams.get("state")!;
     await prisma.oAuthState.updateMany({
@@ -431,24 +473,48 @@ describe("GET /auth/linkedin/callback (N1, G-03)", () => {
     expect(linkedin.calls).toHaveLength(0);
   });
 
-  it("a callback from another session, or without a session, is rejected and still burns the state", async () => {
-    const victim = await newActor();
+  it("a callback from another session, or without a session, is rejected and does NOT consume the owner's state (A-1)", async () => {
+    const owner = await newActor();
     const attacker = await newActor();
-    const state = (await connectUrl(victim)).searchParams.get("state")!;
+    const state = (await connectUrl(owner)).searchParams.get("state")!;
     expect(resultOf(await callback(attacker, { code: "c", state }))).toBe("invalid_state");
-    expect(resultOf(await callback(victim, { code: "c", state }))).toBe("invalid_state");
-
-    const other = (await connectUrl(victim)).searchParams.get("state")!;
-    expect(resultOf(await callback(null, { code: "c", state: other }))).toBe("invalid_state");
+    expect(resultOf(await callback(attacker, { error: "user_cancelled_authorize", state }))).toBe(
+      "invalid_state",
+    );
+    expect(resultOf(await callback(null, { code: "c", state }))).toBe("invalid_state");
     expect(linkedin.calls).toHaveLength(0);
-    expect(await prisma.oAuthToken.count({ where: { userId: victim.userId } })).toBe(0);
+    const row = await prisma.oAuthState.findFirstOrThrow({ where: { sessionId: owner.sessionId } });
+    expect(row.usedAt).toBeNull();
+    // The owner's session can still complete the flow with it.
+    expect(resultOf(await callback(owner, { code: "c", state }))).toBe("connected");
+    expect(await prisma.oAuthToken.count({ where: { userId: attacker.userId } })).toBe(0);
+  });
+
+  it("a token response without id_token stores nothing (exchange_failed)", async () => {
+    const actor = await newActor();
+    const state = (await connectUrl(actor)).searchParams.get("state")!;
+    linkedin.token = () => tokenResponse({ id_token: undefined });
+    expect(resultOf(await callback(actor, { code: "c", state }))).toBe("exchange_failed");
+    expect(await prisma.oAuthToken.count({ where: { userId: actor.userId } })).toBe(0);
+  });
+
+  it.each([
+    ["a nonce from another flow", { nonce: "replayed-nonce" }],
+    ["a sub different from userinfo", { sub: "someone-else" }],
+    ["another audience", { aud: "another-client" }],
+  ])("an id_token with %s stores nothing (exchange_failed)", async (_name, claims) => {
+    const actor = await newActor();
+    const state = (await connectUrl(actor)).searchParams.get("state")!;
+    linkedin.token = async () => tokenResponse({ id_token: await signIdToken(claims) });
+    expect(resultOf(await callback(actor, { code: "c", state }))).toBe("exchange_failed");
+    expect(await prisma.oAuthToken.count({ where: { userId: actor.userId } })).toBe(0);
+    expect(await prisma.auditEvent.count({ where: { userId: actor.userId } })).toBe(0);
   });
 
   it("a grant without w_member_social is not stored", async () => {
     const actor = await newActor();
     const state = (await connectUrl(actor)).searchParams.get("state")!;
-    linkedin.token = () =>
-      json(200, { access_token: "AQV-x", expires_in: 100, scope: "openid,profile" });
+    linkedin.token = () => tokenResponse({ scope: "openid,profile" });
     expect(resultOf(await callback(actor, { code: "c", state }))).toBe("scope_missing");
     expect(await prisma.oAuthToken.count({ where: { userId: actor.userId } })).toBe(0);
   });
@@ -693,11 +759,11 @@ describe("POST /publications/publish-now (G-04)", () => {
     const actor = await newActor();
     await seedToken(actor);
     const key = randomUUID();
-    for (let index = 0; index < 5; index += 1) {
+    for (let index = 0; index < ADR_0007_RATE_LIMITS.publishPerUser; index += 1) {
       await publish(actor, `Post ${index}`, index === 0 ? key : randomUUID()).expect(201);
     }
     await publish(actor, "Post 0", key).expect(201);
-    const limited = await publish(actor, "Post 6");
+    const limited = await publish(actor, "Post 4");
     expect(limited.status).toBe(429);
     expect(limited.headers["retry-after"]).toMatch(/^\d+$/);
   });

@@ -28,6 +28,7 @@ import {
 } from "./linkedin.client.js";
 import { linkedinPostUrl } from "./linkedin.constants.js";
 import { personUrn, PUBLISH_SCOPE, TOKEN_VAULT } from "./linkedin-oauth.service.js";
+import { LINKEDIN_RATE_LIMITS, type LinkedInRateLimits } from "./rate-limits.js";
 
 /** PT-BR message stored with each failure code (shown by the web; never LinkedIn's raw body). */
 const ERROR_MESSAGES: Readonly<Record<string, string>> = {
@@ -63,14 +64,17 @@ type PublicationRow = Awaited<ReturnType<PrismaClient["publication"]["findUnique
  */
 @Injectable()
 export class PublicationsService {
-  readonly #publishLimiter = new FixedWindowLimiter(5, 10 * 60 * 1000);
+  readonly #publishLimiter: FixedWindowLimiter;
 
   constructor(
     @Inject(PRISMA_CLIENT) private readonly prisma: PrismaClient,
     @Inject(TOKEN_VAULT) private readonly vault: TokenVault,
     @Inject(LinkedInApiClient) private readonly client: LinkedInApiClient,
+    @Inject(LINKEDIN_RATE_LIMITS) limits: LinkedInRateLimits,
     @Inject(API_LOGGER) private readonly logger: Logger,
-  ) {}
+  ) {
+    this.#publishLimiter = new FixedWindowLimiter(limits.publishPerUser, limits.windowMs);
+  }
 
   async publishNow(
     session: AuthenticatedSession,
