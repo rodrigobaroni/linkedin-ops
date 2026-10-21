@@ -153,9 +153,11 @@ describe("migration baseline", () => {
   it("migrates every enum of the contracts/schema matrix, by type name and ordered labels", async () => {
     // pg_type/pg_enum is the source of truth for what the migration created; the matrix
     // (test/enum-matrix.ts) is what contracts + schema.prisma prescribe. Both sides must be equal:
-    // no extra or missing type, no extra, missing or reordered label.
+    // no extra or missing type, no extra, missing or reordered label. `typname`/`enumlabel` are of
+    // type `name`, which the pg driver adapter cannot deserialize: cast to text.
     const rows = await prisma.$queryRaw<{ name: string; labels: string[] }[]>`
-      SELECT t.typname AS name, array_agg(e.enumlabel ORDER BY e.enumsortorder) AS labels
+      SELECT t.typname::text AS name,
+             array_agg(e.enumlabel::text ORDER BY e.enumsortorder)::text[] AS labels
       FROM pg_type t
       JOIN pg_namespace n ON n.oid = t.typnamespace
       JOIN pg_enum e ON e.enumtypid = t.oid
