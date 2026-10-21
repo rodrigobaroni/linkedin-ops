@@ -14,9 +14,12 @@ import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
+import { compactVerify, createRemoteJWKSet } from "jose";
 import {
   LINKEDIN_API_VERSION,
   LINKEDIN_AUTHORIZE_URL,
+  LINKEDIN_JWKS_URL,
+  LINKEDIN_OIDC_ISSUER,
   LINKEDIN_COMMENTARY_MAX_LENGTH,
   LINKEDIN_POSTS_URL,
   LINKEDIN_RESTLI_PROTOCOL_VERSION,
@@ -106,6 +109,80 @@ function awaitCallback(redirect: URL): Promise<URLSearchParams> {
     server.on("error", reject);
     server.listen(Number(redirect.port || 80), redirect.hostname);
   });
+}
+
+function decodeSegment(segment: string | undefined): Record<string, unknown> | null {
+  try {
+    const value: unknown = JSON.parse(Buffer.from(segment ?? "", "base64url").toString("utf8"));
+    return value !== null && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+const yesNo = (value: boolean): string => (value ? "sim" : "não");
+
+/**
+ * id_token evidence for the Sentinela (A-2) without printing any claim value: claim NAMES, header `alg` and
+ * whether `kid` exists, the nonce as absent/empty/different/equal (plus whether it came back hashed), `iss`
+ * and `aud` as booleans, `exp`/`iat` relative to now, the RS256 signature against LinkedIn's JWKS and
+ * `sub` versus `userinfo.sub`.
+ */
+async function idTokenDiagnostics(
+  idToken: string,
+  expected: { nonce: string; clientId: string; sub: string },
+): Promise<void> {
+  const [rawHeader, rawPayload] = idToken.split(".");
+  const header = decodeSegment(rawHeader);
+  const payload = decodeSegment(rawPayload);
+  out("✓ diagnóstico do id_token (nenhum valor de claim é exibido)");
+  if (!header || !payload) {
+    out("  ⚠ id_token não é um JWS compacto decodificável");
+    return;
+  }
+  out(
+    `  header: alg=${printable(header.alg, 16)} kid presente=${yesNo(typeof header.kid === "string")}`,
+  );
+  out(`  claims do payload (nomes): ${Object.keys(payload).sort().join(", ")}`);
+
+  const claimed = payload.nonce;
+  let nonceStatus: string;
+  if (!("nonce" in payload)) nonceStatus = "ausente";
+  else if (typeof claimed !== "string") nonceStatus = `presente, tipo ${typeof claimed}`;
+  else if (claimed.length === 0) nonceStatus = "vazio";
+  else if (claimed === expected.nonce) nonceStatus = "igual ao enviado";
+  else {
+    const digest = sha256(expected.nonce);
+    nonceStatus =
+      `DIFERENTE (mesmo comprimento: ${yesNo(claimed.length === expected.nonce.length)}; ` +
+      `= SHA-256 base64url: ${yesNo(claimed === digest.toString("base64url"))}; ` +
+      `= SHA-256 hex: ${yesNo(claimed === digest.toString("hex"))})`;
+  }
+  out(`  nonce: ${nonceStatus}`);
+
+  const aud = payload.aud;
+  const audiences = Array.isArray(aud) ? aud : [aud];
+  out(`  iss = ${LINKEDIN_OIDC_ISSUER}: ${yesNo(payload.iss === LINKEDIN_OIDC_ISSUER)}`);
+  out(
+    `  aud contém client_id: ${yesNo(audiences.includes(expected.clientId))} (tipo ${Array.isArray(aud) ? "array" : typeof aud})`,
+  );
+  const now = Math.floor(Date.now() / 1000);
+  const rel = (claim: unknown) => (typeof claim === "number" ? `${claim - now} s` : "ausente");
+  out(`  exp - agora: ${rel(payload.exp)}  iat - agora: ${rel(payload.iat)}`);
+  out(`  sub = userinfo.sub: ${yesNo(payload.sub === expected.sub)}`);
+
+  try {
+    await compactVerify(idToken, createRemoteJWKSet(new URL(LINKEDIN_JWKS_URL)), {
+      algorithms: ["RS256"],
+    });
+    out("  assinatura RS256 pela JWKS do LinkedIn: válida");
+  } catch (error) {
+    out(
+      `  assinatura RS256 pela JWKS do LinkedIn: INVÁLIDA (${printable((error as Error).name, 60)})`,
+    );
+  }
 }
 
 async function confirmOnTty(question: string, expected: string): Promise<boolean> {
@@ -230,18 +307,7 @@ async function main(): Promise<void> {
   out(
     `  refresh_token: ${token.refresh_token ? `sim (expira em ${token.refresh_token_expires_in ?? "?"} s)` : "não"}`,
   );
-  out(`  id_token: ${token.id_token ? "sim" : "não"}`);
-  if (token.id_token) {
-    // Diagnostic only: signature is NOT verified here; the API flow relies on /v2/userinfo instead.
-    const payload = JSON.parse(
-      Buffer.from(token.id_token.split(".")[1] ?? "", "base64url").toString("utf8"),
-    ) as {
-      nonce?: string;
-    };
-    out(
-      `  id_token.nonce confere: ${payload.nonce === nonce ? "sim" : "não"} (assinatura não verificada)`,
-    );
-  }
+  out(`  id_token: ${token.id_token ? "sim (diagnóstico após o userinfo)" : "não"}`);
   const missing = LINKEDIN_SCOPES.filter((scope) => !grantedScopes.includes(scope));
   if (missing.length > 0) out(`  ⚠ escopos pedidos e não concedidos: ${missing.join(" ")}`);
 
@@ -258,6 +324,9 @@ async function main(): Promise<void> {
   out(`  sub: ${printable(userinfo.sub, 64)}  name: ${printable(userinfo.name, 120)}`);
   out(`  campos retornados: ${Object.keys(userinfo).sort().join(", ")}`);
   out(`  headers: ${JSON.stringify(interestingHeaders(userinfoResponse.headers))}`);
+  if (token.id_token) {
+    await idTokenDiagnostics(token.id_token, { nonce, clientId, sub: userinfo.sub });
+  }
 
   // Non-mutating version check: a read of a non-existent post. 426 = version not supported; any other
   // status (403 without r_member_social, 404) proves the version header itself was accepted.

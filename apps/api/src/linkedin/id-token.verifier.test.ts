@@ -54,6 +54,15 @@ describe("LinkedInIdTokenVerifier (ADR-0007 item 2, Sentinela A-2)", () => {
     await expect(verifier.verify(await idToken(), expected)).resolves.toBeUndefined();
   });
 
+  it("works with LinkedIn's real JWKS shape: one RSA key with kid but no alg/use (T-061 probe)", async () => {
+    const pair = await generateKeyPair("RS256");
+    const bare: JWK = { ...(await exportJWK(pair.publicKey)), kid: "li-1" };
+    const linkedinShaped = new LinkedInIdTokenVerifier(createLocalJWKSet({ keys: [bare] }), CONFIG);
+    await expect(
+      linkedinShaped.verify(await idToken({ key: pair.privateKey }), expected),
+    ).resolves.toBeUndefined();
+  });
+
   it.each<[string, () => Promise<string>, { nonceHash: string; sub: string }?]>([
     ["a signature from a key outside the JWKS", () => idToken({ key: foreignKey })],
     ["another audience", () => idToken({ aud: "someone-else" })],
