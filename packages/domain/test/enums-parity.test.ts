@@ -1,77 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { z } from "zod";
-import {
-  ActorTypeSchema,
-  ApprovalDecisionSchema,
-  AuditActorTypeSchema,
-  AutonomyModeSchema,
-  CurationRunStatusSchema,
-  CurationRunTriggerSchema,
-  DraftStatusSchema,
-  DraftVersionAuthorTypeSchema,
-  LanguageSchema,
-  LinkedInUploadStatusSchema,
-  MediaAssetStatusSchema,
-  MediaKindSchema,
-  MediaOriginSchema,
-  NotificationChannelSchema,
-  NotificationKindSchema,
-  NotificationStatusSchema,
-  OpportunityOriginSchema,
-  OpportunityStatusSchema,
-  PublicationStatusSchema,
-  ScheduleStatusSchema,
-  SourceFetchStatusSchema,
-  SourceTypeSchema,
-  StoryBankEntryStatusSchema,
-  SuggestedFormatSchema,
-  TrustLevelSchema,
-  UserRoleSchema,
-} from "@linkedin-ops/contracts";
 import * as DbEnums from "../src/generated/prisma/enums.js";
+import { DATABASE_ONLY, MIRRORED, expectedDatabaseEnums } from "./enum-matrix.js";
 import { parsePrismaEnums } from "./prisma-schema.js";
-
-/**
- * contracts.md §4: "Enums são `z.enum` únicos; o Prisma `enum` espelha; teste garante paridade."
- * The database value of each Prisma enum (the `@map`ped value when present) must equal the contract
- * value, in the same order, so rows never need a translation layer and raw SQL reads contract values.
- */
-const MIRRORED: Record<string, z.ZodEnum<Record<string, string>>> = {
-  UserRole: UserRoleSchema,
-  AutonomyMode: AutonomyModeSchema,
-  Language: LanguageSchema,
-  StoryBankEntryStatus: StoryBankEntryStatusSchema,
-  SourceType: SourceTypeSchema,
-  TrustLevel: TrustLevelSchema,
-  SourceFetchStatus: SourceFetchStatusSchema,
-  CurationRunTrigger: CurationRunTriggerSchema,
-  CurationRunStatus: CurationRunStatusSchema,
-  OpportunityOrigin: OpportunityOriginSchema,
-  OpportunityStatus: OpportunityStatusSchema,
-  SuggestedFormat: SuggestedFormatSchema,
-  DraftStatus: DraftStatusSchema,
-  DraftVersionAuthorType: DraftVersionAuthorTypeSchema,
-  ApprovalDecision: ApprovalDecisionSchema,
-  ActorType: ActorTypeSchema,
-  AuditActorType: AuditActorTypeSchema,
-  ScheduleStatus: ScheduleStatusSchema,
-  PublicationStatus: PublicationStatusSchema,
-  MediaOrigin: MediaOriginSchema,
-  MediaKind: MediaKindSchema,
-  LinkedInUploadStatus: LinkedInUploadStatusSchema,
-  MediaAssetStatus: MediaAssetStatusSchema,
-  NotificationChannel: NotificationChannelSchema,
-  NotificationKind: NotificationKindSchema,
-  NotificationStatus: NotificationStatusSchema,
-};
-
-/** Enums that exist only in the database, with the reason there is no contract counterpart. */
-const DATABASE_ONLY: Record<string, string> = {
-  OAuthProvider:
-    "Internal discriminator; the API exposes the LinkedIn integration, not a provider list.",
-  TokenStatus:
-    "Credential lifecycle (ADR-0004 §11). The API maps it to LinkedInIntegrationStatus, where DISCONNECTED = no row.",
-};
 
 const prismaEnums = parsePrismaEnums();
 
@@ -116,6 +46,20 @@ describe("Prisma enums mirror packages/contracts", () => {
       "CAROUSEL",
     ]);
     expect(Object.keys(DbEnums.Language)).toEqual(["PT_BR", "EN"]);
+  });
+
+  it("every enum carries its PostgreSQL type name (@@map) and the matrix covers all of them", () => {
+    for (const prismaEnum of prismaEnums) {
+      expect(prismaEnum.dbName, `${prismaEnum.name} has no @@map`).not.toBe(prismaEnum.name);
+    }
+    const expected = expectedDatabaseEnums(prismaEnums);
+    expect(Object.keys(expected)).toHaveLength(prismaEnums.length);
+    expect(expected["opportunity_status"]).toEqual([
+      "candidate",
+      "selected",
+      "dismissed",
+      "expired",
+    ]);
   });
 
   it("database-only enums carry a documented reason", () => {

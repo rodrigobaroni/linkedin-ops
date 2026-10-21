@@ -11,7 +11,10 @@ export interface PrismaEnumValue {
 }
 
 export interface PrismaEnum {
+  /** Prisma name (`OpportunityStatus`). */
   name: string;
+  /** PostgreSQL type name (`opportunity_status` when `@@map` is present, else the name). */
+  dbName: string;
   values: PrismaEnumValue[];
 }
 
@@ -22,15 +25,22 @@ export function parsePrismaEnums(schema: string = readFileSync(SCHEMA_PATH, "utf
   for (const match of schema.matchAll(blockPattern)) {
     const [, name, body] = match as unknown as [string, string, string];
     const values: PrismaEnumValue[] = [];
+    let dbName = name;
     for (const rawLine of body.split("\n")) {
       const line = rawLine.trim();
-      if (line === "" || line.startsWith("//") || line.startsWith("@@")) continue;
+      if (line === "" || line.startsWith("//")) continue;
+      const mapMatch = /^@@map\("([^"]+)"\)/.exec(line);
+      if (mapMatch) {
+        dbName = mapMatch[1]!;
+        continue;
+      }
+      if (line.startsWith("@@")) continue;
       const valueMatch = /^(\w+)(?:\s+@map\("([^"]+)"\))?/.exec(line);
       if (!valueMatch) throw new Error(`Unparseable enum line in ${name}: ${line}`);
       const [, valueName, mapped] = valueMatch;
       values.push({ name: valueName!, dbValue: mapped ?? valueName! });
     }
-    enums.push({ name, values });
+    enums.push({ name, dbName, values });
   }
   return enums;
 }

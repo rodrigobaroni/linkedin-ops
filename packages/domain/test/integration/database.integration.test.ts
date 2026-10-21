@@ -5,7 +5,8 @@
  *   (sources.user_id, canonical_url);
  * - draft_versions, approvals and audit_events are append-only (UPDATE/DELETE/TRUNCATE rejected);
  * - schedules.scheduled_at + timezone are mandatory;
- * - partial unique indexes I7/I8, CHECK I5 and enum database values.
+ * - partial unique indexes I7/I8, CHECK I5;
+ * - every enum type migrated into PostgreSQL (pg_type/pg_enum) matches the contracts/schema matrix.
  */
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -14,6 +15,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { seed } from "../../prisma/seed.js";
 import { createPrismaClient, type PrismaClient } from "../../src/client.js";
 import { newId } from "../../src/ids.js";
+import { expectedDatabaseEnums } from "../enum-matrix.js";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const PRISMA_BIN = fileURLToPath(new URL("../../node_modules/.bin/prisma", import.meta.url));
@@ -146,6 +148,24 @@ describe("migration baseline", () => {
     const [format] = await prisma.$queryRaw<{ values: string[] }[]>`
       SELECT enum_range(NULL::suggested_format)::text[] AS values`;
     expect(format?.values).toEqual(["text", "code-card", "image", "carousel"]);
+  });
+
+  it("migrates every enum of the contracts/schema matrix, by type name and ordered labels", async () => {
+    // pg_type/pg_enum is the source of truth for what the migration created; the matrix
+    // (test/enum-matrix.ts) is what contracts + schema.prisma prescribe. Both sides must be equal:
+    // no extra or missing type, no extra, missing or reordered label.
+    const rows = await prisma.$queryRaw<{ name: string; labels: string[] }[]>`
+      SELECT t.typname AS name, array_agg(e.enumlabel ORDER BY e.enumsortorder) AS labels
+      FROM pg_type t
+      JOIN pg_namespace n ON n.oid = t.typnamespace
+      JOIN pg_enum e ON e.enumtypid = t.oid
+      WHERE t.typtype = 'e' AND n.nspname = current_schema()
+      GROUP BY t.typname
+      ORDER BY t.typname`;
+    const migrated = Object.fromEntries(rows.map((r) => [r.name, r.labels]));
+    const expected = expectedDatabaseEnums();
+    expect(Object.keys(expected).length).toBeGreaterThan(20);
+    expect(migrated).toEqual(expected);
   });
 });
 
