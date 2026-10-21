@@ -67,36 +67,41 @@ Campos essenciais; Alicerce pode acrescentar colunas técnicas sem ADR. Mudar re
 
 **User**
 
-| Campo                   | Tipo                                    | Notas                                                                      |
-| ----------------------- | --------------------------------------- | -------------------------------------------------------------------------- |
-| id                      | uuid PK                                 |                                                                            |
-| email                   | citext unique                           | login                                                                      |
-| password_hash           | text                                    | Argon2id (ADR-0007)                                                        |
-| name                    | text                                    |                                                                            |
-| role                    | enum `UserRole` {OWNER, EDITOR, VIEWER} | hoje só OWNER existe; enum já previsto                                     |
-| locale                  | text                                    | `pt-BR` padrão                                                             |
-| timezone                | text                                    | IANA, `America/Sao_Paulo` padrão; usado para exibir e para propor horários |
-| linkedin_member_urn     | text null                               | `urn:li:person:...`, preenchido ao conectar OAuth                          |
-| created_at / updated_at | timestamptz                             |                                                                            |
+| Campo                   | Tipo                                    | Notas                                                                                                          |
+| ----------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| id                      | uuid PK                                 |                                                                                                                |
+| email                   | citext unique                           | login                                                                                                          |
+| password_hash           | text                                    | Argon2id (ADR-0007)                                                                                            |
+| name                    | text                                    |                                                                                                                |
+| role                    | enum `UserRole` {OWNER, EDITOR, VIEWER} | hoje só OWNER existe; enum já previsto                                                                         |
+| locale                  | text                                    | `pt-BR` padrão                                                                                                 |
+| timezone                | text                                    | IANA, `America/Sao_Paulo` padrão; usado para exibir e para propor horários                                     |
+| linkedin_member_urn     | text null                               | `urn:li:person:...`, preenchido ao conectar OAuth                                                              |
+| totp_secret_ciphertext  | bytea null                              | reservado para TOTP (ADR-0007 §4); cifrado com o envelope do ADR-0004 quando a feature existir; nunca em claro |
+| created_at / updated_at | timestamptz                             |                                                                                                                |
 
-**Session** — id opaco (256 bits, hash SHA-256 armazenado), `user_id`, `expires_at`, `last_seen_at`, `ip`, `user_agent`, `revoked_at`.
+**Session** — `id` uuid (identificador público, usado em `GET /auth/sessions`), `secret_hash` (SHA-256 do segredo opaco de
+256 bits que vai no cookie; o segredo nunca é persistido), `user_id`, `expires_at`, `last_seen_at`, `elevated_until`
+(fim da janela elevada de 15 min aberta por `POST /auth/reauth`, ADR-0007; null = não elevada), `ip`, `user_agent`,
+`revoked_at`.
 
 **OAuthToken** (cifrado em repouso, ADR-0004)
 
-| Campo                            | Tipo                                                           | Notas                                                               |
-| -------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------- |
-| id                               | uuid PK                                                        |                                                                     |
-| user_id                          | FK User                                                        | unique (user_id, provider)                                          |
-| provider                         | enum `OAuthProvider` {LINKEDIN}                                |                                                                     |
-| provider_subject                 | text                                                           | `sub`/member URN do provedor                                        |
-| access_token_ciphertext          | bytea                                                          | AES-256-GCM, nonce + tag embutidos                                  |
-| refresh_token_ciphertext         | bytea null                                                     | LinkedIn só emite refresh token para alguns produtos; pode ser nulo |
-| key_id                           | text                                                           | id da chave de cifra (rotação)                                      |
-| scopes                           | text[]                                                         | ex.: `openid profile w_member_social`                               |
-| access_expires_at                | timestamptz                                                    |                                                                     |
-| refresh_expires_at               | timestamptz null                                               |                                                                     |
-| status                           | enum `TokenStatus` {ACTIVE, EXPIRED, REVOKED, REAUTH_REQUIRED} |                                                                     |
-| last_refreshed_at / last_used_at | timestamptz null                                               |                                                                     |
+| Campo                            | Tipo                                                           | Notas                                                                             |
+| -------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| id                               | uuid PK                                                        |                                                                                   |
+| user_id                          | FK User                                                        | unique (user_id, provider)                                                        |
+| provider                         | enum `OAuthProvider` {LINKEDIN}                                |                                                                                   |
+| provider_subject                 | text                                                           | `sub`/member URN do provedor                                                      |
+| access_token_ciphertext          | bytea                                                          | AES-256-GCM, nonce + tag embutidos                                                |
+| refresh_token_ciphertext         | bytea null                                                     | LinkedIn só emite refresh token para alguns produtos; pode ser nulo               |
+| wrapped_dek                      | bytea                                                          | DEK da credencial cifrada pela KEK ativa, mesmo framing autenticado (ADR-0004 §1) |
+| key_version                      | text                                                           | versão da KEK que embrulhou a DEK (rotação, ADR-0004 §8)                          |
+| scopes                           | text[]                                                         | ex.: `openid profile w_member_social`                                             |
+| access_expires_at                | timestamptz                                                    |                                                                                   |
+| refresh_expires_at               | timestamptz null                                               |                                                                                   |
+| status                           | enum `TokenStatus` {ACTIVE, EXPIRED, REVOKED, REAUTH_REQUIRED} |                                                                                   |
+| last_refreshed_at / last_used_at | timestamptz null                                               |                                                                                   |
 
 Invariantes: a API **nunca** serializa colunas `*_ciphertext`; só o worker e o fluxo de callback decifram;
 `status = REAUTH_REQUIRED` bloqueia `publication.publish` e gera `Notification`.
@@ -194,18 +199,18 @@ Nenhum campo de `SourceItem` entra em `instructions` de prompt; só em `input` d
 
 **CurationRun**
 
-| Campo                                            | Tipo                                                                   | Notas                                                          |
-| ------------------------------------------------ | ---------------------------------------------------------------------- | -------------------------------------------------------------- |
-| id, user_id                                      |                                                                        |                                                                |
-| scheduled_for                                    | timestamptz                                                            | unique (user_id, scheduled_for) → cron idempotente             |
-| timezone                                         | text                                                                   | `America/Sao_Paulo`                                            |
-| trigger                                          | enum {CRON, MANUAL}                                                    |                                                                |
-| status                                           | enum `CurationRunStatus` {QUEUED, RUNNING, SUCCEEDED, PARTIAL, FAILED} | PARTIAL = < 5 oportunidades                                    |
-| started_at, finished_at                          |                                                                        |                                                                |
-| stats                                            | jsonb                                                                  | `{ sourcesFetched, itemsNew, itemsDeduped, candidatesScored }` |
-| engine_version, prompt_id, prompt_version, model | text                                                                   | reprodutibilidade                                              |
-| error                                            | jsonb null                                                             | classificado, sem segredos                                     |
-| job_id                                           | text null                                                              | pg-boss                                                        |
+| Campo                                            | Tipo                                                                   | Notas                                                             |
+| ------------------------------------------------ | ---------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| id, user_id                                      |                                                                        |                                                                   |
+| scheduled_for                                    | timestamptz                                                            | unique (user_id, scheduled_for, trigger) → cron idempotente (I13) |
+| timezone                                         | text                                                                   | `America/Sao_Paulo`                                               |
+| trigger                                          | enum {CRON, MANUAL}                                                    |                                                                   |
+| status                                           | enum `CurationRunStatus` {QUEUED, RUNNING, SUCCEEDED, PARTIAL, FAILED} | PARTIAL = < 5 oportunidades                                       |
+| started_at, finished_at                          |                                                                        |                                                                   |
+| stats                                            | jsonb                                                                  | `{ sourcesFetched, itemsNew, itemsDeduped, candidatesScored }`    |
+| engine_version, prompt_id, prompt_version, model | text                                                                   | reprodutibilidade                                                 |
+| error                                            | jsonb null                                                             | classificado, sem segredos                                        |
+| job_id                                           | text null                                                              | pg-boss                                                           |
 
 **Opportunity** (contrato do briefing §13 + campos internos)
 
@@ -340,8 +345,10 @@ no momento da criação; o par (`scheduled_at`, `timezone`) é sempre persistido
 
 Invariantes:
 
-- Unique parcial: **um** `Publication` com `status IN (IN_PROGRESS, SUCCEEDED)` por `draft_id`.
-  Nunca existe segundo post do mesmo draft, mesmo com retry.
+- Unique parcial: **um** `Publication` com `status IN (IN_PROGRESS, SUCCEEDED, AMBIGUOUS)` por `draft_id`.
+  Nunca existe segundo post do mesmo draft, mesmo com retry. `AMBIGUOUS` entra no índice (2026-10-16, revisão
+  da T-005) porque a tentativa pode ter postado: o banco bloqueia um novo claim até a reconciliação resolver a
+  linha para `SUCCEEDED` ou `FAILED`; `needs_reconciliation` no `Draft` é a guarda de aplicação, não a única.
 - Transição `PENDING → IN_PROGRESS` é um `UPDATE ... WHERE status = 'PENDING'` (claim atômico) antes
   de qualquer chamada ao LinkedIn.
 - `AMBIGUOUS` (chamada feita, resultado desconhecido) **não** é retentado automaticamente; exige
@@ -379,6 +386,23 @@ Invariantes:
 
 Toda transição da state machine, toda mudança em `AutonomySettings`, `OAuthToken`, `VoiceProfile` e
 toda chamada de publicação gera `AuditEvent`.
+
+### 2.8 Tabelas técnicas (sem entidade de domínio)
+
+Existem no schema (T-005) para sustentar invariantes de segurança e de API; não aparecem no diagrama nem têm
+endpoint próprio. Ambas carregam `user_id` e são purgadas por job de retenção.
+
+**OAuthState** (ADR-0007 N1; `docs/security/oauth-and-tokens.md` §2.1) — `id`, `user_id`, `session_id`,
+`provider`, `state_hash` unique (HMAC/SHA-256 do `state`; o valor nunca é persistido), `nonce_hash` null,
+`code_verifier_ciphertext` bytea null (PKCE, cifrado com o envelope do ADR-0004; null quando
+`LINKEDIN_PKCE=disabled`), `scopes`, `return_to` (rota lógica allowlistada, nunca URL crua), `created_at`,
+`expires_at` (≤ 10 min), `used_at`. O callback faz o claim atômico (`UPDATE … WHERE used_at IS NULL AND
+expires_at > now() RETURNING …`) antes de qualquer chamada externa, nos caminhos `code` e `error`.
+
+**IdempotencyKey** (`contracts.md` §1) — `id`, `user_id`, `route` (id da rota no registry dos contracts),
+`key` uuid, `request_hash` (sha256 do corpo canônico), `response_status`, `response_body`, `response_location`,
+`created_at`, `completed_at`, `expires_at` (`created_at` + 24 h). Unique `(user_id, route, key)`; a linha é
+reservada na mesma transação do efeito, por isso chamadas simultâneas com a mesma key produzem um único efeito.
 
 ---
 
@@ -463,22 +487,26 @@ Regras gerais:
 
 ## 4. Invariantes transversais (checklist para migrations e testes)
 
-| #   | Invariante                                                 | Como garantir                                                                                      |
-| --- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| I1  | Exatamente 5 oportunidades `CANDIDATE` por run `SUCCEEDED` | validação no serviço + teste de integração; `PARTIAL` quando < 5                                   |
-| I2  | `Opportunity` ↔ `Draft` é 1:0..1                           | unique `drafts.opportunity_id`                                                                     |
-| I3  | Regenerar/editar nunca apaga versão                        | `draft_versions` sem `UPDATE/DELETE` (trigger + privilégio)                                        |
-| I4  | Aprovação é por versão; edição invalida                    | `approved_version_id` limpo na transição `edit`                                                    |
-| I5  | Aprovação automática tem razão e política                  | `CHECK (actor_type <> 'SYSTEM' OR (reason IS NOT NULL AND policy_snapshot IS NOT NULL))`           |
-| I6  | Agendamento tem timezone explícito                         | `timezone NOT NULL` + validação IANA no Zod                                                        |
-| I7  | No máximo um `Schedule PENDING` por draft                  | unique parcial `(draft_id) WHERE status='PENDING'`                                                 |
-| I8  | Nunca dois posts do mesmo draft                            | unique parcial `(draft_id) WHERE status IN ('IN_PROGRESS','SUCCEEDED')` + `idempotency_key` unique |
-| I9  | Claim atômico antes de chamar o LinkedIn                   | `UPDATE publications SET status='IN_PROGRESS' WHERE id=$1 AND status='PENDING'` com `rowCount = 1` |
-| I10 | Tokens só cifrados; nunca na API/logs                      | colunas `bytea`, redaction Pino, DTOs sem o campo, teste de contrato                               |
-| I11 | Audit log append-only                                      | role de app sem `UPDATE/DELETE` em `audit_events`; trigger `RAISE`                                 |
-| I12 | Conteúdo externo marcado como não confiável                | `SourceItem` só entra em prompts via `input` delimitado; eval adversarial                          |
-| I13 | Cron idempotente                                           | unique `(user_id, scheduled_for)` em `curation_runs`                                               |
-| I14 | Toda raiz tem `user_id` e passa por `AuthorizationService` | lint de arquitetura (teste que varre repositórios)                                                 |
+| #   | Invariante                                                 | Como garantir                                                                                                  |
+| --- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| I1  | Exatamente 5 oportunidades `CANDIDATE` por run `SUCCEEDED` | validação no serviço + teste de integração; `PARTIAL` quando < 5                                               |
+| I2  | `Opportunity` ↔ `Draft` é 1:0..1                           | unique `drafts.opportunity_id`                                                                                 |
+| I3  | Regenerar/editar nunca apaga versão                        | `draft_versions` sem `UPDATE/DELETE` (trigger + privilégio)                                                    |
+| I4  | Aprovação é por versão; edição invalida                    | `approved_version_id` limpo na transição `edit`                                                                |
+| I5  | Aprovação automática tem razão e política                  | `CHECK (actor_type <> 'SYSTEM' OR (reason IS NOT NULL AND policy_snapshot IS NOT NULL))`                       |
+| I6  | Agendamento tem timezone explícito                         | `timezone NOT NULL` + validação IANA no Zod                                                                    |
+| I7  | No máximo um `Schedule PENDING` por draft                  | unique parcial `(draft_id) WHERE status='PENDING'`                                                             |
+| I8  | Nunca dois posts do mesmo draft                            | unique parcial `(draft_id) WHERE status IN ('IN_PROGRESS','SUCCEEDED','AMBIGUOUS')` + `idempotency_key` unique |
+| I9  | Claim atômico antes de chamar o LinkedIn                   | `UPDATE publications SET status='IN_PROGRESS' WHERE id=$1 AND status='PENDING'` com `rowCount = 1`             |
+| I10 | Tokens só cifrados; nunca na API/logs                      | colunas `bytea`, redaction Pino, DTOs sem o campo, teste de contrato                                           |
+| I11 | Audit log append-only                                      | role de app sem `UPDATE/DELETE` em `audit_events`; trigger `RAISE`                                             |
+| I12 | Conteúdo externo marcado como não confiável                | `SourceItem` só entra em prompts via `input` delimitado; eval adversarial                                      |
+| I13 | Cron idempotente                                           | unique `(user_id, scheduled_for, trigger)` em `curation_runs` (nota abaixo)                                    |
+| I14 | Toda raiz tem `user_id` e passa por `AuthorizationService` | lint de arquitetura (teste que varre repositórios)                                                             |
+
+Nota I13 (2026-10-16, revisão da T-005): `trigger` entrou no unique. O cron grava sempre `trigger = CRON`, logo o
+re-disparo do mesmo slot continua colidindo (idempotente) e um run `MANUAL` no mesmo instante não é bloqueado;
+a concorrência entre runs manuais é tratada no serviço (`409 CURATION_RUN_IN_PROGRESS`).
 
 ---
 
