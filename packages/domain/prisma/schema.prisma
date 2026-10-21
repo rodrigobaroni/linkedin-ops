@@ -346,6 +346,20 @@ model Session {
   @@map("sessions")
 }
 
+/// Failed-authentication counters (T-015, ADR-0007 §1): 5 failures within 1 minute lock the key for
+/// 15 minutes. Persisted so a restart never resets a lockout. Keys are `email:<sha256>`, `ip:<sha256>`
+/// or `reauth:<user id>`; the raw e-mail and IP are never stored here.
+model LoginThrottle {
+  key             String    @id
+  failures        Int
+  windowStartedAt DateTime  @map("window_started_at") @db.Timestamptz(3)
+  lockedUntil     DateTime? @map("locked_until") @db.Timestamptz(3)
+  updatedAt       DateTime  @map("updated_at") @db.Timestamptz(3)
+
+  @@index([updatedAt])
+  @@map("login_throttles")
+}
+
 /// Transient OAuth `state` (ADR-0007 N1, oauth-and-tokens.md §2.1). Only hashes are stored; the row is
 /// claimed atomically (`used_at`) before any call to LinkedIn and purged after expiry.
 model OAuthState {
