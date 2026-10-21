@@ -13,8 +13,12 @@ import { REQUESTED_WITH_VALUE } from "../src/common/route-access.guard.js";
 import { READINESS_PROBES, type ReadinessProbe } from "../src/health/readiness.probes.js";
 import { createLogger } from "../src/logging/logger.js";
 import { PRISMA_CLIENT } from "../src/prisma/prisma.module.js";
-import { InMemorySessionService, type TestUser } from "../src/session/in-memory-session.service.js";
-import { SESSION_COOKIE_NAME } from "../src/session/session.service.js";
+import {
+  SESSION_COOKIE_NAME,
+  SESSION_SERVICE,
+  USER_PROFILES,
+} from "../src/session/session.service.js";
+import { FakeSessionService, type TestUser } from "./fake-session.service.js";
 
 export const APP_BASE_URL = "https://ops.example.test";
 
@@ -59,7 +63,7 @@ export interface TestApp {
   app: NestFastifyApplication;
   fastify: FastifyInstance;
   request: ReturnType<typeof supertest>;
-  sessions: InMemorySessionService;
+  sessions: FakeSessionService;
   logs: LogCapture;
   env: RuntimeEnv;
   close(): Promise<void>;
@@ -78,6 +82,7 @@ export async function createTestApp(options: CreateTestAppOptions = {}): Promise
   const logs = new LogCapture();
   const logger = createLogger({ level: "info", pretty: false, stream: logs.stream });
 
+  const sessions = new FakeSessionService();
   let builder = Test.createTestingModule({
     imports: [AppModule.forRoot({ env, logger })],
     controllers: options.controllers ?? [],
@@ -87,12 +92,16 @@ export async function createTestApp(options: CreateTestAppOptions = {}): Promise
     .useValue({
       $queryRaw: () => Promise.reject(new Error("no database")),
       $disconnect: async () => {},
-    });
+    })
+    .overrideProvider(SESSION_SERVICE)
+    .useValue(sessions)
+    .overrideProvider(USER_PROFILES)
+    .useValue(sessions);
   if (options.probes) builder = builder.overrideProvider(READINESS_PROBES).useValue(options.probes);
 
   const moduleRef = await builder.compile();
   const app = moduleRef.createNestApplication<NestFastifyApplication>(
-    createFastifyAdapter(logger),
+    createFastifyAdapter(logger, env.trustedProxyCidrs),
     {
       bufferLogs: true,
       bodyParser: false,
@@ -107,7 +116,7 @@ export async function createTestApp(options: CreateTestAppOptions = {}): Promise
     app,
     fastify,
     request: supertest(app.getHttpServer()),
-    sessions: moduleRef.get(InMemorySessionService),
+    sessions,
     logs,
     env,
     close: () => app.close(),
