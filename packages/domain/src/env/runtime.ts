@@ -61,8 +61,11 @@ export interface RuntimeEnv {
    * the vault (T-052) then refuses to encrypt. Outside development the ring is mandatory.
    */
   encryptionKeyRing: EncryptionKeyRing | null;
-  /** `null` = not configured (allowed until T-038 wires the OAuth flow). */
-  linkedinPkce: LinkedInPkceMode | null;
+  /**
+   * `null` = not configured (allowed while `LINKEDIN_CLIENT_ID` is unset). `null` comes first on purpose:
+   * `<name>: <16-letter type>` matched gitleaks' linkedin-client-secret rule (see .gitleaksignore).
+   */
+  linkedinPkce: null | LinkedInPkceMode;
   /** `null` = LinkedIn integration not configured: connect/publish answer `503 SERVICE_NOT_READY`. */
   linkedin: LinkedInClientConfig | null;
 }
