@@ -4,12 +4,15 @@
  * credentials, no voice profile or Story Bank (those are Rodrigo's own words and are never invented).
  *
  * Environment: DATABASE_URL (required), SEED_USER_EMAIL (default dev@example.com),
- * SEED_USER_PASSWORD (default below, development only; never logged). Refuses to run in production.
+ * SEED_USER_PASSWORD (default below, development only; never logged). Runs only when NODE_ENV is
+ * `development` or `test` (`src/env/guards.ts`).
  */
 import { pathToFileURL } from "node:url";
-import argon2 from "argon2";
+import { hashPassword } from "../src/auth/password.js";
 import { createPrismaClient, type PrismaClient } from "../src/client.js";
+import { assertDatabaseScriptAllowed, requireDatabaseUrl } from "../src/env/guards.js";
 import { newId } from "../src/ids.js";
+import { canonicalizeUrl } from "../src/sources/canonical-url.js";
 
 export const SEED_DEFAULT_EMAIL = "dev@example.com";
 /** ≥ 15 characters (ADR-0007). Development default; override with SEED_USER_PASSWORD. */
@@ -24,25 +27,6 @@ export interface SeedSummary {
   userId: string;
   pillars: number;
   sources: number;
-}
-
-/** OWASP minimum parameters for Argon2id (19 MiB, 2 iterations, 1 lane). Calibrated later (T-008). */
-export async function hashPassword(password: string): Promise<string> {
-  return argon2.hash(password, {
-    type: argon2.argon2id,
-    memoryCost: 19_456,
-    timeCost: 2,
-    parallelism: 1,
-  });
-}
-
-/** Lowercase host, drop query string and fragment — the same normalization the API will apply. */
-export function canonicalizeUrl(raw: string): string {
-  const url = new URL(raw);
-  url.hostname = url.hostname.toLowerCase();
-  url.search = "";
-  url.hash = "";
-  return url.toString();
 }
 
 const PILLARS = [
@@ -140,13 +124,8 @@ export async function seed(prisma: PrismaClient, options: SeedOptions = {}): Pro
 }
 
 async function main(): Promise<void> {
-  if (process.env["NODE_ENV"] === "production") {
-    throw new Error("Refusing to seed: NODE_ENV=production");
-  }
-  const connectionString = process.env["DATABASE_URL"];
-  if (!connectionString) {
-    throw new Error("DATABASE_URL is not set");
-  }
+  assertDatabaseScriptAllowed(process.env, "seed");
+  const connectionString = requireDatabaseUrl(process.env);
   const prisma = createPrismaClient({ connectionString });
   try {
     const summary = await seed(prisma);
