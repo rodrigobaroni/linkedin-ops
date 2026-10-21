@@ -11,6 +11,7 @@ import {
   MoreHorizontalIcon,
   PenSquareIcon,
   RssIcon,
+  SendIcon,
   SettingsIcon,
   SparklesIcon,
 } from "lucide-react";
@@ -32,6 +33,8 @@ export type NavItem = {
 
 export const navItems: readonly NavItem[] = [
   { href: "/hoje", label: "Hoje", icon: HomeIcon, group: "primary" },
+  // MVP-0: manual text post published now (the only flow live in production for now).
+  { href: "/publicar", label: "Publicar", icon: SendIcon, group: "primary" },
   { href: "/curadoria", label: "Curadoria", icon: SparklesIcon, group: "primary" },
   { href: "/estudio", label: "Estúdio", icon: PenSquareIcon, group: "primary" },
   { href: "/calendario", label: "Calendário", icon: CalendarDaysIcon, group: "primary" },
@@ -45,7 +48,7 @@ export const navItems: readonly NavItem[] = [
 ] as const;
 
 /** Mobile bottom bar: four destinations with always-visible labels; "Mais" opens the drawer. */
-export const bottomNavHrefs: readonly Route[] = ["/hoje", "/curadoria", "/calendario"];
+export const bottomNavHrefs: readonly Route[] = ["/hoje", "/publicar", "/curadoria"];
 
 export const moreIcon = MoreHorizontalIcon;
 

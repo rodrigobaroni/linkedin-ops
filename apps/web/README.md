@@ -42,7 +42,16 @@ Vitest server (`src/test/setup.ts`). The browser worker starts only with `NODE_E
 generates `public/mockServiceWorker.js` (gitignored). `scripts/assert-no-mocks-in-bundle.mjs` runs after
 `next build` and fails if any mock marker reaches `.next/static`. Dev credentials:
 `rodrigo@example.com` / `linkedin-ops-dev-password` (mock only; 5 failures in a minute lock login for
-15 min, like the API).
+15 min, like the API). The app mounts only after the worker is active; if it fails to start, an error is
+shown instead of letting requests escape to the network.
+
+`/publicar` (MVP-0) is mocked by `src/mocks/publishing-handlers.ts` in the contract of `feat/T-061-linkedin-oauth-publish-mvp` (a8821b1), with types kept
+provisionally in
+`src/lib/api/linkedin.ts` and `src/lib/api/publications.ts` (official schemas extended with `memberName`,
+nullable `draftId`/`draftVersionId` and `text`, plus the local `POST /publications/publish-now` route) until
+the contracts branch lands. In `dev:mock`, "Conectar"/"Reconectar" marks the mock connection active and
+then really sends the browser to LinkedIn's authorize page (the web only follows `https://www.linkedin.com`
+URLs): use the back button.
 
 ## Layout
 
@@ -52,12 +61,13 @@ src/app/(auth)/login/       Public login page (no shell)
 src/app/(app)/              Route group behind RequireSession with the shell (AppShell), loading.tsx, error.tsx and the placeholder routes
 src/components/auth/        LoginForm/LoginScreen, RequireSession, LogoutButton, ReauthDialog
 src/components/shell/       Skip link, sidebar (desktop/tablet), bottom nav + "Mais" drawer (mobile), page header, route focus
+src/components/publish/     /publicar: LinkedIn connection card, composer (counter, escaped preview, confirm + 🔐), recent publications
 src/components/placeholder-screen.tsx   Header + empty/loading/error state; `?estado=vazio|carregando|erro` previews (dev only)
 src/config/navigation.ts    Navigation map (docs/product/design/navigation-map.md)
 src/config/screens.ts       Per-screen copy (docs/product/design/screen-states.md)
 src/config/mock.ts          Mocked shell data until the APIs exist (unread count); LinkedIn status derived from the session
 src/hooks/use-reauth.ts     `withElevation(run)` for 🔐 actions
-src/lib/api/                Typed fetch client (headers, CSRF store, Problem Details), auth API
+src/lib/api/                Typed fetch client (headers, CSRF store, Idempotency-Key, Problem Details), auth, LinkedIn and publications APIs
 src/lib/next-path.ts        Safe `next` destination for /login
 src/mocks/                  MSW handlers (dev + tests), browser worker, Node server, mock boot
 src/providers/              TanStack Query provider; AuthProvider (session, CSRF token in memory, reauth dialog); AutonomyModeProvider (mocked ASSISTED)

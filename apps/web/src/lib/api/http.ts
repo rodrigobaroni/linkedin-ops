@@ -1,6 +1,7 @@
 import {
   API_V1_BASE_PATH,
   CSRF_TOKEN_HEADER,
+  IDEMPOTENCY_KEY_HEADER,
   REQUESTED_WITH_HEADER,
   type RouteDefinition,
 } from "@linkedin-ops/contracts";
@@ -34,6 +35,8 @@ export type RequestOptions<Route extends RouteDefinition> = {
   body?: Route["body"] extends z.ZodType ? z.input<Route["body"]> : never;
   /** Send `X-CSRF-Token` even when the route is not marked `elevated` (defensive callers). */
   csrf?: boolean;
+  /** `Idempotency-Key` header (contracts.md §1): one UUID per user intent, reused on retries of it. */
+  idempotencyKey?: string;
   signal?: AbortSignal;
 };
 
@@ -104,6 +107,9 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     if (route.auth === "elevated" || requestOptions.csrf) {
       const token = tokenStore.get();
       if (token) headers.set(CSRF_TOKEN_HEADER, token);
+    }
+    if (requestOptions.idempotencyKey) {
+      headers.set(IDEMPOTENCY_KEY_HEADER, requestOptions.idempotencyKey);
     }
 
     let response: Response;

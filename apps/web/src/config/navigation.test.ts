@@ -8,6 +8,7 @@ const APP_DIR = join(__dirname, "..", "app", "(app)");
 /** Every route from the task scope must have a page in the App Router. */
 const REQUIRED_ROUTES = [
   "/hoje",
+  "/publicar",
   "/curadoria",
   "/estudio",
   "/estudio/[id]",
@@ -50,7 +51,14 @@ describe("navigation config", () => {
     expect(navGroups).toEqual(["primary", "editorialMemory", "secondary"]);
     const byGroup = (group: string) =>
       navItems.filter((item) => item.group === group).map((item) => item.label);
-    expect(byGroup("primary")).toEqual(["Hoje", "Curadoria", "Estúdio", "Calendário", "Histórico"]);
+    expect(byGroup("primary")).toEqual([
+      "Hoje",
+      "Publicar",
+      "Curadoria",
+      "Estúdio",
+      "Calendário",
+      "Histórico",
+    ]);
     expect(byGroup("editorialMemory")).toEqual(["Story Bank", "Voice Profile"]);
     expect(byGroup("secondary")).toEqual(["Fontes", "Analytics", "Notificações", "Configurações"]);
   });

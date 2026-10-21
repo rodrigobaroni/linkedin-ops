@@ -51,6 +51,7 @@ describe("AppShell", () => {
       .map((link) => link.textContent?.trim());
     expect(labels).toEqual([
       "Hoje",
+      "Publicar",
       "Curadoria",
       "Estúdio",
       "Calendário",
@@ -104,7 +105,7 @@ describe("AppShell", () => {
     expect(items).toHaveLength(4);
     expect(within(bottom).getByRole("link", { name: "Hoje" })).toBeInTheDocument();
     expect(within(bottom).getByRole("link", { name: "Curadoria" })).toBeInTheDocument();
-    expect(within(bottom).getByRole("link", { name: "Calendário" })).toBeInTheDocument();
+    expect(within(bottom).getByRole("link", { name: "Publicar" })).toBeInTheDocument();
 
     const more = within(bottom).getByRole("button", { name: messages.nav.more });
     // /fontes lives inside the drawer, so the trigger is marked as containing the current page.
@@ -117,7 +118,7 @@ describe("AppShell", () => {
       .getAllByRole("link")
       .map((link) => link.textContent?.trim());
     const expected = navItems
-      .filter((item) => !["/hoje", "/curadoria", "/calendario"].includes(item.href))
+      .filter((item) => !["/hoje", "/publicar", "/curadoria"].includes(item.href))
       .map((item) => item.label);
     expect(drawerLinks).toEqual(expected);
     expect(within(dialog).getByText("Modo Assistido")).toBeInTheDocument();

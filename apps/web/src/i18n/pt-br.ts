@@ -119,6 +119,127 @@ export const messages = {
     },
     required: "obrigatório",
   },
+  publish: {
+    title: "Publicar",
+    description:
+      "Escreva um post de texto, confira a prévia e publique no seu perfil do LinkedIn. Nada é publicado sem a sua confirmação.",
+    connection: {
+      title: "Conexão com o LinkedIn",
+      loading: "Verificando a conexão com o LinkedIn",
+      loadError: "Não foi possível verificar a conexão com o LinkedIn.",
+      connectedAs: (name: string) => `Conectado como ${name}`,
+      connectedUnknown: "Conectado",
+      disconnected: "Não conectado",
+      expired: "Conexão expirada",
+      reauthRequired: "Reconexão necessária",
+      expiresAt: (date: string) => `Acesso válido até ${date}.`,
+      expiredAt: (date: string) => `O acesso expirou em ${date}.`,
+      expiringSoon: (days: number) =>
+        days <= 1
+          ? "O acesso expira em menos de 1 dia. Reconecte para continuar publicando."
+          : `O acesso expira em ${days} dias. Reconecte antes para não interromper as publicações.`,
+      reconnectHint:
+        "O LinkedIn não aceita mais o acesso atual. Reconecte a conta para voltar a publicar.",
+      disconnectedHint: "Conecte sua conta do LinkedIn para publicar.",
+      connect: "Conectar LinkedIn",
+      reconnect: "Reconectar LinkedIn",
+      disconnect: "Desconectar",
+      connecting: "Abrindo o LinkedIn…",
+      disconnecting: "Desconectando…",
+      connectError: "Não foi possível iniciar a conexão com o LinkedIn. Tente novamente.",
+      disconnectError: "Não foi possível desconectar agora. Tente novamente.",
+      invalidAuthorizeUrl:
+        "A API devolveu um endereço de autorização inesperado. Nada foi aberto; avise o administrador.",
+    },
+    callback: {
+      connected: "LinkedIn conectado. Você já pode publicar.",
+      denied: "A autorização foi recusada no LinkedIn. Nada mudou; conecte de novo quando quiser.",
+      failed: "Não foi possível conectar ao LinkedIn. Tente novamente.",
+      reasons: {
+        expired:
+          "A tentativa de conexão expirou antes de voltar do LinkedIn. Clique em Conectar e conclua em até 10 minutos.",
+        invalid_state:
+          "Não foi possível validar o retorno do LinkedIn. Por segurança, nada foi conectado; tente novamente a partir desta página.",
+        exchange_failed:
+          "O LinkedIn não confirmou a autorização. Nada foi conectado; tente novamente.",
+        unavailable:
+          "O LinkedIn não está respondendo agora. Tente conectar novamente em instantes.",
+      },
+    },
+    composer: {
+      label: "Texto do post",
+      placeholder: "Escreva aqui o texto que vai para o seu perfil.",
+      counter: (count: number, max: number) => `${count} de ${max} caracteres`,
+      overLimit: (excess: number, max: number) =>
+        `O LinkedIn aceita até ${max} caracteres. Remova ${excess} ${excess === 1 ? "caractere" : "caracteres"}.`,
+      nearLimit: (left: number) => `Restam ${left} caracteres.`,
+    },
+    preview: {
+      title: "Prévia",
+      description: "Texto simples, como vai aparecer no post. Formatação HTML não é aplicada.",
+      empty: "A prévia aparece aqui quando você escrever o texto.",
+      author: (name: string) => name,
+    },
+    action: {
+      publishNow: "Publicar agora",
+      publishing: "Publicando…",
+      needsConnection: "Conecte o LinkedIn para publicar.",
+      needsText: "Escreva o texto do post para publicar.",
+    },
+    confirm: {
+      title: "Publicar agora no LinkedIn?",
+      description:
+        "Confira a conta e o texto. Depois de confirmar, pediremos sua senha e o post vai ao ar imediatamente.",
+      account: "Conta",
+      text: "Texto final",
+      characters: (count: number) => `${count} caracteres`,
+      confirm: "Confirmar e publicar",
+      cancel: "Voltar e editar",
+    },
+    result: {
+      published: "Post publicado no LinkedIn.",
+      viewPost: "Ver post no LinkedIn",
+      opensInNewTab: "(abre em nova aba)",
+      ambiguousTitle: "Não conseguimos confirmar a publicação",
+      ambiguous:
+        "O LinkedIn não respondeu a tempo e não sabemos se o post foi ao ar. Confira seu perfil antes de tentar de novo: não repetimos a publicação automaticamente.",
+      failedTitle: "O post não foi publicado",
+      retry: "Tentar novamente",
+      newPost: "Escrever outro post",
+      cancelled: "Publicação cancelada. O texto continua aqui.",
+    },
+    errors: {
+      LINKEDIN_REAUTH_REQUIRED:
+        "O LinkedIn recusou o acesso atual. Reconecte a conta e tente publicar de novo.",
+      RATE_LIMITED: "Muitas publicações em pouco tempo. Aguarde alguns minutos e tente novamente.",
+      VALIDATION_FAILED:
+        "O texto não foi aceito. Confira o tamanho e o conteúdo e tente novamente.",
+      PUBLICATION_ALREADY_EXISTS: "Este post já foi publicado. Confira as publicações recentes.",
+      IDEMPOTENCY_KEY_CONFLICT:
+        "O texto mudou durante o envio. Confira o texto e publique novamente.",
+      FORBIDDEN: "Sua conta não tem permissão para publicar.",
+      UPSTREAM_UNAVAILABLE:
+        "O LinkedIn não está respondendo agora. Nada foi publicado; tente novamente em instantes.",
+      network:
+        "Não foi possível falar com o LinkedIn Ops. Você pode tentar novamente com segurança: o mesmo envio nunca gera dois posts.",
+      linkedinRejected: "O LinkedIn recusou o post. Revise o texto e tente novamente.",
+      unexpected: "Não foi possível publicar agora. Tente novamente em instantes.",
+    },
+    recent: {
+      title: "Publicações recentes",
+      empty: "Nenhuma publicação ainda. Os posts publicados por aqui aparecem nesta lista.",
+      loadError: "Não foi possível carregar as publicações recentes.",
+      noText: "(texto indisponível)",
+      status: {
+        PENDING: "Pendente",
+        IN_PROGRESS: "Publicando",
+        SUCCEEDED: "Publicado",
+        FAILED: "Falhou",
+        AMBIGUOUS: "Não confirmado",
+      },
+      viewPost: "Ver no LinkedIn",
+    },
+  },
   notFound: {
     title: "Página não encontrada",
     description: "O endereço pode ter mudado ou o item não existe mais.",

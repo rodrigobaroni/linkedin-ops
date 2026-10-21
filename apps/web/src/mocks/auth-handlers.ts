@@ -206,6 +206,13 @@ export const authHandlers = [
   }),
 ];
 
+/** Guard for session-only handlers: `null` when the request may proceed. */
+export function requireSession(
+  cookies: Record<string, string>,
+): HttpResponse<ProblemDetails> | null {
+  return isAuthenticated(cookies) ? null : problemResponse("AUTH_REQUIRED");
+}
+
 /**
  * Guard for 🔐 handlers added later (publish now, autonomy change…): elevated session + `X-CSRF-Token`
  * bound to the session (ADR-0007 item 3). Returns `null` when the request may proceed.
