@@ -57,11 +57,11 @@ export function LinkedInConnectionCard({
   const [now] = useState(() => Date.now());
   const [error, setError] = useState<string | null>(null);
 
-  async function connect() {
+  async function connect(trigger: HTMLElement) {
     setError(null);
     setPending("connect");
     try {
-      const result = await withElevation(() => linkedin.connect());
+      const result = await withElevation(() => linkedin.connect(), { returnFocusTo: trigger });
       if (!result) return setPending(null);
       if (!isLinkedInAuthorizeUrl(result.authorizeUrl)) {
         setError(copy.invalidAuthorizeUrl);
@@ -75,11 +75,11 @@ export function LinkedInConnectionCard({
     }
   }
 
-  async function disconnect() {
+  async function disconnect(trigger: HTMLElement) {
     setError(null);
     setPending("disconnect");
     try {
-      await withElevation(() => linkedin.disconnect());
+      await withElevation(() => linkedin.disconnect(), { returnFocusTo: trigger });
     } catch {
       setError(copy.disconnectError);
     } finally {
@@ -147,7 +147,7 @@ export function LinkedInConnectionCard({
               variant="outline"
               className="max-md:h-11"
               disabled={pending !== null}
-              onClick={() => void disconnect()}
+              onClick={(event) => void disconnect(event.currentTarget)}
             >
               {pending === "disconnect" ? <Spinner /> : null}
               {pending === "disconnect" ? copy.disconnecting : copy.disconnect}
@@ -159,7 +159,7 @@ export function LinkedInConnectionCard({
             <Button
               className="max-md:h-11"
               disabled={pending !== null}
-              onClick={() => void connect()}
+              onClick={(event) => void connect(event.currentTarget)}
             >
               {pending === "connect" ? <Spinner /> : null}
               {pending === "connect"

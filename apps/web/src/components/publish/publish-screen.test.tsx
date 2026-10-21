@@ -1,5 +1,5 @@
 import { IDEMPOTENCY_KEY_HEADER } from "@linkedin-ops/contracts";
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -370,28 +370,65 @@ describe("PublishScreen", () => {
     expect(me).toMatchObject({ linkedinConnected: false });
   });
 
-  it.each([
-    ["Escape", async (user: ReturnType<typeof userEvent.setup>) => user.keyboard("{Escape}")],
-    [
-      "Cancelar",
-      async (user: ReturnType<typeof userEvent.setup>) =>
-        user.click(screen.getByRole("button", { name: messages.auth.reauth.cancel })),
-    ],
-  ])(
-    "reauth cancelled with %s returns focus to the button that started it",
-    async (_how, cancel) => {
-      const { user } = await renderPublish({ elevated: false });
-      const disconnect = screen.getByRole("button", { name: copy.connection.disconnect });
-      await user.click(disconnect);
+  describe("reauth cancelled returns focus to the button that started it", () => {
+    type User = ReturnType<typeof userEvent.setup>;
+    const cancels: [string, (user: User) => Promise<void>][] = [
+      ["Escape", (user) => user.keyboard("{Escape}")],
+      [
+        "Cancelar",
+        (user) => user.click(screen.getByRole("button", { name: messages.auth.reauth.cancel })),
+      ],
+    ];
+
+    // `fireEvent.click` does not move focus, like WebKit (the Maestri portal, Safari) on a button click:
+    // the trigger must come from the click itself, not from `document.activeElement`.
+    async function cancelReauth(user: User, cancel: (user: User) => Promise<void>) {
       await screen.findByRole("dialog", { name: messages.auth.reauth.title });
       await cancel(user);
       await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    }
+
+    it.each(cancels)("Desconectar, %s", async (_how, cancel) => {
+      const { user } = await renderPublish({ elevated: false });
+      fireEvent.click(screen.getByRole("button", { name: copy.connection.disconnect }));
+      await cancelReauth(user, cancel);
       await waitFor(() =>
         expect(screen.getByRole("button", { name: copy.connection.disconnect })).toHaveFocus(),
       );
       expect(mockPublishingState().status).toBe("ACTIVE");
-    },
-  );
+    });
+
+    it.each(cancels)("Conectar, %s", async (_how, cancel) => {
+      resetMockPublishing({ status: "DISCONNECTED" });
+      const navigate = vi.fn();
+      const user = userEvent.setup();
+      await renderApp(<PublishScreen navigate={navigate} />, { elevated: false });
+      fireEvent.click(await screen.findByRole("button", { name: copy.connection.connect }));
+      await cancelReauth(user, cancel);
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: copy.connection.connect })).toHaveFocus(),
+      );
+      expect(navigate).not.toHaveBeenCalled();
+    });
+
+    it.each(cancels)(
+      "Publicar agora, %s (status announced, focus not stolen)",
+      async (_how, cancel) => {
+        const keys = recordPublishKeys();
+        const { user } = await renderPublish({ elevated: false });
+        await user.type(screen.getByLabelText(copy.composer.label), "Post cancelado");
+        fireEvent.click(screen.getByRole("button", { name: copy.action.publishNow }));
+        const dialog = await screen.findByRole("dialog", { name: copy.confirm.title });
+        fireEvent.click(within(dialog).getByRole("button", { name: copy.confirm.confirm }));
+        await cancelReauth(user, cancel);
+        expect(await screen.findByText(copy.result.cancelled)).toBeInTheDocument();
+        await waitFor(() =>
+          expect(screen.getByRole("button", { name: copy.action.publishNow })).toHaveFocus(),
+        );
+        expect(keys).toHaveLength(0);
+      },
+    );
+  });
 
   it("connection status fails to load: offers Tentar novamente, which recovers", async () => {
     // Fails the first load and its automatic retry (`retry: 1`), then recovers.

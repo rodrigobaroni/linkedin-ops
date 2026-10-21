@@ -76,6 +76,7 @@ export function PublishComposer() {
   const [outcome, setOutcome] = useState<Outcome>({ kind: "idle" });
   const attempt = useRef<Attempt | null>(null);
   const outcomeRef = useRef<HTMLDivElement>(null);
+  const publishButtonRef = useRef<HTMLButtonElement>(null);
   const counterId = useId();
   const connection = useLinkedInConnection();
   const { publications } = usePublishingApi();
@@ -107,8 +108,10 @@ export function PublishComposer() {
     const { key } = attempt.current;
     setOutcome({ kind: "publishing" });
     try {
-      const publication = await withElevation(() =>
-        publications.publishNow({ text: finalText }, key),
+      // Reauth closes back on "Publicar agora" (the confirmation dialog's button is gone by then).
+      const publication = await withElevation(
+        () => publications.publishNow({ text: finalText }, key),
+        { returnFocusTo: publishButtonRef.current },
       );
       if (publication === undefined) {
         // Reauth cancelled: nothing was sent, the key may be reused.
@@ -139,8 +142,11 @@ export function PublishComposer() {
   }
 
   useEffect(() => {
-    // The publish button may be disabled now (text cleared): move focus to the result instead.
-    if (outcome.kind !== "idle" && outcome.kind !== "publishing") outcomeRef.current?.focus();
+    // The publish button may be disabled now (text cleared): move focus to the result instead. A cancelled
+    // reauth is the exception: the dialog returns focus to "Publicar agora" and the status is announced.
+    if (outcome.kind === "idle" || outcome.kind === "publishing" || outcome.kind === "cancelled")
+      return;
+    outcomeRef.current?.focus();
   }, [outcome]);
 
   function confirmAndPublish() {
@@ -224,6 +230,7 @@ export function PublishComposer() {
 
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
         <Button
+          ref={publishButtonRef}
           size="lg"
           className="sm:w-fit"
           disabled={!canSubmit}

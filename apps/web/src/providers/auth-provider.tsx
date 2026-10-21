@@ -34,8 +34,11 @@ export type AuthContextValue = {
   reauth: (input: ReauthInput) => Promise<void>;
   /** Re-runs `GET /auth/me` (also refreshes the CSRF token). */
   refresh: () => Promise<void>;
-  /** Opens the password dialog unless the session is already elevated; resolves `true` on success. */
-  ensureElevated: () => Promise<boolean>;
+  /**
+   * Opens the password dialog unless the session is already elevated; resolves `true` on success. Focus
+   * returns to `returnFocusTo` (the control that started the action) once it is enabled again.
+   */
+  ensureElevated: (returnFocusTo?: HTMLElement | null) => Promise<boolean>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -149,26 +152,32 @@ export function AuthProvider({
 
   const elevatedUntil = session.data?.elevatedUntil ?? null;
 
-  const ensureElevated = useCallback(() => {
-    if (isElevated(elevatedUntil)) return Promise.resolve(true);
-    // Called synchronously from the click handler, so the trigger still has focus here.
-    const active = document.activeElement;
-    const trigger = active instanceof HTMLElement && active !== document.body ? active : null;
-    return new Promise<boolean>((resolve) => {
-      // Concurrent callers share the open dialog: chain their resolvers, keep the first trigger.
-      setElevationRequest((current) =>
-        current
-          ? {
-              resolve: (elevated) => {
-                current.resolve(elevated);
-                resolve(elevated);
-              },
-              returnFocusTo: current.returnFocusTo,
-            }
-          : { resolve, returnFocusTo: trigger },
-      );
-    });
-  }, [elevatedUntil]);
+  const ensureElevated = useCallback(
+    (returnFocusTo?: HTMLElement | null) => {
+      if (isElevated(elevatedUntil)) return Promise.resolve(true);
+      // Prefer the explicit trigger: WebKit does not focus a clicked button, so `activeElement` may be an
+      // ancestor (or the body) instead of the control that started the action.
+      const active = document.activeElement;
+      const trigger =
+        returnFocusTo ??
+        (active instanceof HTMLElement && active !== document.body ? active : null);
+      return new Promise<boolean>((resolve) => {
+        // Concurrent callers share the open dialog: chain their resolvers, keep the first trigger.
+        setElevationRequest((current) =>
+          current
+            ? {
+                resolve: (elevated) => {
+                  current.resolve(elevated);
+                  resolve(elevated);
+                },
+                returnFocusTo: current.returnFocusTo,
+              }
+            : { resolve, returnFocusTo: trigger },
+        );
+      });
+    },
+    [elevatedUntil],
+  );
 
   const settleElevation = useCallback((elevated: boolean) => {
     setElevationRequest((current) => {
