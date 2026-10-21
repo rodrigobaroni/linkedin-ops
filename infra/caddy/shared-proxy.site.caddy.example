@@ -41,7 +41,10 @@ linkedin.example.com {
 				}
 				request>headers>Cookie delete
 				request>headers>Authorization delete
+				# CSRF token sent by the web on mutations and returned by login/reauth (PR #82 review, Sentinela S-1).
+				request>headers>X-Csrf-Token delete
 				resp_headers>Set-Cookie delete
+				resp_headers>X-Csrf-Token delete
 			}
 		}
 	}

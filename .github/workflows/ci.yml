@@ -398,8 +398,11 @@ jobs:
           curl_tls() { curl -4 -sS --cacert "$ca" --connect-timeout 5 --max-time 30 --retry 3 --retry-delay 2 --retry-all-errors "$@"; }
           code_value="smokecode$(openssl rand -hex 8)"
           state_value="smokestate$(openssl rand -hex 8)"
-          # Synthetic callback-shaped request: the filter must drop code/state and keep the other parameter.
-          curl_tls -o /dev/null "https://localhost/api/v1/health?code=${code_value}&state=${state_value}&keep=visible"
+          csrf_value="smokecsrf$(openssl rand -hex 8)"
+          # Synthetic callback-shaped request: the filter must drop code/state and keep the other parameter;
+          # the X-CSRF-Token request header must not reach the log either (PR #82 review, Sentinela S-1).
+          curl_tls -o /dev/null -H "X-CSRF-Token: ${csrf_value}" \
+            "https://localhost/api/v1/health?code=${code_value}&state=${state_value}&keep=visible"
           sleep 2
           logs="$(docker compose logs --no-color --no-log-prefix caddy)"
           if ! printf '%s\n' "$logs" | grep -qF '"uri":"/api/v1/health?keep=visible"'; then
@@ -407,11 +410,11 @@ jobs:
             printf '%s\n' "$logs" | grep -F '/api/v1/health' | tail -n 5 || true
             exit 1
           fi
-          if printf '%s\n' "$logs" | grep -qE "${code_value}|${state_value}"; then
-            echo "::error::code/state values reached the Caddy access log"
+          if printf '%s\n' "$logs" | grep -qE "${code_value}|${state_value}|${csrf_value}"; then
+            echo "::error::code/state/X-CSRF-Token values reached the Caddy access log"
             exit 1
           fi
-          echo "Caddy access log OK: code/state removed from request>uri, other parameters kept"
+          echo "Caddy access log OK: code/state removed from request>uri, X-CSRF-Token dropped, other parameters kept"
 
       - name: pnpm dev:infra:down stops the stack (volumes kept, as documented)
         run: |

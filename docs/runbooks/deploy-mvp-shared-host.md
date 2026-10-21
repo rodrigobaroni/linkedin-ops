@@ -17,22 +17,37 @@ Domínio: `linkedin.baroni.dedyn.io` (registro A na deSEC apontando para o IP re
   PÚBLICA do Mac (a VM não consegue decifrar), cópia para `~/Backups/linkedin-ops` no Mac e teste de
   restore real em container descartável.
 
+## Pré-requisitos de segurança (Sentinela S-3, antes do primeiro post)
+
+- Evidência de **IP público reservado** da VM (OCI: Networking → Reserved Public IPs), anotada aqui com a data.
+- **TCP/22 restrito** ao IP/CIDR do operador no **NSG/Security List da OCI** e no firewall da VM; 80/443 seguem
+  globais. Atenção: com IP residencial dinâmico, manter acesso alternativo (Cloud Shell/console serial da OCI)
+  antes de restringir, para não perder o acesso.
+
 ## Primeira vez (ordem)
 
 1. deSEC: registro A `linkedin.baroni.dedyn.io` → IP da VM. Portal do LinkedIn: redirect
    `https://linkedin.baroni.dedyn.io/api/v1/auth/linkedin/callback`.
 2. `export DEPLOY_HOST=ubuntu@<ip> DEPLOY_SSH_KEY=<chave> APP_HOST=linkedin.baroni.dedyn.io`
-3. `infra/deploy/deploy-shared-host.sh init-env` e `infra/deploy/deploy-shared-host.sh escrow-key`
-4. `infra/deploy/deploy-shared-host.sh deploy origin/main`
-5. Caddy existente: acrescentar o bloco do `.example` (hostname real), `caddy validate` e `caddy reload`
-   (backup do Caddyfile antes; reload é gracioso e não derruba os outros sites).
-6. Criar o usuário (senha por TTY, ≥15): `ssh -t <host> 'docker run --rm -it --network linkedin-ops_internal
-   --env-file ~/linkedin-ops/.env linkedin-ops/api-tools:current pnpm setup:user'` (comando final definido
-   pela T-015).
-7. Backup: `infra/deploy/backup-offsite.sh setup-key`, rodar `~/linkedin-ops/backup-db.sh` uma vez na VM,
-   `backup-offsite.sh pull` e `backup-offsite.sh restore-test` — obrigatório antes do primeiro post.
+3. `infra/deploy/deploy-shared-host.sh init-env` (idempotente) e `infra/deploy/deploy-shared-host.sh escrow-key`.
+4. `infra/deploy/backup-offsite.sh setup-key` (gera a chave GPG no Mac com senha; instala a pública, o
+   `backup-db.sh` e o cron na VM). A partir do segundo deploy, `deploy` recusa migrar sem backup.
+5. `REQUIRE_PUBLIC=0 infra/deploy/deploy-shared-host.sh deploy origin/main` (o bloco do Caddy ainda não existe).
+6. Caddy existente: backup do Caddyfile, acrescentar o bloco do `.example` com o hostname real,
+   `caddy validate` e `caddy reload` (gracioso, não derruba os outros sites). Conferir o certificado:
+   `curl -sv https://linkedin.baroni.dedyn.io/api/v1/health` (emissor Let's Encrypt). Prova do filtro de log:
+   requisição com `?code=canario&state=canario` e header `X-CSRF-Token: canario`; nenhum `canario` no log.
+7. Deploys seguintes: `infra/deploy/deploy-shared-host.sh deploy origin/main` (exige HTTPS público ok).
+8. Criar o usuário (senha por TTY, ≥15), comando definido pela T-015.
+9. Backup antes do primeiro post: rodar `~/linkedin-ops/backup-db.sh` na VM, `backup-offsite.sh pull`,
+   `backup-offsite.sh restore-test`, e `backup-offsite.sh install-launchd` **a partir do checkout principal**
+   (`~/Developer/LinkedinAutomation`, não de um floor, que pode ser removido).
 
-## Rollback
+## Falhas e rollback
 
-`deploy <sha anterior>` (as releases ficam em `~/linkedin-ops/releases/`). Migrations são só aditivas no
-MVP-0; para desfazer uma, ver `docs/runbooks/database-migrations.md`.
+- `deploy` usa lock (um deploy por vez) e imagens imutáveis por sha (`linkedin-ops/api:<sha>`).
+- Backup cifrado antes de qualquer migration; se a migration falhar, a release em execução **não** é tocada e o
+  script imprime os próximos passos (status do Prisma, `migrate resolve`, restore). Sem retry cego.
+- Se `up` ou os health checks (api `/health` e `/ready`, web, HTTPS público) falharem, `api`/`web` voltam
+  automaticamente para a release anterior (`current.sha`); `current` só avança quando tudo passa.
+- Rollback manual: `deploy <sha anterior>`; as releases ficam em `~/linkedin-ops/releases/`.
