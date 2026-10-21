@@ -1,28 +1,40 @@
 # infra/docker
 
 Stack Docker Compose do LinkedIn Ops (T-003). O arquivo base é compartilhado por desenvolvimento e
-produção (T-056); `docker-compose.dev.yml` acrescenta portas locais e hot reload.
+produção (T-056); `docker-compose.dev.yml` acrescenta o object store de dev/CI (`s3`, `s3-init`), os
+endereços internos da rede, as portas locais, `NODE_ENV=development` e o hot reload. É essa combinação
+que o job `compose-smoke` valida.
 
 ## Serviços
 
-| Serviço    | Imagem                                                               | Papel                                                                  | Porta no host (só dev)         |
-| ---------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------ |
-| `postgres` | `postgres:17-alpine@sha256:b0f956…` (mesmo digest do Testcontainers) | Banco da aplicação e do pg-boss (ADR-0002)                             | `127.0.0.1:${POSTGRES_PORT}`   |
-| `s3`       | `rustfs/rustfs:1.0.1@sha256:1803fa…` (digest multiarch)              | Object storage S3-compatible para dev/CI (ADR-0001, emenda 2026-10-16) | `127.0.0.1:${S3_PORT}`         |
-| `s3-init`  | `amazon/aws-cli:2.38.1@sha256:733d5b…`                               | One-shot: cria o bucket privado via S3 padrão e sai                    | —                              |
-| `api`      | build `apps/api/Dockerfile`                                          | API NestJS (placeholder até T-008)                                     | `127.0.0.1:3001`               |
-| `worker`   | build `apps/worker/Dockerfile`                                       | Worker pg-boss (placeholder até T-006)                                 | —                              |
-| `web`      | build `apps/web/Dockerfile`                                          | Dashboard Next.js                                                      | `127.0.0.1:3000`               |
-| `caddy`    | `caddy:2.11.7-alpine`                                                | Borda TLS, `/api/*` → api, `/` → web (`infra/caddy`)                   | `${CADDY_BIND_ADDRESS}:80/443` |
+| Serviço    | Imagem                                                               | Papel                                                                | Porta no host (só dev)         |
+| ---------- | -------------------------------------------------------------------- | -------------------------------------------------------------------- | ------------------------------ |
+| `postgres` | `postgres:17-alpine@sha256:b0f956…` (mesmo digest do Testcontainers) | Banco da aplicação e do pg-boss (ADR-0002)                           | `127.0.0.1:${POSTGRES_PORT}`   |
+| `s3`       | `rustfs/rustfs:1.0.1@sha256:1803fa…` (digest multiarch)              | Object storage S3-compatible só em dev/CI (`docker-compose.dev.yml`) | `127.0.0.1:${S3_PORT}`         |
+| `s3-init`  | `amazon/aws-cli:2.38.1@sha256:733d5b…`                               | One-shot (só dev/CI): cria o bucket privado via S3 padrão e sai      | —                              |
+| `api`      | build `apps/api/Dockerfile`                                          | API NestJS (placeholder até T-008)                                   | `127.0.0.1:3001`               |
+| `worker`   | build `apps/worker/Dockerfile`                                       | Worker pg-boss (placeholder até T-006)                               | —                              |
+| `web`      | build `apps/web/Dockerfile`                                          | Dashboard Next.js                                                    | `127.0.0.1:3000`               |
+| `caddy`    | `caddy:2.11.7-alpine`                                                | Borda TLS, `/api/*` → api, `/` → web (`infra/caddy`)                 | `${CADDY_BIND_ADDRESS}:80/443` |
 
-Volumes nomeados: `pg-data`, `s3-data`, `caddy-data`, `caddy-config`. Rede única `internal`; no arquivo
-base só o Caddy publica portas (em `127.0.0.1` por padrão; produção define `CADDY_BIND_ADDRESS=0.0.0.0`).
+Volumes nomeados: `pg-data`, `caddy-data`, `caddy-config` (base) e `s3-data` (dev). Rede única `internal`;
+no arquivo base só o Caddy publica portas (em `127.0.0.1` por padrão; produção define
+`CADDY_BIND_ADDRESS=0.0.0.0`). Em produção `DATABASE_URL` e `S3_ENDPOINT` apontam, via `.env`, para os
+serviços gerenciados (T-056); a base não sobe object store.
+
+`NODE_ENV` é modo do processo e não vem do `.env`: a base fixa `production` em `api`, `worker` e `web`; o
+override de dev fixa `development` nos três (`next dev` exige). O `NODE_ENV=development` do `.env.example`
+serve só para rodar os apps direto na máquina (`pnpm dev`).
 
 ## Como usar
 
 Pré-requisito: Docker Engine com Compose v2 (≥ 2.24, por causa de `env_file.required`) e BuildKit.
 Docker **não** está instalado na máquina de bootstrap; a validação oficial desta stack é o job
 `compose-smoke` em `.github/workflows/ci.yml` (decisão de Rodrigo, 2026-10-13).
+
+O `.env` é obrigatório: o arquivo base não tem defaults de interpolação para credenciais, banco e object
+store (`${VAR:?}`) e recusa renderizar sem ele (fail-closed; o `compose-smoke` prova isso). Os valores de
+dev existem só no `.env.example`.
 
 ```bash
 cp .env.example .env            # defaults de dev já marcados; nunca commitar o .env
@@ -33,16 +45,17 @@ pnpm dev:stack                  # stack completa com hot reload (api, worker, we
 pnpm compose ps                 # qualquer subcomando do Compose com os arquivos certos
 ```
 
-Os scripts passam `--env-file .env`; sem ele o Compose usa apenas os defaults `${VAR:-...}` do arquivo
-base, que são os mesmos "dev default" do `.env.example`.
+Os scripts de `package.json` passam `--env-file .env` e os dois arquivos Compose; sem `.env` o Compose
+falha na interpolação, de propósito.
 
 ## Variáveis que o Compose consome
 
-`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_PORT`, `S3_ACCESS_KEY_ID`,
-`S3_SECRET_ACCESS_KEY`, `S3_REGION`, `S3_BUCKET`, `S3_PORT`, `CADDY_SITE_ADDRESS`, `CADDY_TLS`,
-`CADDY_BIND_ADDRESS`, `CADDY_HSTS_MAX_AGE`, `NODE_ENV`, `APP_TIMEZONE`, `LOG_LEVEL`, `IMAGE_TAG`.
-Dentro da rede o Compose sobrescreve `DATABASE_URL` (host `postgres`) e `S3_ENDPOINT` (`http://s3:9000`)
-para `api` e `worker`; `web` não recebe `env_file` nem segredos (ADR-0001).
+Obrigatórias (`${VAR:?}`): `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `DATABASE_URL`,
+`S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`. Com default seguro:
+`S3_FORCE_PATH_STYLE`, `APP_TIMEZONE`, `LOG_LEVEL`, `IMAGE_TAG`, `CADDY_SITE_ADDRESS`, `CADDY_TLS`,
+`CADDY_BIND_ADDRESS`, `CADDY_HSTS_MAX_AGE`, `POSTGRES_PORT` e `S3_PORT` (portas só no override de dev).
+O override de dev sobrescreve `DATABASE_URL` (host `postgres`) e `S3_ENDPOINT` (`http://s3:9000`) para
+`api` e `worker`; `web` não recebe `env_file` nem segredos (ADR-0001).
 
 ## Object storage: RustFS em dev/CI
 

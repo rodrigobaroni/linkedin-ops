@@ -163,17 +163,18 @@ jobs:
 
   # --- compose-smoke (T-003) ---------------------------------------------------------------------
   # Decision by Rodrigo (2026-10-13): Docker is not available on the local machine, so the Compose stack
-  # is validated here. Credentials are generated per run (never committed); required variables are
-  # checked fail-closed; postgres and the S3 store must become healthy; an S3 round-trip (PUT ->
-  # presigned GET via curl, sha256 compared -> authenticated HEAD; unsigned and wrong-method requests
-  # must be rejected) catches S3-implementation divergences (Atlas condition); the api/web/worker
-  # images must build.
+  # is validated here, in the combination developers run (base + docker-compose.dev.yml). Credentials are
+  # generated per run (never committed); the base file must refuse to render without them (fail closed,
+  # PR #80 review); postgres and the S3 store must become healthy; an S3 round-trip (PUT -> presigned GET
+  # via curl, sha256 compared -> authenticated HEAD; unsigned and wrong-method requests must be rejected)
+  # catches S3-implementation divergences (Atlas condition); the api/web/worker images must build.
   compose-smoke:
     name: Compose smoke
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      COMPOSE_FILE: infra/docker/docker-compose.yml
+      # Colon-separated: the dev override is part of the stack under test.
+      COMPOSE_FILE: infra/docker/docker-compose.yml:infra/docker/docker-compose.dev.yml
       COMPOSE_ENV_FILES: .env
     steps:
       - name: Checkout
@@ -218,13 +219,27 @@ jobs:
           fi
           exit "$status"
 
-      - name: Validate Compose files and Caddyfile
+      - name: Validate the Compose files (dev combination and base alone) and the Caddyfile
         run: |
           set -euo pipefail
           docker compose version
           docker compose config -q
-          docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml config -q
+          docker compose -f infra/docker/docker-compose.yml config -q
           docker compose run --rm --no-deps caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
+      - name: Base file fails closed without .env (no interpolation defaults for credentials)
+        run: |
+          set -euo pipefail
+          # No --env-file, no shell variables: every `${VAR:?}` must stop `config` before anything starts.
+          if output="$(env -u COMPOSE_ENV_FILES docker compose --env-file /dev/null -f infra/docker/docker-compose.yml config -q 2>&1)"; then
+            echo "::error::the base Compose file rendered without .env; credentials must have no defaults"
+            exit 1
+          fi
+          if ! printf '%s\n' "$output" | grep -qi 'required variable'; then
+            echo "::error::config failed for another reason: $output"
+            exit 1
+          fi
+          echo "base file refused to render without .env: $(printf '%s\n' "$output" | grep -i -m1 'required variable')"
 
       - name: Start postgres and s3, wait for health checks
         run: docker compose up -d --wait postgres s3

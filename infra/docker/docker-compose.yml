@@ -1,16 +1,18 @@
 # LinkedIn Ops — base Compose stack (T-003). Shared by development and production (T-056).
 #
-# Usage (from the repository root; `.env` is created from `.env.example`):
-#   docker compose --env-file .env -f infra/docker/docker-compose.yml up -d --wait postgres s3
+# Usage (from the repository root; `.env` is required: `cp .env.example .env`):
 #   docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml up
+#   `pnpm dev:infra` / `pnpm dev:stack` wrap these commands (see infra/docker/README.md).
 #
-# Rules (threat model TM-18, TM-21; task T-003):
-# - Official images pinned by tag; third-party images (rustfs, aws-cli) also pinned by digest.
-#   Digests are refreshed by Dependabot (docker ecosystem); official-image digests arrive with T-062.
-# - Only Caddy publishes ports here (bound to CADDY_BIND_ADDRESS, 127.0.0.1 by default). Postgres and
-#   the object store are reachable from the host only through docker-compose.dev.yml.
-# - Interpolation defaults (`NAME:-value`) exist only so the stack boots in dev/CI without a .env; they must match
-#   the "dev default" values in .env.example and are refused by the apps outside NODE_ENV=development.
+# Rules (threat model TM-18, TM-21; task T-003; PR #80 review):
+# - Images pinned by tag and digest; Dependabot (docker ecosystem) proposes digest updates.
+# - Fail closed: credentials, database and object-store settings have no interpolation defaults
+#   (`${VAR:?}`), so the stack refuses to render without a complete .env. Dev defaults live only in
+#   .env.example and the CI job proves that this file alone does not start with them.
+# - NODE_ENV is the process mode, never read from .env: `production` here, `development` in
+#   docker-compose.dev.yml (which also holds the dev/CI object store and the in-network overrides).
+#   Production points DATABASE_URL and S3_ENDPOINT at the managed services through .env (T-056).
+# - Only Caddy publishes ports here (bound to CADDY_BIND_ADDRESS, 127.0.0.1 by default).
 # - `apps/web` never receives secrets (no env_file). Only api/worker read the root .env.
 
 name: linkedin-ops
@@ -24,15 +26,16 @@ x-node-app: &node-app
     - internal
 
 x-app-env: &app-env
-  NODE_ENV: ${NODE_ENV:-development}
+  NODE_ENV: production
   APP_TIMEZONE: ${APP_TIMEZONE:-America/Sao_Paulo}
   LOG_LEVEL: ${LOG_LEVEL:-info}
-  # In-network addresses override the host-oriented values of .env.
-  DATABASE_URL: postgresql://${POSTGRES_USER:-linkedin_ops}:${POSTGRES_PASSWORD:-linkedin_ops_dev}@postgres:5432/${POSTGRES_DB:-linkedin_ops}
-  S3_ENDPOINT: http://s3:9000
-  S3_REGION: ${S3_REGION:-us-east-1}
-  S3_BUCKET: ${S3_BUCKET:-linkedin-ops}
-  S3_FORCE_PATH_STYLE: "true"
+  DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+  S3_ENDPOINT: ${S3_ENDPOINT:?set S3_ENDPOINT in .env}
+  S3_REGION: ${S3_REGION:?set S3_REGION in .env}
+  S3_BUCKET: ${S3_BUCKET:?set S3_BUCKET in .env}
+  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID in .env}
+  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in .env}
+  S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
 
 services:
   postgres:
@@ -41,9 +44,9 @@ services:
     security_opt:
       - no-new-privileges:true
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-linkedin_ops}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-linkedin_ops_dev}
-      POSTGRES_DB: ${POSTGRES_DB:-linkedin_ops}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
       # pg-boss lives in its own schema of this same database (ADR-0002); no extra database needed.
     volumes:
       - pg-data:/var/lib/postgresql/data
@@ -56,62 +59,6 @@ services:
     networks:
       - internal
 
-  # S3-compatible object store for dev/CI (ADR-0001 amendment 2026-10-16). Production uses OCI Object
-  # Storage; application code talks plain S3 (SigV4, path-style, presigned URLs) through S3_* only.
-  # No vendor console or admin API is used anywhere; the console port stays disabled.
-  s3:
-    image: rustfs/rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
-    restart: unless-stopped
-    user: "10001:10001"
-    security_opt:
-      - no-new-privileges:true
-    environment:
-      RUSTFS_VOLUMES: /data
-      RUSTFS_ADDRESS: 0.0.0.0:9000
-      RUSTFS_CONSOLE_ENABLE: "false"
-      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY_ID:-linkedin_ops_dev}
-      RUSTFS_SECRET_KEY: ${S3_SECRET_ACCESS_KEY:-linkedin_ops_dev_secret}
-      RUSTFS_OBS_LOGGER_LEVEL: warn
-    volumes:
-      - s3-data:/data
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/health"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
-      start_period: 15s
-    networks:
-      - internal
-
-  # One-shot: creates the private bucket with the standard S3 API, then exits. No public policy.
-  s3-init:
-    image: amazon/aws-cli:2.38.1@sha256:733d5be1015825e4038c6016f3fa9954868ddee1f611b73be795a9cc2e706bfd
-    restart: "no"
-    security_opt:
-      - no-new-privileges:true
-    environment:
-      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-linkedin_ops_dev}
-      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-linkedin_ops_dev_secret}
-      AWS_DEFAULT_REGION: ${S3_REGION:-us-east-1}
-      AWS_ENDPOINT_URL: http://s3:9000
-      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
-      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
-      S3_BUCKET: ${S3_BUCKET:-linkedin-ops}
-    entrypoint: ["/bin/sh", "-ec"]
-    command:
-      - |
-        if aws s3api head-bucket --bucket "$$S3_BUCKET" 2>/dev/null; then
-          echo "bucket $$S3_BUCKET already exists"
-        else
-          aws s3api create-bucket --bucket "$$S3_BUCKET"
-          echo "bucket $$S3_BUCKET created"
-        fi
-    depends_on:
-      s3:
-        condition: service_healthy
-    networks:
-      - internal
-
   api:
     <<: *node-app
     build:
@@ -120,17 +67,21 @@ services:
     image: linkedin-ops/api:${IMAGE_TAG:-dev}
     env_file:
       - path: ../../.env
-        required: false
+        required: true
     environment:
       <<: *app-env
       PORT: "3001"
-    # TODO(T-008): HTTP healthcheck on GET /health (contract in packages/contracts resources/health.ts)
-    # once the NestJS app exists; until then the placeholder process exits right after start.
+    healthcheck:
+      # GET /api/v1/health answers the HealthStatus contract (packages/contracts resources/health.ts);
+      # served by the placeholder listener in apps/api/src until T-008 replaces it with the NestJS app.
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3001/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
     depends_on:
       postgres:
         condition: service_healthy
-      s3-init:
-        condition: service_completed_successfully
 
   worker:
     <<: *node-app
@@ -140,7 +91,7 @@ services:
     image: linkedin-ops/worker:${IMAGE_TAG:-dev}
     env_file:
       - path: ../../.env
-        required: false
+        required: true
     environment:
       <<: *app-env
     # TODO(T-006): liveness check for the pg-boss worker (no HTTP; e.g. heartbeat file or pg-boss
@@ -148,8 +99,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      s3-init:
-        condition: service_completed_successfully
 
   web:
     <<: *node-app
@@ -159,7 +108,7 @@ services:
     image: linkedin-ops/web:${IMAGE_TAG:-dev}
     # Presentation only: no env_file, no secrets (ADR-0001).
     environment:
-      NODE_ENV: ${NODE_ENV:-development}
+      NODE_ENV: production
       PORT: "3000"
       HOSTNAME: 0.0.0.0
     healthcheck:
@@ -194,14 +143,15 @@ services:
       retries: 6
       start_period: 10s
     depends_on:
-      - web
-      - api
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
     networks:
       - internal
 
 volumes:
   pg-data:
-  s3-data:
   caddy-data:
   caddy-config:
 
