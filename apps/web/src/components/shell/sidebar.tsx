@@ -5,7 +5,7 @@ import { PanelLeftCloseIcon, PanelLeftOpenIcon, UserRoundIcon } from "lucide-rea
 import Link from "next/link";
 import { useState } from "react";
 import type { LinkedInConnectionStatus } from "@/config/mock";
-import { type NavGroup, navGroups, navItems } from "@/config/navigation";
+import { navGroupHeadings, navGroups, navItems } from "@/config/navigation";
 import { messages } from "@/i18n/pt-br";
 import { LogoutButton } from "@/components/auth/logout-button";
 import { AutonomyIndicator } from "./autonomy-indicator";
@@ -27,12 +27,9 @@ export type SidebarProps = {
 export function Sidebar({ linkedInStatus, unreadNotifications, accountName }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
 
-  const headings: Partial<Record<NavGroup, string>> = {
-    editorialMemory: messages.nav.editorialMemory,
-  };
   const sections = navGroups.map((group) => ({
     key: group,
-    heading: headings[group],
+    heading: navGroupHeadings[group],
     items: navItems.filter((item) => item.group === group),
   }));
 

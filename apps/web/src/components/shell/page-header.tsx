@@ -17,8 +17,11 @@ import { AutonomyIndicator } from "./autonomy-indicator";
 export type PageHeaderProps = {
   title: string;
   description?: ReactNode;
-  /** Breadcrumb trail above the title; the current page is appended automatically. Empty = top level. */
-  breadcrumb?: { label: string; href: Route }[];
+  /**
+   * Breadcrumb trail above the title; the current page is appended automatically. Empty = top level. An
+   * entry without `href` is a grouping with no page of its own (e.g. "Carreira") and renders as text.
+   */
+  breadcrumb?: { label: string; href?: Route }[];
   /** Screen actions (buttons/links) rendered on the right. */
   actions?: ReactNode;
   unreadNotifications?: number;
@@ -46,7 +49,7 @@ export function PageHeader({
             <BreadcrumbList>
               {breadcrumb.map((entry) => (
                 <BreadcrumbItemWithSeparator
-                  key={entry.href}
+                  key={entry.label}
                   label={entry.label}
                   href={entry.href}
                 />
@@ -96,13 +99,17 @@ export function PageHeader({
   );
 }
 
-function BreadcrumbItemWithSeparator({ label, href }: { label: string; href: Route }) {
+function BreadcrumbItemWithSeparator({ label, href }: { label: string; href?: Route }) {
   return (
     <>
       <BreadcrumbItem>
-        <BreadcrumbLink asChild>
-          <Link href={href}>{label}</Link>
-        </BreadcrumbLink>
+        {href ? (
+          <BreadcrumbLink asChild>
+            <Link href={href}>{label}</Link>
+          </BreadcrumbLink>
+        ) : (
+          <span>{label}</span>
+        )}
       </BreadcrumbItem>
       <BreadcrumbSeparator />
     </>

@@ -53,6 +53,12 @@ the contracts branch lands. In `dev:mock`, "Conectar"/"Reconectar" marks the moc
 then really sends the browser to LinkedIn's authorize page (the web only follows `https://www.linkedin.com`
 URLs): use the back button.
 
+`/carreira/cv` (career module, PR 2) is mocked by `src/mocks/career-handlers.ts` in the contract of
+`routesV1["career.cv.*"]`, with the worker and the AI simulated: an upload answers `202` with an `EXTRACTING`
+draft that becomes `READY` (a fixed, fictitious CV) on a `GET` about 3 s later, and the screen polls meanwhile.
+In `dev:mock` the PDF's file name picks a failure: `ilegivel` (`422 CV_PDF_UNREADABLE`), `ia-fora`
+(`FAILED`/`EXTRACTION_FAILED`), `parado` (`FAILED`/`TIMED_OUT`) or `lento` (40 s of extraction).
+
 ## Layout
 
 ```text
@@ -62,12 +68,13 @@ src/app/(app)/              Route group behind RequireSession with the shell (Ap
 src/components/auth/        LoginForm/LoginScreen, RequireSession, LogoutButton, ReauthDialog
 src/components/shell/       Skip link, sidebar (desktop/tablet), bottom nav + "Mais" drawer (mobile), page header, route focus
 src/components/publish/     /publicar: LinkedIn connection card, composer (counter, escaped preview, confirm + 🔐), recent publications
+src/components/career/      /carreira/cv: PDF upload, extraction polling, section-by-section review, confirm, replace, delete (🔐)
 src/components/placeholder-screen.tsx   Header + empty/loading/error state; `?estado=vazio|carregando|erro` previews (dev only)
 src/config/navigation.ts    Navigation map (docs/product/design/navigation-map.md)
 src/config/screens.ts       Per-screen copy (docs/product/design/screen-states.md)
 src/config/mock.ts          Mocked shell data until the APIs exist (unread count); LinkedIn status derived from the session
 src/hooks/use-reauth.ts     `withElevation(run)` for 🔐 actions
-src/lib/api/                Typed fetch client (headers, CSRF store, Idempotency-Key, Problem Details), auth, LinkedIn and publications APIs
+src/lib/api/                Typed fetch client (headers, CSRF store, Idempotency-Key, Problem Details, multipart), auth, LinkedIn, publications and career CV APIs
 src/lib/next-path.ts        Safe `next` destination for /login
 src/mocks/                  MSW handlers (dev + tests), browser worker, Node server, mock boot
 src/providers/              TanStack Query provider; AuthProvider (session, CSRF token in memory, reauth dialog); AutonomyModeProvider (mocked ASSISTED)
