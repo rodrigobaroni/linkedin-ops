@@ -627,6 +627,11 @@ const ROLE_COMPLEMENT = new Set(["de", "da", "do", "dos", "das", "of"]);
 /** Complements that attach the role to a team or area ("do time", "of the team") rather than name it. */
 const ROLE_ATTACHMENTS = new Set(["da", "do", "dos", "das"]);
 const ROLE_MAX_COMPLEMENTS = 3;
+/**
+ * A complement runs over several words ("head of data engineering"; Codex review, issue #93), up to a stop word,
+ * a pause, another complement, seniority or a PT gerund ("engenheira de software desenvolvendo APIs").
+ */
+const ROLE_COMPLEMENT_WORDS = 3;
 /** Words that end the search for a title's head ("como parte do time em pagamentos", "appointed to lead"). */
 const ROLE_STOP_WORDS = new Set(
   "em no na nos nas in at on for para pelo pela com with durante during after apos onde where que that which who e and ou or & to".split(
@@ -690,7 +695,7 @@ interface RolePhrase {
   words: string[];
   /** Lengths at which the phrase may end as a title: after the head (and seniority), after each complement. */
   cuts: number[];
-  /** The word before the introducer and the introducer ("atuei como"): who the text says holds the role. */
+  /** The clause up to the introducer ("atuei como", "a colleague worked as"): who the text says holds the role. */
   context: string;
 }
 
@@ -711,7 +716,12 @@ function introducedRoles(text: string): RolePhrase[] {
   for (let index = 0; index < words.length; index += 1) {
     const introducer = introducerAt(words, index);
     if (introducer === null) continue;
-    const context = [word(index - 1), ...introducer.words].join(" ");
+    let clause = index;
+    while (clause > 0 && !words[clause - 1]?.pause) clause -= 1;
+    const context = words
+      .slice(clause, index + introducer.words.length)
+      .map((role) => role.word)
+      .join(" ");
     let start = index + introducer.words.length;
     let strong = introducer.strong;
     let from = introducer.from;
@@ -749,8 +759,20 @@ function introducedRoles(text: string): RolePhrase[] {
         if (!open() || !ROLE_COMPLEMENT.has(word(end)) || words[end]?.pause) break;
         let next = end + 1;
         if (word(end) === "of" && ARTICLES.has(word(next)) && !words[next]?.pause) next += 1;
-        if (next >= words.length) break;
-        end = next + 1;
+        const first = next;
+        while (
+          next < words.length &&
+          next - first < ROLE_COMPLEMENT_WORDS &&
+          (next === first || !words[next - 1]?.pause) &&
+          !ROLE_STOP_WORDS.has(word(next)) &&
+          !ROLE_COMPLEMENT.has(word(next)) &&
+          !ROLE_SENIORITY.has(word(next)) &&
+          !/ndo$/u.test(word(next))
+        ) {
+          next += 1;
+        }
+        if (next === first) break;
+        end = next;
         seniority();
         cuts.push(end);
       }
@@ -813,7 +835,7 @@ function coversRole(title: readonly string[], phrase: RolePhrase): boolean {
  * "Atuei como tech lead…", "Worked as a product manager…", "Fui contratado como coordenador de engenharia". A
  * role phrase passes only when one of the base CV's experience `titles` (any case) covers it, or when `reference`
  * (the cited base items of a rewritten segment, the humanizer's text before) states the same role in the same
- * context ("atuei como tech lead"): keeping a role the base CV states is not creating one, but "uma colega que
+ * clause ("atuei como tech lead"): keeping a role the base CV states is not creating one, but "uma colega que
  * atuou como product manager" does not make it the candidate's. Fails closed: a comparison it misreads as a role
  * costs a regeneration or a reverted segment.
  */

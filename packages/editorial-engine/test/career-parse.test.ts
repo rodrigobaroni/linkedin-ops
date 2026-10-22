@@ -746,6 +746,7 @@ describe("inventedRoleTitles (issue #93, Codex review)", () => {
     ],
     ["Atuei como gerente de produto.", ["Gerente"], "gerente de produto"],
     ["No papel de responsável técnico, conduzi a migração.", ["Engenheira"], "responsavel tecnico"],
+    ["Worked as head of data engineering.", ["Head of Data Science"], "head of data engineering"],
   ])("negative: '%s' with titles %j names '%s'", (text, titles, role) => {
     expect(inventedRoleTitles(text, titles).some((found) => found.startsWith(role))).toBe(true);
   });
@@ -765,6 +766,8 @@ describe("inventedRoleTitles (issue #93, Codex review)", () => {
     ["Appointed as product manager in 2023.", ["Product Manager"]],
     ["Appointed to lead the payments migration.", ["Software Engineer"]],
     ["Worked as an engineering manager of the payments team.", ["Engineering Manager"]],
+    ["Atuei como engenheira de software desenvolvendo APIs.", ["Engenheira de software sênior"]],
+    ["Worked as head of data science at a fintech.", ["Head of Data Science"]],
   ])("positive: '%s' with titles %j", (text, titles) => {
     expect(inventedRoleTitles(text, titles)).toEqual([]);
   });
@@ -774,6 +777,13 @@ describe("inventedRoleTitles with a reference (issue #93, Codex review)", () => 
   it("a role the reference states in the same context passes", () => {
     const reference = "Atuei como tech lead do time de dados.";
     expect(inventedRoleTitles("Atuei como tech lead do time de dados.", [], reference)).toEqual([]);
+  });
+
+  it("negative: an English reference that gives the role to a colleague", () => {
+    const reference = "A colleague worked as a product manager.";
+    expect(inventedRoleTitles("I worked as a product manager.", [], reference)).toEqual([
+      "product manager",
+    ]);
   });
 
   it("negative: a role the reference gives someone else", () => {
