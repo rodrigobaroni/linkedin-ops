@@ -23,6 +23,14 @@ function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
+/** A `login_throttles` row as the attempt reads it (raw SQL, column names). */
+type ThrottleRow = {
+  key: string;
+  failures: number;
+  window_started_at: Date;
+  locked_until: Date | null;
+};
+
 /**
  * Authentication-attempt counters persisted in `login_throttles`, so a lockout survives restarts. Each key
  * counts attempts in a fixed 1-minute window opened by the first one; the 5th attempt locks the key for
@@ -32,8 +40,10 @@ function sha256(value: string): string {
  *
  * An attempt is all-or-nothing across its keys (#90): one transaction locks every key, and either counts in
  * all of them (it may verify the password) or, when any key is locked, in none (it is refused). Keys are
- * locked in sorted order, so concurrent attempts with overlapping keys cannot deadlock.
+ * locked in sorted order, so concurrent attempts with overlapping keys cannot deadlock, and a key cleared by
+ * a concurrent success is recreated rather than lost (#105).
  */
+
 export class LoginThrottle {
   constructor(
     private readonly prisma: PrismaClient,
@@ -50,19 +60,19 @@ export class LoginThrottle {
     const ordered = [...new Set(keys)].sort();
     if (ordered.length === 0) return null;
     const refusedUntil = await this.prisma.$transaction(async (tx) => {
+      // One upsert per key, in sorted order: it inserts the row or locks the existing one in a single
+      // statement and returns it. A row deleted by a concurrent `reset` while this attempt waited for its
+      // lock is inserted again by PostgreSQL's ON CONFLICT retry, never lost (#105: a separate
+      // `SELECT … FOR UPDATE` skipped it in READ COMMITTED and the attempt failed with a 500).
+      const rows: ThrottleRow[] = [];
       for (const key of ordered) {
-        await tx.$executeRaw`
+        const [row] = await tx.$queryRaw<ThrottleRow[]>`
           INSERT INTO "login_throttles" ("key", "failures", "window_started_at", "updated_at")
           VALUES (${key}, 0, ${now}, ${now})
-          ON CONFLICT ("key") DO NOTHING`;
-      }
-      const rows = await tx.$queryRaw<
-        { key: string; failures: number; window_started_at: Date; locked_until: Date | null }[]
-      >`SELECT "key", "failures", "window_started_at", "locked_until"
-        FROM "login_throttles" WHERE "key" = ANY(${ordered}::text[])
-        ORDER BY "key" FOR UPDATE`;
-      if (rows.length !== ordered.length) {
-        throw new Error("login_throttles row vanished inside its own transaction");
+          ON CONFLICT ("key") DO UPDATE SET "key" = EXCLUDED."key"
+          RETURNING "key", "failures", "window_started_at", "locked_until"`;
+        if (!row) throw new Error("login_throttles upsert returned no row");
+        rows.push(row);
       }
 
       const lockedUntil = Math.max(
@@ -96,8 +106,13 @@ export class LoginThrottle {
     return Math.max(1, Math.ceil((refusedUntil - now.getTime()) / 1000));
   }
 
-  /** A successful authentication clears the counters of these keys. */
+  /**
+   * A successful authentication clears the counters of these keys: one key per statement, in sorted order,
+   * so a reset never holds two row locks and cannot deadlock with a concurrent `consume`.
+   */
   async reset(keys: readonly string[]): Promise<void> {
-    await this.prisma.loginThrottle.deleteMany({ where: { key: { in: [...keys] } } });
+    for (const key of [...new Set(keys)].sort()) {
+      await this.prisma.loginThrottle.deleteMany({ where: { key } });
+    }
   }
 }

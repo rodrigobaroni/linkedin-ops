@@ -46,6 +46,8 @@ const OWNER = {
   name: "Rodrigo",
   password: "correct horse battery staple 2026",
 };
+/** Rounds of the reauth race; the 500 of #105 showed up in a few percent of single rounds in CI. */
+const REAUTH_RACE_ROUNDS = 30;
 const META: RequestMeta = { ip: "203.0.113.9", userAgent: "vitest", correlationId: "req_test" };
 
 let container: StartedPostgreSqlContainer | undefined;
@@ -220,6 +222,24 @@ describe("HTTP auth flow against PostgreSQL", () => {
     const results = await Promise.all([attempt(), attempt(), attempt()]);
     const statuses = results.map((res) => res.status).sort();
     expect(statuses).toEqual([200, 401, 401]);
+  });
+
+  it("concurrent reauths never answer 500, round after round (#105)", async () => {
+    // The winner's success clears the throttle rows while the losers are locking them: each round must
+    // still be exactly one 200 and the rest 401, never an error.
+    for (let round = 0; round < REAUTH_RACE_ROUNDS; round += 1) {
+      const cookie = cookieFrom(await login(running.request).expect(200));
+      const attempt = () =>
+        running.request
+          .post("/api/v1/auth/reauth")
+          .set(mutationHeaders({ cookie: cookieHeader(cookie) }))
+          .send({ password: OWNER.password });
+      const results = await Promise.all([attempt(), attempt(), attempt(), attempt()]);
+      expect(results.map((res) => res.status).sort(), `round ${round}`).toEqual([
+        200, 401, 401, 401,
+      ]);
+    }
+    expect(running.logs.text).not.toContain('"statusCode":500');
   });
 
   it("logout revokes the session in the database", async () => {
