@@ -48,6 +48,36 @@ describe("worker logger (QA #101)", () => {
     expect(output).not.toContain("driverAdapterError");
   });
 
+  it("scrubs child bindings too: errors reduced, credentials redacted (#102 residue 1)", () => {
+    let output = "";
+    const stream = new Writable({
+      write: (chunk: Buffer, _encoding, callback) => {
+        output += chunk.toString("utf8");
+        callback();
+      },
+    });
+    const logger = createLogger("info", stream);
+    const child = logger.child({
+      exception: new PrismaClientKnownRequestError(),
+      ctx: { cookie: "SECRET-CHILD" },
+    });
+    child.child({ nested: { e: new PrismaClientKnownRequestError() } }).error("from a child");
+    const [line] = output
+      .trim()
+      .split("\n")
+      .map((entry) => JSON.parse(entry) as Record<string, unknown>);
+    expect(line?.["service"]).toBe("worker");
+    expect(line?.["exception"]).toMatchObject({
+      type: "PrismaClientKnownRequestError",
+      code: "P2010",
+    });
+    expect(line?.["ctx"]).toEqual({ cookie: "[redacted]" });
+    expect(line?.["nested"]).toMatchObject({ e: { type: "PrismaClientKnownRequestError" } });
+    expect(output).not.toContain(ROW_CANARY);
+    expect(output).not.toContain("SECRET-CHILD");
+    expect(output).not.toContain("driverAdapterError");
+  });
+
   it("never logs a raw error under another key or nested (#102)", () => {
     let output = "";
     const stream = new Writable({

@@ -148,3 +148,25 @@ export function safeLogArguments(args: unknown[]): unknown[] {
   if (!isErrorLike(candidate)) return args;
   return [first, serializeErrorForLog(candidate).message, ...rest];
 }
+
+/** The part of a Pino logger `scrubChildBindings` needs (no Pino dependency in the domain). */
+export interface ChildLogger {
+  child(bindings: Record<string, unknown>, options?: unknown): this;
+}
+
+/**
+ * Child bindings (`logger.child({...})`) never reach `formatters.log`, and Pino 10 resets `formatters.bindings` to
+ * the identity in every child, so neither scrubs them (#102 residue 1). This wraps `child` on the root logger so
+ * every binding object goes through `scrub` first; children are `Object.create(parent)`, so they inherit the
+ * wrapper and grandchildren are covered too.
+ */
+export function scrubChildBindings<T extends ChildLogger>(
+  logger: T,
+  scrub: (value: unknown) => unknown = scrubLogObject,
+): T {
+  const child = logger.child;
+  logger.child = function scrubbedChild(this: T, bindings, options) {
+    return child.call(this, scrub(bindings) as Record<string, unknown>, options);
+  };
+  return logger;
+}
