@@ -426,3 +426,81 @@ describe("validateRuntimeEnv · TRUSTED_PROXY_CIDRS (T-015)", () => {
     expect(issues.join("\n")).not.toContain(value);
   });
 });
+
+describe("validateRuntimeEnv · worker OpenAI and job fetching (Career, ADR-0002, ADR-0008)", () => {
+  const OPENAI_KEY = `sk-test-${randomBytes(24).toString("hex")}`;
+  const WORKER = { service: "worker" } as const;
+
+  function workerIssues(env: Record<string, string | undefined>): string[] {
+    try {
+      validateRuntimeEnv(env, WORKER);
+    } catch (error) {
+      if (error instanceof RuntimeEnvError) return [...error.issues];
+      throw error;
+    }
+    return [];
+  }
+
+  it("requires OPENAI_API_KEY and OPENAI_MODEL for the worker in production", () => {
+    const issues = workerIssues(PRODUCTION);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^OPENAI_API_KEY is required/),
+        expect.stringMatching(/^OPENAI_MODEL is required/),
+      ]),
+    );
+  });
+
+  it("accepts a production worker with both and never puts the key in a message", () => {
+    const env = validateRuntimeEnv(
+      { ...PRODUCTION, OPENAI_API_KEY: OPENAI_KEY, OPENAI_MODEL: "gpt-5.1-mini" },
+      WORKER,
+    );
+    expect(env.openai).toEqual({ apiKey: OPENAI_KEY, model: "gpt-5.1-mini" });
+    expect(env.service).toBe("worker");
+    const issues = workerIssues({
+      ...PRODUCTION,
+      OPENAI_API_KEY: OPENAI_KEY,
+      OPENAI_MODEL: "bad model!",
+    });
+    expect(issues.join("\n")).not.toContain(OPENAI_KEY);
+  });
+
+  it("the API never reads OpenAI credentials, even in production", () => {
+    expect(validateRuntimeEnv(PRODUCTION).openai).toBeNull();
+    expect(
+      validateRuntimeEnv({ ...PRODUCTION, OPENAI_API_KEY: OPENAI_KEY, OPENAI_MODEL: "gpt-5.1" })
+        .openai,
+    ).toBeNull();
+  });
+
+  it("outside production the worker may run unconfigured, but not half-configured", () => {
+    expect(validateRuntimeEnv(EXAMPLE, WORKER).openai).toBeNull();
+    expect(workerIssues({ ...EXAMPLE, OPENAI_MODEL: "gpt-5.1" })).toEqual([
+      expect.stringMatching(/^OPENAI_API_KEY is required/),
+    ]);
+  });
+
+  it("refuses short, spaced or placeholder keys outside development", () => {
+    expect(
+      workerIssues({ ...PRODUCTION, OPENAI_API_KEY: "sk-short", OPENAI_MODEL: "gpt-5.1" }),
+    ).toEqual([expect.stringMatching(/^OPENAI_API_KEY must be a single token/)]);
+    expect(
+      workerIssues({
+        ...PRODUCTION,
+        OPENAI_API_KEY: "change-me-openai-key-placeholder",
+        OPENAI_MODEL: "gpt-5.1",
+      }),
+    ).toEqual([expect.stringMatching(/placeholder/)]);
+  });
+
+  it("JOB_FETCH_LINKEDIN defaults to enabled and accepts only enabled|disabled", () => {
+    expect(validateRuntimeEnv(PRODUCTION).jobFetchLinkedIn).toBe("enabled");
+    expect(
+      validateRuntimeEnv({ ...PRODUCTION, JOB_FETCH_LINKEDIN: "disabled" }).jobFetchLinkedIn,
+    ).toBe("disabled");
+    expect(issuesOf({ ...PRODUCTION, JOB_FETCH_LINKEDIN: "off" })).toEqual([
+      "JOB_FETCH_LINKEDIN must be one of enabled, disabled",
+    ]);
+  });
+});
