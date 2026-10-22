@@ -466,7 +466,19 @@ describe("validateWorkerEnv (Career; ADR-0002, ADR-0008, Sentinela PR #89)", () 
       databaseUrl: DB_URL,
       openai: { apiKey: OPENAI_KEY, model: "gpt-5.1-mini" },
       jobFetchLinkedIn: "enabled",
+      retentionPurge: "dry-run",
     });
+  });
+
+  it("RETENTION_PURGE defaults to dry-run and accepts only dry-run|enabled (T-063)", () => {
+    const base = { ...WORKER_PRODUCTION, OPENAI_API_KEY: OPENAI_KEY, OPENAI_MODEL: "gpt-5.1-mini" };
+    expect(validateWorkerEnv(base).retentionPurge).toBe("dry-run");
+    expect(validateWorkerEnv({ ...base, RETENTION_PURGE: "enabled" }).retentionPurge).toBe(
+      "enabled",
+    );
+    expect(workerIssues({ ...base, RETENTION_PURGE: "on" })).toEqual([
+      "RETENTION_PURGE must be one of dry-run, enabled",
+    ]);
   });
 
   it("never reads API secrets, even when present", () => {
@@ -483,6 +495,7 @@ describe("validateWorkerEnv (Career; ADR-0002, ADR-0008, Sentinela PR #89)", () 
       "logLevel",
       "nodeEnv",
       "openai",
+      "retentionPurge",
     ]);
   });
 
