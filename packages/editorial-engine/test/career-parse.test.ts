@@ -880,8 +880,6 @@ describe("QA on PR #98 (9f02a0d)", () => {
     ["programadora", "programadora"],
     ["programador", "programador"],
     ["agilista", "agilista"],
-    ["staff", "staff"],
-    ["principal", "principal"],
     ["tech recruiter", "tech recruiter"],
     ["recrutadora", "recrutadora"],
     ["professora", "professora"],
@@ -930,6 +928,54 @@ describe("QA on PR #98 (9f02a0d)", () => {
         "Software Engineer",
         "Tech Lead",
       ]),
+    ).toEqual([]);
+  });
+});
+
+describe("Re-QA on PR #98 (847efbc): principal and staff are modifiers", () => {
+  const titles = ["Engenheira de software"];
+
+  it.each([
+    "Atuei como principal responsável pela migração.",
+    "Fui o principal responsável pela migração.",
+    "Fui a principal responsável pela migração.",
+    "Atuei como principal ponto de contato do cliente.",
+    "Atuei como principal referência técnica do time.",
+    "Atuei como principal interlocutora com o cliente.",
+    "Atuei como principal interlocutor com o cliente.",
+    "Atuei como principal articuladora da migração.",
+    "Atuei como principal articulador da migração.",
+    "Sou a principal referência em PostgreSQL do time.",
+    "Como principal objetivo, reduzi incidentes.",
+    "Como principal resultado, reduzi incidentes.",
+    "As the principal investigator, I led the study.",
+    "As the principal contributor, I led the migration.",
+    "Atuei como staff de apoio no evento.",
+    "Trabalhei como staff de apoio no evento.",
+    "Atuei como contato técnico do cliente.",
+    "Trabalhei como ponte entre o PO e o time.",
+    "Apresentei a migração às 2 PM.",
+    "Reunião diária às 9 PM com o time.",
+  ])("positive: '%s' presents no role", (text) => {
+    expect(inventedRoleTitles(text, titles, "", "")).toEqual([]);
+  });
+
+  it.each([
+    ["Liderei como principal engineer.", "principal engineer"],
+    ["Atuei como engenheira principal.", "engenheira principal"],
+    ["Fui a principal desenvolvedora do módulo.", "principal desenvolvedora"],
+    ["Worked as a staff engineer.", "staff engineer"],
+    ["Atuei como engenheira staff.", "engenheira staff"],
+    ["Liderei a migração como principal PM.", "principal pm"],
+  ])("negative: '%s' is rejected", (text, role) => {
+    expect(inventedRoleTitles(text, titles, "", "").some((found) => found.startsWith(role))).toBe(
+      true,
+    );
+  });
+
+  it("positive: 'engenheira principal' passes when it is the base CV's title", () => {
+    expect(
+      inventedRoleTitles("Atuei como engenheira principal.", ["Engenheira Principal"]),
     ).toEqual([]);
   });
 });

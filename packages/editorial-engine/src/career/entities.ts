@@ -569,8 +569,8 @@ export function titlesFromCredentials(
 /**
  * Words that head a role title once a role introducer presents them (issue #93): the role nouns plus leadership,
  * founder, coaching, seniority and C-level terms, and roles and acronyms that follow a plain `como`/`as` ("Liderei
- * a migração como PO / SRE / gestora de TI / programadora / professora"; QA on PR #98). Wider than `ROLE_NOUNS`, which only cuts titles out of
- * credentials.
+ * a migração como PO / SRE / gestora de TI / programadora / professora"; QA on PR #98). Wider than `ROLE_NOUNS`,
+ * which only cuts titles out of credentials. `principal` and `staff` are `ROLE_MODIFIERS`, not heads.
  */
 const ROLE_TITLE_WORDS = new Set([
   ...ROLE_NOUNS,
@@ -578,8 +578,8 @@ const ROLE_TITLE_WORDS = new Set([
   lider head chefe coordenador coordenadora coordinator diretor diretora director supervisor supervisora
   presidente president cto ceo cfo coo cio cpo vp intern estagiario estagiaria trainee senior pleno junior sr jr
   founder cofounder fundador fundadora cofundador cofundadora socio socia partner mentor mentora coach evangelist
-  evangelista advocate steward po pm sre dba gestor gestora programador programadora programmer agilista staff
-  principal recruiter recrutador recrutadora professor professora teacher instrutor instrutora instructor
+  evangelista advocate steward po pm sre dba gestor gestora programador programadora programmer agilista
+  recruiter recrutador recrutadora professor professora teacher instrutor instrutora instructor
   `
     .split(/\s+/u)
     .filter(Boolean),
@@ -598,6 +598,8 @@ interface RoleIntroducer {
    * candidate even outside `ROLE_TITLE_WORDS` (Maestro on PR #98).
    */
   copula?: boolean;
+  /** It names a role ("papel de", "cargo de", "role of"): what follows is a role even if it is in `NOT_ROLES`. */
+  named?: boolean;
 }
 
 /**
@@ -611,6 +613,7 @@ const INTRODUCERS: RoleIntroducer[] = [
     strong: words.length > 1,
     promotion: false,
     from: false,
+    named: words.length > 1,
   })),
   ...["promoted to", "promovido a", "promovida a", "promovido para", "promovida para"]
     .concat(["appointed", "nomeado", "nomeada"])
@@ -665,8 +668,14 @@ const INTRODUCERS: RoleIntroducer[] = [
     from: true,
   })),
 ];
+/**
+ * Words that make a role title only next to a role noun (re-QA on PR #98): before it ("principal engineer",
+ * "principal desenvolvedora") they are inside the head search's phrase; after it ("engenheira principal") they are
+ * seniority. Alone they are skipped ("como principal responsável", "staff de apoio").
+ */
+const ROLE_MODIFIERS = new Set(["principal", "staff"]);
 /** What may follow a title's head and still be the title: seniority ("engenheiro sênior") and complements. */
-const ROLE_SENIORITY = new Set(["senior", "pleno", "junior", "sr", "jr"]);
+const ROLE_SENIORITY = new Set(["senior", "pleno", "junior", "sr", "jr", ...ROLE_MODIFIERS]);
 const ROLE_COMPLEMENT = new Set(["de", "da", "do", "dos", "das", "of"]);
 /** Complements that attach the role to a team or area ("do time", "of the team") rather than name it. */
 const ROLE_ATTACHMENTS = new Set(["da", "do", "dos", "das"]);
@@ -684,12 +693,14 @@ const ROLE_STOP_WORDS = new Set(
   ),
 );
 /**
- * What a strong introducer or a copula may present that is not a role ("Atuei como parte do time", "as part of",
- * "Served as the point of contact", "I was a key contributor", "I am a strong believer"; QA on PR #98).
+ * What an introducer may present that is not a role ("Atuei como parte do time", "as part of", "Served as the point
+ * of contact", "I was a key contributor", "I am a strong believer", "como principal responsável"; QA on PR #98).
+ * Opening the phrase (after `ROLE_MODIFIERS`), one ends the search: "Trabalhei como ponte entre o PO e o time".
  */
 const NOT_ROLES = new Set(
-  `parte part ponte bridge referencia reference ponto point contact elo apoio suporte support membro member interface
-  voz voice contributor believer`
+  `parte part ponte bridge referencia reference ponto point contact contato elo apoio suporte support membro member
+  interface voz voice contributor believer responsavel objetivo resultado interlocutor interlocutora articulador
+  articuladora investigator`
     .split(/\s+/u)
     .filter(Boolean),
 );
@@ -743,7 +754,9 @@ function roleWords(text: string): RoleWord[] {
   // A typographic apostrophe is the ASCII one ("I’m"; QA on PR #98).
   const normalized = text.normalize("NFKC").replace(/[\u2018\u2019\u02bc]/gu, "'");
   for (const raw of normalized.split(/[\s/\u2013\u2014-]+/u)) {
-    const word = fold(raw.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}+#]+$/gu, ""));
+    const cleaned = raw.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}+#]+$/gu, "");
+    // "às" (à + as) keeps its accent: folded it would be the introducer "as" ("às 2 PM"; re-QA on PR #98).
+    const word = /^às$/iu.test(cleaned.normalize("NFC")) ? "às" : fold(cleaned);
     if (word.length === 0) continue;
     const trail = /[^\p{L}\p{N}+#]+$/u.exec(raw)?.[0] ?? "";
     result.push({
@@ -814,6 +827,7 @@ function introducedRoles(text: string, vocabulary: ReadonlySet<string>): RolePhr
       .join(" ");
     let start = index + introducer.words.length;
     let strong = introducer.strong;
+    let named = introducer.named === true;
     let promotion = introducer.promotion;
     let from = introducer.from;
     let window = ROLE_WINDOW;
@@ -829,32 +843,37 @@ function introducedRoles(text: string, vocabulary: ReadonlySet<string>): RolePhr
         if (nested === null) break;
         start += nested.words.length;
         strong ||= nested.strong;
+        named ||= nested.named === true;
         promotion ||= nested.promotion;
         from ||= nested.from;
       }
+      let opener = start;
+      while (ROLE_MODIFIERS.has(word(opener)) && !words[opener]?.pause) opener += 1;
+      if (!named && NOT_ROLES.has(word(opener))) break;
       let head = -1;
       // "Promovido de analista a analista sênior": the source role ends at `a`.
       const stop = (at: number) =>
         ROLE_STOP_WORDS.has(word(at)) || (from && ROLE_FROM_TO.has(word(at)));
       for (let at = start; at < Math.min(words.length, start + window); at += 1) {
         if (stop(at)) break;
-        if (ROLE_TITLE_WORDS.has(word(at))) head = at;
+        // "às 2 PM" is a time, not a product manager.
+        const time = word(at) === "pm" && /^\d/u.test(word(at - 1));
+        if (ROLE_TITLE_WORDS.has(word(at)) && !time) head = at;
         if (words[at]?.pause) break;
       }
       const candidate =
         copula &&
-        !NOT_ROLES.has(word(start)) &&
-        !COPULA_NOT_ROLES.has(word(start)) &&
-        !vocabulary.has(word(start)) &&
-        covered[start] === undefined &&
-        (article || (word(start).length >= 5 && AGENTIVE.test(word(start))));
-      if (head < 0 && ((strong && !NOT_ROLES.has(word(start))) || candidate)) {
-        for (let at = start; at < Math.min(words.length, start + ROLE_STRONG_WINDOW); at += 1) {
+        !COPULA_NOT_ROLES.has(word(opener)) &&
+        !vocabulary.has(word(opener)) &&
+        covered[opener] === undefined &&
+        (article || (word(opener).length >= 5 && AGENTIVE.test(word(opener))));
+      if (head < 0 && (strong || candidate)) {
+        for (let at = opener; at < Math.min(words.length, opener + ROLE_STRONG_WINDOW); at += 1) {
           if (stop(at) || ROLE_COMPLEMENT.has(word(at))) break;
           head = at;
           if (words[at]?.pause) break;
         }
-        if (head >= 0 && NOT_ROLES.has(word(head))) head = -1;
+        if (head >= 0 && !named && NOT_ROLES.has(word(head))) head = -1;
       }
       if (head < 0) break;
       let end = head + 1;
@@ -927,6 +946,7 @@ function introducedRoles(text: string, vocabulary: ReadonlySet<string>): RolePhr
         }
       }
       strong = false;
+      named = false;
       copula = false;
       window = words.length;
     }
