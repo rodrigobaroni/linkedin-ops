@@ -73,9 +73,10 @@ export interface SafeHttpGetOptions {
   signal: AbortSignal;
   /**
    * Runs before each request is sent, with the URL about to be requested: the original URL (`hop` 0) and every
-   * redirect target. Throwing stops the chain; nothing is sent for that hop.
+   * redirect target. Throwing stops the chain; nothing is sent for that hop. Returning a URL sends that one
+   * instead (a normalized form), revalidated with the same rules.
    */
-  beforeHop?: (url: URL, hop: number) => Promise<void>;
+  beforeHop?: (url: URL, hop: number) => Promise<URL | undefined>;
 }
 
 export interface SafeHttpResponse {
@@ -115,7 +116,8 @@ export class SafeHttpClient {
     let networkMs = 0;
     for (let hop = 0; ; hop += 1) {
       if (options.signal.aborted) throw new SafeHttpError("aborted");
-      await options.beforeHop?.(url, hop);
+      const replaced = await options.beforeHop?.(url, hop);
+      if (replaced !== undefined) url = this.validateUrl(replaced.href);
       const started = Date.now();
       const remaining = this.timeoutMs - networkMs;
       if (remaining <= 0) throw new SafeHttpError("timeout");

@@ -264,13 +264,31 @@ describe("SafeHttpClient: limits", () => {
         signal: signal(),
         beforeHop: (url, hop) => {
           seen.push(`${hop}:${url.pathname}`);
-          return hop === 2 ? Promise.reject(new Error("policy")) : Promise.resolve();
+          return hop === 2 ? Promise.reject(new Error("policy")) : Promise.resolve(undefined);
         },
       })
       .catch((caught: unknown) => caught);
     expect((error as Error).message).toBe("policy");
     expect(seen).toEqual(["0:/r0", "1:/r1", "2:/r2"]);
     expect(requests.map((r) => r.path)).toEqual(["/r0", "/r1"]);
+  });
+
+  it("sends the URL beforeHop returns, revalidated", async () => {
+    await serve(html("ok"));
+    const http = client({}, local("jobs.example.test"));
+    await http.get(site("/job?trk=x"), {
+      signal: signal(),
+      beforeHop: (url) => Promise.resolve(new URL(url.pathname, url)),
+    });
+    expect(requests.map((r) => r.path)).toEqual(["/job"]);
+    const error = await failure(
+      http.get(site(), {
+        signal: signal(),
+        beforeHop: () => Promise.resolve(new URL(`http://127.0.0.1:${port}/`)),
+      }),
+    );
+    expect(error.code).toBe("ssrf_blocked");
+    expect(requests).toHaveLength(1);
   });
 
   it("accepts exactly 2 MB and refuses 2 MB + 1 byte", async () => {
@@ -334,7 +352,7 @@ describe("SafeHttpClient: limits", () => {
     await serve(redirectChain(1));
     const response = await client({ timeoutMs: 150 }, local("jobs.example.test")).get(site("/r0"), {
       signal: signal(),
-      beforeHop: () => new Promise((resolve) => setTimeout(resolve, 200)),
+      beforeHop: () => new Promise((resolve) => setTimeout(() => resolve(undefined), 200)),
     });
     expect(response.body).toBe("end");
   });
