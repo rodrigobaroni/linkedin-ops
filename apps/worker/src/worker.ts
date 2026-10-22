@@ -9,7 +9,7 @@ import { createJobRunner } from "./jobs/runner.js";
 import { WORK_OPTIONS, WORKER_QUEUES, provisionQueues } from "./jobs/queues.js";
 
 export interface WorkerDeps {
-  boss: PgBoss;
+  boss: Pick<PgBoss, "createQueue" | "updateQueue" | "getQueue" | "work">;
   logger: Logger;
   /** `null` until the Career stores are wired (PR 2/3): queues are provisioned but not consumed. */
   career: CareerHandlers | null;

@@ -3,13 +3,10 @@
 // container healthcheck. SIGTERM/SIGINT stop gracefully.
 import { RuntimeEnvError, validateWorkerEnv, type WorkerRuntimeEnv } from "@linkedin-ops/domain";
 import { PgBoss } from "pg-boss";
-import { startHeartbeat } from "./health/heartbeat.js";
 import { wireCareer } from "./career/wiring.js";
 import { createLogger } from "./logger.js";
 import { PGBOSS_SCHEMA_NAME } from "./jobs/queues.js";
-import { registerWorkers } from "./worker.js";
-
-const STOP_TIMEOUT_MS = 30_000;
+import { startWorkerLifecycle } from "./lifecycle.js";
 
 async function main(): Promise<void> {
   let env: WorkerRuntimeEnv;
@@ -35,29 +32,8 @@ async function main(): Promise<void> {
   // The Career stores are bound to the domain repositories in PR 2 (CV) and PR 3 (postings).
   const career = wireCareer(env, logger, null);
 
-  await boss.start();
-  await registerWorkers({ boss, logger, career });
-  const heartbeat = startHeartbeat({
-    probe: () => boss.getQueue("cv.tailor"),
-    onError: (error) =>
-      logger.warn(
-        { errorClass: error instanceof Error ? error.name : "unknown" },
-        "heartbeat probe failed",
-      ),
-  });
+  await startWorkerLifecycle({ boss, logger, career });
   logger.info({ nodeEnv: env.nodeEnv, openai: env.openai !== null }, "worker started");
-
-  let stopping = false;
-  const stop = async (signal: string) => {
-    if (stopping) return;
-    stopping = true;
-    logger.info({ signal }, "worker stopping");
-    heartbeat.stop();
-    await boss.stop({ graceful: true, timeout: STOP_TIMEOUT_MS });
-    logger.info("worker stopped");
-  };
-  process.once("SIGTERM", () => void stop("SIGTERM"));
-  process.once("SIGINT", () => void stop("SIGINT"));
 }
 
 await main();
