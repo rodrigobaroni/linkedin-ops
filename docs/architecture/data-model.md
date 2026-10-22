@@ -410,7 +410,10 @@ reservada na mesma transação do efeito, por isso chamadas simultâneas com a m
 **CvBase** (`cv_bases`) — `id`, `user_id`, `version` int ≥ 1 (unique `(user_id, version)`), `status`
 {`EXTRACTING`, `READY`, `FAILED`}, `failure_reason` {`EXTRACTION_FAILED`, `TIMED_OUT`} null, `content` jsonb null
 (`CvStructured` dos contracts, validado na escrita e na leitura; objeto JSON ≤ 256 KiB), `extracted_text` text null
-(≤ 60 000 caracteres), `is_active` bool, `confirmed_at` null (= rascunho), `created_at`, `updated_at`.
+(≤ 60 000 caracteres), `parse_warnings` jsonb null (array `ParseWarning`), `injection_suspected` bool (padrão
+false), `injection_evidence` text null (≤ 500 caracteres, só com `injection_suspected`; dado pessoal, nunca em log
+ou audit), `generation` jsonb null (modelo e versões de prompt/engine, ADR-0005 §3), `is_active` bool,
+`confirmed_at` null (= rascunho), `created_at`, `updated_at`.
 
 - **Dado pessoal.** O PDF enviado nunca é gravado: a API extrai só o texto, zera o buffer e grava o rascunho
   `EXTRACTING` com `extracted_text`. O job `cv.extract` recebe só `cvBaseId`; ao terminar, o texto é apagado e o
