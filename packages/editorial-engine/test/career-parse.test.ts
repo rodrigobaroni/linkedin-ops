@@ -201,6 +201,8 @@ describe("parseCvTailorResponse (cv-tailor)", () => {
         ["client", "Delivered the Kafka integration for Itaú."],
         ["project", "Led the Kafka rollout of project Phoenix."],
         ["Crivo repro", "Delivered Project Apollo for Nubank using Kafka."],
+        ["name opening the sentence (Sentinela 2a)", "Nubank project used Kafka."],
+        ["name opening the sentence (Crivo)", "Nubank delivered Kafka streaming."],
       ];
       for (const [kind, text] of CANARIES) {
         it(`rejects a new ${kind} in an added segment`, () => {
@@ -248,6 +250,63 @@ describe("parseCvTailorResponse (cv-tailor)", () => {
         }
         const result = parseCvTailorResponse(output, { base: baseCv, job: extended, target });
         expect(!result.ok && result.error.issues).toContain("seg-3: hard limit, new entity");
+      });
+
+      describe("a cited requirement releases competence terms, never named entities (Sentinela 2b)", () => {
+        function withRequirement(text: string, segmentText: string) {
+          const output = tailoringOutput();
+          const extended = {
+            ...job,
+            requirements: job.requirements.map((r) =>
+              r.id === "req-3" ? { ...r, text, evidence: "Kafka is a plus" } : r,
+            ),
+          };
+          const seg = output.tailoredCv.experiences[0]?.bullets.segments[1];
+          if (seg) seg.text = segmentText;
+          return parseCvTailorResponse(output, { base: baseCv, job: extended, target });
+        }
+
+        it("the client named in the requirement is not released", () => {
+          const result = withRequirement(
+            "Kafka streaming for client Nubank",
+            "Built Kafka streaming for Nubank.",
+          );
+          expect(!result.ok && result.error.issues).toContain("seg-3: hard limit, new entity");
+        });
+
+        it("the project named in the requirement is not released", () => {
+          const result = withRequirement(
+            "Experience with Kafka on project Apollo",
+            "Ran Kafka consumers for Apollo.",
+          );
+          expect(!result.ok && result.error.issues).toContain("seg-3: hard limit, new entity");
+        });
+
+        it("the employer named by the posting is not released", () => {
+          const result = withRequirement(
+            "Kafka at Fictional Corp scale",
+            "Ran Kafka at Fictional Corp scale.",
+          );
+          expect(!result.ok && result.error.issues).toContain("seg-3: hard limit, new entity");
+        });
+
+        it("the technology of the same requirement still is", () => {
+          const result = withRequirement(
+            "Kafka streaming for client Nubank",
+            "Built Kafka streaming pipelines.",
+          );
+          expect(result.ok).toBe(true);
+        });
+      });
+
+      it("an opening action verb or a common word is not a name", () => {
+        for (const text of [
+          "Led the billing migration to durable queues.",
+          "Evaluated Kafka for event streaming.",
+          "Backend migration of the billing service.",
+        ]) {
+          expect(tailor(withBullet(1, text)).ok, text).toBe(true);
+        }
       });
 
       it("accepts entities already in the base CV and translated base skills", () => {

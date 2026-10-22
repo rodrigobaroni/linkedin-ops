@@ -262,21 +262,13 @@ export function parseCvTailorResponse(
   const baseNumbers = new Set(numericTokens(cvFullText(base)));
   const entityGuard = createEntityGuard(base, job);
   const promotedSegmentIds: string[] = [];
-  for (const { segment, block } of listSegments(draft.data)) {
+  for (const { segment } of listSegments(draft.data)) {
     for (const id of segment.targetRequirementIds) {
       if (!requirementIds.has(id)) issues.push(`${segment.segmentId}: unknown requirement ${id}`);
     }
     // D4 hard limits 1, 2 and 4: no employer, title, date, institution, certification, client, project or
     // other proper noun absent from the base CV, in added and rewritten text alike.
-    if (
-      // In a skills list the first word is a name, not a verb: it counts for added skills (which must come
-      // from the cited requirement); a rewritten skill is a translation of a base CV skill.
-      entityGuard.newEntities(
-        segment.text,
-        segment.targetRequirementIds,
-        block === "skills" && segment.provenance === "added",
-      ).length > 0
-    ) {
+    if (entityGuard.newEntities(segment.text, segment.targetRequirementIds).length > 0) {
       issues.push(`${segment.segmentId}: hard limit, new entity`);
     }
     if (segment.provenance === "added") {

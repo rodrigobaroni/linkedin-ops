@@ -303,7 +303,7 @@ describe("cv.tailor", () => {
   });
 
   it("regenerates the humanizer at most twice, then delivers and flags", async () => {
-    const tellBullet = "Passionate about migrating the billing service to durable queues.";
+    const tellBullet = "Led the billing migration, passionate about durable queues.";
     const { h, saved, llm } = handlers({
       "cv-tailor": tailoringOutput(tellBullet),
       "cv-humanize": humanizeOutput({}, { ...segmentTexts, "seg-2": tellBullet }),
@@ -319,7 +319,7 @@ describe("cv.tailor", () => {
   });
 
   it("stops regenerating as soon as the checker passes", async () => {
-    const tellBullet = "Passionate about migrating the billing service to durable queues.";
+    const tellBullet = "Led the billing migration, passionate about durable queues.";
     const { h, saved, llm } = handlers({
       "cv-tailor": tailoringOutput(tellBullet),
       "cv-humanize": (_request, call) =>
