@@ -109,6 +109,15 @@ export class CvBaseService {
       file.fill(0);
     }
 
+    // Checked before the transaction opens: a producer that is down never holds a transaction or the lock.
+    try {
+      await this.queue.ensureReady();
+    } catch {
+      throw new ProblemError("UPSTREAM_UNAVAILABLE", {
+        detail: "Não foi possível iniciar a leitura do CV; tente de novo",
+      });
+    }
+
     // The draft and its `cv.extract` job commit together (ADR-0002 §3): the PDF text is never stored
     // without a job, and a queue failure rolls the draft back. A job lost afterwards is still settled by
     // `CvExtractionSweeper` (Sentinela S-2); the worker fails the draft on the job's terminal failure.

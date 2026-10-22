@@ -43,7 +43,7 @@ import {
 } from "@linkedin-ops/domain";
 import { PgBoss } from "pg-boss";
 import supertest from "supertest";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../src/app.module.js";
 import { configureApp, createFastifyAdapter } from "../src/app.factory.js";
 import { CAREER_RATE_LIMITS } from "../src/career/cv-base.service.js";
@@ -69,14 +69,25 @@ const UPLOAD_LIMIT = 4;
 
 /**
  * The real producer; `failAfterInsertNext` makes the next enqueue throw AFTER pg-boss inserted the job row
- * through the draft's transaction, so the rollback must take both away.
+ * through the draft's transaction, so the rollback must take both away. `unreachable` is a real producer
+ * whose database cannot be reached: `useUnreachable` routes the upload to it (its start fails).
  */
 class FailableQueue implements CvExtractQueue {
   real: PgBossCvExtractQueue | undefined;
+  unreachable: PgBossCvExtractQueue | undefined;
   failAfterInsertNext = false;
+  useUnreachable = false;
+  enqueueCalls = 0;
+
+  ensureReady(): Promise<void> {
+    const target = this.useUnreachable ? this.unreachable : this.real;
+    if (!target) throw new Error("queue not set up");
+    return target.ensureReady();
+  }
 
   async enqueue(payload: CvExtractPayload, db: SqlExecutor): Promise<{ jobId: string }> {
     if (!this.real) throw new Error("queue not set up");
+    this.enqueueCalls += 1;
     const result = await this.real.enqueue(payload, db);
     if (this.failAfterInsertNext) {
       this.failAfterInsertNext = false;
@@ -241,6 +252,15 @@ beforeAll(async () => {
   );
   const logger = createLogger({ level: "info", pretty: false, stream: logs.stream });
   queue.real = new PgBossCvExtractQueue(databaseUrl, logger);
+  // Started at bootstrap, as in the app (outside any upload transaction).
+  await queue.real.onApplicationBootstrap();
+  expect(queue.real.ready).toBe(true);
+  // Port 1: connection refused at once.
+  queue.unreachable = new PgBossCvExtractQueue(
+    "postgresql://api:api-test-password@127.0.0.1:1/api_test",
+    logger,
+    { startTimeoutMs: 2_000, retry: { initialMs: 50, maxMs: 200 } },
+  );
   const moduleRef = await Test.createTestingModule({
     imports: [AppModule.forRoot({ env, logger })],
   })
@@ -262,6 +282,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await app?.close();
   await queue.real?.onApplicationShutdown();
+  await queue.unreachable?.onApplicationShutdown();
   await boss?.stop({ graceful: false, close: true });
   await prisma?.$disconnect();
   await container?.stop();
@@ -269,6 +290,8 @@ afterAll(async () => {
 
 beforeEach(() => {
   queue.failAfterInsertNext = false;
+  queue.useUnreachable = false;
+  queue.enqueueCalls = 0;
 });
 
 describe("POST /career/cv (upload)", () => {
@@ -351,6 +374,55 @@ describe("POST /career/cv (upload)", () => {
     expect(rows.map((row) => [row.id, row.status])).toEqual([[previous, "EXTRACTING"]]);
     expect(await prisma.auditEvent.count({ where: { userId: actor.userId } })).toBe(auditBefore);
     expect(logs.text).toContain("cv.extract enqueue failed; draft rolled back");
+  });
+
+  it("a producer that failed to start answers 503 before any transaction: no draft, no job, no audit", async () => {
+    const actor = await newActor();
+    const jobsBefore = await cvExtractJobs();
+    const unreachable = queue.unreachable;
+    if (!unreachable) throw new Error("queue not set up");
+    // Bootstrap failure does not throw (the API boots anyway) and leaves the producer not ready.
+    await expect(unreachable.onApplicationBootstrap()).resolves.toBeUndefined();
+    expect(unreachable.ready).toBe(false);
+
+    queue.useUnreachable = true;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const res = await upload(actor).expect(503);
+      expect(res.body.code).toBe("UPSTREAM_UNAVAILABLE");
+    }
+    expect(queue.enqueueCalls).toBe(0);
+    expect(await prisma.cvBase.count({ where: { userId: actor.userId } })).toBe(0);
+    expect(await prisma.auditEvent.count({ where: { userId: actor.userId } })).toBe(0);
+    expect(await cvExtractJobs()).toEqual(jobsBefore);
+    // Retried in the background with backoff (not by the requests), each failure logged.
+    await expect
+      .poll(
+        () =>
+          logs.text.split("cv.extract producer start failed; retrying in the background").length -
+          1,
+        { timeout: 10_000, interval: 50 },
+      )
+      .toBeGreaterThanOrEqual(3);
+    expect(logs.text).not.toContain("api-test-password");
+
+    // `enqueue` never starts the producer itself: called inside a transaction it fails without SQL.
+    const db = { executeSql: vi.fn() };
+    await expect(
+      unreachable.enqueue(
+        {
+          schemaVersion: 1,
+          correlationId: "corr-x",
+          requestedBy: { type: "USER", id: actor.userId },
+          cvBaseId: newId(),
+        },
+        db,
+      ),
+    ).rejects.toThrow("not_started");
+    expect(db.executeSql).not.toHaveBeenCalled();
+
+    // Once the producer is reachable again, the next upload goes through.
+    queue.useUnreachable = false;
+    await upload(actor).expect(202);
   });
 
   it("is rate limited per user", async () => {
