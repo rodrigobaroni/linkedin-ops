@@ -19,6 +19,7 @@ import {
   CvBaseRequiredError,
   JOB_POSTING_FAILED_TEXT_RETENTION_MS,
   JOB_POSTING_STALE_MS,
+  JOB_POSTING_SWEEP_BATCH,
   JobPostingBusyError,
   JobPostingNotFoundError,
   JobPostingTextRequiredError,
@@ -794,6 +795,29 @@ describe("sweep", () => {
       action: "job_posting.failed",
       after: { status: "FAILED", failureReason: "TIMED_OUT" },
     });
+  });
+
+  it("settles a backlog larger than one sweep in bounded passes, each posting in its own transaction", async () => {
+    const { userId } = await ownerWithCv();
+    const ids: string[] = [];
+    for (let b = 0; b < 3; b += 1) {
+      const urls = Array.from(
+        { length: 20 },
+        (_, i) => `https://acme.gupy.io/jobs/backlog-${b}-${i}`,
+      );
+      ids.push(...(await batchOf(userId, urls)).postings.map((p) => p.id));
+    }
+    // Older than any other test's postings, so this backlog is swept first.
+    await prisma.jobPosting.updateMany({
+      where: { id: { in: ids } },
+      data: { updatedAt: new Date("2000-01-01T00:00:00.000Z") },
+    });
+    const first = await postings.sweep();
+    expect(first.timedOut).toBe(JOB_POSTING_SWEEP_BATCH);
+    await postings.sweep();
+    expect(
+      await prisma.jobPosting.count({ where: { id: { in: ids }, failureReason: "TIMED_OUT" } }),
+    ).toBe(60);
   });
 
   it("erases the text of postings failed for longer than the retention (the CV's)", async () => {

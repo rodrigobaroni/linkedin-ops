@@ -61,6 +61,9 @@ export const JOB_POSTING_STALE_MS = {
  */
 export const JOB_POSTING_FAILED_TEXT_RETENTION_MS = CV_EXTRACTION_STALE_MS;
 
+/** Postings settled (and texts erased) per sweep; the rest waits for the next tick (every 5 min). */
+export const JOB_POSTING_SWEEP_BATCH = 50;
+
 /** Who acted, for the audit trail; snapshots carry ids, statuses and counts, never URLs nor text. */
 export type CareerAuditMeta = CvAuditMeta;
 
@@ -433,34 +436,40 @@ export class PrismaJobPostings {
   /**
    * Periodic sweep (Sentinela S-2 pattern): postings stuck past `JOB_POSTING_STALE_MS` become
    * `FAILED`/`TIMED_OUT`, then the page text of postings `FAILED` for longer than
-   * `JOB_POSTING_FAILED_TEXT_RETENTION_MS` is erased. Rows locked by a concurrent writer wait for the next
-   * sweep. The cutoffs are bound from the application clock (never SQL `now()`).
+   * `JOB_POSTING_FAILED_TEXT_RETENTION_MS` is erased. No long interactive transaction (QA #101): each stale
+   * posting is settled in its own short one (conditional, so a posting that moved on meanwhile is left
+   * alone, and a row locked by a concurrent writer is skipped until the next sweep), and the erasure is a
+   * single bounded statement. The cutoffs are bound from the application clock (never SQL `now()`).
    */
-  async sweep(batchSize = 100): Promise<{ timedOut: number; textErased: number }> {
+  async sweep(
+    batchSize = JOB_POSTING_SWEEP_BATCH,
+  ): Promise<{ timedOut: number; textErased: number }> {
     const now = this.now().getTime();
     const fetchingCutoff = new Date(now - JOB_POSTING_STALE_MS.FETCHING);
     const analyzingCutoff = new Date(now - JOB_POSTING_STALE_MS.ANALYZING);
     const retentionCutoff = new Date(now - JOB_POSTING_FAILED_TEXT_RETENTION_MS);
-    return this.prisma.$transaction(async (tx) => {
-      const stale = await tx.$queryRaw<StalePosting[]>`
-        SELECT "id", "user_id" AS "userId", "status"::text AS "status" FROM "job_postings"
-        WHERE ("status" = 'FETCHING' AND "updated_at" < ${fetchingCutoff})
-           OR ("status" = 'ANALYZING' AND "updated_at" < ${analyzingCutoff})
+    const stale = await this.prisma.$queryRaw<StalePosting[]>`
+      SELECT "id", "user_id" AS "userId", "status"::text AS "status" FROM "job_postings"
+      WHERE ("status" = 'FETCHING' AND "updated_at" < ${fetchingCutoff})
+         OR ("status" = 'ANALYZING' AND "updated_at" < ${analyzingCutoff})
+      ORDER BY "updated_at" LIMIT ${batchSize}`;
+    let timedOut = 0;
+    for (const posting of stale) {
+      const settled = await this.prisma.$transaction(async (tx) => {
+        const locked = await tx.$queryRaw<{ id: string }[]>`
+          SELECT "id" FROM "job_postings" WHERE "id" = ${posting.id}::uuid FOR UPDATE SKIP LOCKED`;
+        return locked.length > 0 && this.timeOut(tx, posting);
+      });
+      if (settled) timedOut += 1;
+    }
+    const textErased = await this.prisma.$executeRaw`
+      UPDATE "job_postings" SET "page_text" = NULL
+      WHERE "id" IN (
+        SELECT "id" FROM "job_postings"
+        WHERE "status" = 'FAILED' AND "page_text" IS NOT NULL AND "updated_at" < ${retentionCutoff}
         ORDER BY "updated_at" LIMIT ${batchSize}
-        FOR UPDATE SKIP LOCKED`;
-      let timedOut = 0;
-      for (const posting of stale) {
-        if (await this.timeOut(tx, posting)) timedOut += 1;
-      }
-      const textErased = await tx.$executeRaw`
-        UPDATE "job_postings" SET "page_text" = NULL
-        WHERE "id" IN (
-          SELECT "id" FROM "job_postings"
-          WHERE "status" = 'FAILED' AND "page_text" IS NOT NULL AND "updated_at" < ${retentionCutoff}
-          ORDER BY "updated_at" LIMIT ${batchSize}
-          FOR UPDATE SKIP LOCKED)`;
-      return { timedOut, textErased };
-    });
+        FOR UPDATE SKIP LOCKED)`;
+    return { timedOut, textErased };
   }
 
   /** Locks the posting, checks it may restart, runs `apply` and audits, in one transaction. */
