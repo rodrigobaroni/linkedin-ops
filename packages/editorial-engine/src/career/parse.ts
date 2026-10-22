@@ -22,7 +22,7 @@ import {
 import type { z } from "zod";
 import { err, ok, type EngineError, type Result } from "../result.js";
 import { sanitizeUntrustedText } from "../untrusted.js";
-import { createEntityGuard } from "./entities.js";
+import { createEntityGuard, withoutLexiconTerms } from "./entities.js";
 import { cvFullText, cvItemTexts, normalizeCvIds } from "./ids.js";
 import type { TargetLanguage } from "./language.js";
 import { lintText } from "./lint/checker.js";
@@ -147,7 +147,7 @@ export function parseJobExtractResponse(
  * segment names an entity absent from the base CV (`entities.ts`).
  */
 const CREDENTIAL_PATTERN =
-  /(?<![\p{L}\p{N}])(?:certifica\p{L}*|certified|certificate\p{L}*|diploma\p{L}*|bacharel\p{L}*|bachelor\p{L}*|mestrado|mestre|master'?s|mba|ph\.?d|doutorado|doutor|licen[cç]a\p{L}*|licen[cs]e[ds]?|p[oó]s-gradua\p{L}*)(?![\p{L}\p{N}])/iu;
+  /(?<![\p{L}\p{N}])(?:certifica\p{L}*|certified|certificate\p{L}*|diploma\p{L}*|bacharel\p{L}*|bachelor\p{L}*|mestrado|mestre|master'?s|mba|ph\.?d|doutorado|doutor|licen[cç]a\p{L}*|licen[cs]e[ds]?|p[oó]s-gradua\p{L}*|foundation|practitioner|agilist|belt)(?![\p{L}\p{N}])/iu;
 
 export interface ParsedCvTailoring extends InjectionReport {
   /** Tailored CV in display order, provenance enforced. */
@@ -272,7 +272,9 @@ export function parseCvTailorResponse(
       issues.push(`${segment.segmentId}: hard limit, new entity`);
     }
     if (segment.provenance === "added") {
-      if (numericTokens(segment.text).some((token) => !baseNumbers.has(token))) {
+      if (
+        numericTokens(withoutLexiconTerms(segment.text)).some((token) => !baseNumbers.has(token))
+      ) {
         issues.push(`${segment.segmentId}: hard limit, added number`);
       }
       if (CREDENTIAL_PATTERN.test(segment.text)) {
@@ -287,7 +289,9 @@ export function parseCvTailorResponse(
     }
     const sourceText = sources.join("\n");
     const sourceNumbers = new Set(numericTokens(sourceText));
-    if (numericTokens(segment.text).some((token) => !sourceNumbers.has(token))) {
+    if (
+      numericTokens(withoutLexiconTerms(segment.text)).some((token) => !sourceNumbers.has(token))
+    ) {
       issues.push(`${segment.segmentId}: number not in cited base items`);
     }
   }

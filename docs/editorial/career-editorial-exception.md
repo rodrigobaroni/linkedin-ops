@@ -113,6 +113,9 @@ do verificador (`humanizer-cv-rules.md` §4) só existem para PT-BR e inglês. D
 | 1 | Limites duros da D4 **ativos**: a IA nunca acrescenta empregador, cargo, data ou período, formação, instituição, certificação nem número (§3). | Regra fixa no `cv-tailor@1.0.0` (item 9) e no pós-processamento do motor: segmento `acrescentado` com número ausente do CV base invalida a saída (até 2 novas tentativas, depois `falhou` com motivo `ai`); empregador, cargo, datas, formação, certificações e idiomas não são gerados pelo modelo, são copiados do CV base por id. |
 | 2 | Vaga em língua diferente de PT-BR e inglês: gerar o CV **em inglês** com aviso no relatório (§8). | `targetLanguage = en` e aviso `language_fallback` no relatório de aderência. |
 
+Implementação dos limites 1, 2 e 4 em código: guarda de entidades com léxico fechado de competências
+([`cv-competency-lexicon.md`](./cv-competency-lexicon.md), decisão do Maestro em 2026-10-22).
+
 ## 10. Histórico
 
 | Data | Versão | Mudança |

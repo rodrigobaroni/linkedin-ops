@@ -19,3 +19,4 @@ export * from "./career/ids.js";
 export * from "./career/entities.js";
 export * from "./career/lint/checker.js";
 export * from "./career/lint/cv-banned-phrases.v1.0.0.js";
+export * from "./career/lint/cv-competency-lexicon.v1.0.0.js";

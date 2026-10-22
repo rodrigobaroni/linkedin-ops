@@ -1,23 +1,22 @@
 /**
- * D4 entity guard (career-editorial-exception.md §3, hard limits 1, 2 and 4; Sentinela PR #89). A tailored
- * segment may only name entities the base CV already names: employers, job titles, institutions,
- * certifications, dates, clients, projects and other proper nouns. The single exception is a competence term
- * (technical or behavioral requirement) that the segment explicitly targets.
+ * D4 entity guard (career-editorial-exception.md §3, hard limits 1, 2 and 4; Sentinela/Crivo PR #89; Maestro's
+ * decision of 2026-10-22). A tailored segment may only name what the base CV already names. Any other name —
+ * employer, client, project, product, person, institution, certification, month — is rejected, with one closed
+ * exception: a competence of `cv-competency-lexicon` (technology, language, framework, platform, tool,
+ * protocol, methodology). A lexicon term that the base CV does not have must also appear in a requirement the
+ * segment cites (`targetRequirementIds`); the requirement no longer releases any other vocabulary.
  *
- * Heuristic and deterministic: an "entity candidate" is a capitalized token (at any position: a sentence may
- * open with a name, Sentinela/Crivo PR #89), an acronym, a token mixing letters with digits or symbols (`K8s`,
- * `C#`, `Node.js`) or a month name. A capitalized first word is exempt only when it is a closed-list opening
- * word (action verb, article, preposition) or appears lowercase somewhere in the base CV or the posting (a
- * common word, not a name). A cited requirement releases competence terms only: never the company's name nor a
- * word named right after an entity marker ("at Nubank", "for Itaú", "project Apollo", "cliente X").
- * Comparisons ignore case and diacritics. Spelled-out numbers and lowercase brand names are not caught.
+ * Deterministic heuristics: a "name" is a capitalized token (a capitalized first word is exempt only when it is
+ * a closed-list opening word or appears lowercase in the base CV or posting), an acronym, a token mixing letters
+ * with digits or symbols (`K8s`, `C#`) or a month name. Names the posting itself uses (e.g. its company or a
+ * client in a requirement) are rejected in any case, so `nubank` fails like `Nubank`. Comparisons ignore case
+ * and diacritics; lexicon terms of several words match as phrases ("Google Cloud", never "Google" alone). A
+ * legitimate competence missing from the lexicon costs a regeneration and is fixed by adding it to the lexicon
+ * (docs/editorial/cv-competency-lexicon.md).
  */
-import type {
-  CvStructured,
-  JobPostingExtracted,
-  JobRequirementCategory,
-} from "@linkedin-ops/contracts";
+import type { CvStructured, JobPostingExtracted } from "@linkedin-ops/contracts";
 import { cvItemTexts } from "./ids.js";
+import { CV_COMPETENCY_LEXICON } from "./lint/cv-competency-lexicon.v1.0.0.js";
 
 const MONTHS = foldAll([
   "janeiro",
@@ -107,6 +106,12 @@ const OPENING_WORDS = new Set(
   contributed contribute hired hire trained train tested test monitored monitor secured secure standardized
   streamlined rebuilt replaced replace consolidated reviewed review presented present negotiated planned
   prioritized organized organised acted served serve took handled oversaw directed headed spearheaded
+  packaged package tuned tune configured configure debugged debug profiled benchmarked documented document
+  prototyped prototype validated validate modernized modernised upgraded upgrade resolved resolve fixed fix
+  enabled enable released release rolled set saved save accelerated accelerate measured measure researched
+  investigated investigate identified identify translated translate onboarded onboard used use leveraged
+  orchestrated orchestrate structured restructured rewrote unified centralized centralised sustained evolved
+  adapted adopted shaped guided taught ensured enhanced extended expanded instrumented migrated containerized
   the a an as at by for from in into on over across with within under through to of and or this these
   experienced seasoned skilled hands-on proven strong solid deep broad extensive
   communication leadership teamwork collaboration negotiation mentoring ownership adaptability organization
@@ -121,6 +126,11 @@ const OPENING_WORDS = new Set(
   atuo trabalhei trabalho contribuí contribuo contratei testei testo monitorei monitoro padronizei
   simplifiquei substituí consolidei revisei reviso apresentei negociei planejei planejo priorizei organizei
   assumi dirigi chefiei avaliei avalio apliquei
+  usei uso utilizei utilizo configurei configuro depurei documentei documento prototipei validei valido
+  modernizei atualizei atualizo resolvi resolvo corrigi corrijo habilitei publico acelerei medi pesquisei
+  investiguei identifiquei traduzi obtive adequei adequo conclui participei ajudei garanti desenhei desenho
+  estruturei orquestrei empacotei ajustei ajusto sustentei evolui reescrevi unifiquei centralizei adaptei
+  adotei conduzo orientei ensinei ampliei expandi instrumentei containerizei construi
   o os as um uma uns umas em no na nos nas com para por de do da dos das sobre entre durante desde
   experiente sólida sólido ampla amplo
   `
@@ -129,11 +139,16 @@ const OPENING_WORDS = new Set(
     .map((word) => fold(word)),
 );
 
-/** Words right before a name of an organization, client, product or project. */
-const ENTITY_MARKERS = new Set(
-  `at for from client clients customer customers project projects product products company companies
-  employer partner partners para cliente clientes projeto projetos produto produtos empresa empresas
-  parceiro parceiros na no pela pelo junto`
+/** Typical first words of a requirement line: never harvested as names the posting uses. */
+const REQUIREMENT_OPENERS = new Set(
+  `
+  experience experiencia knowledge conhecimento conhecimentos familiarity familiaridade vivencia proficiency
+  proficiencia proficient fluency fluencia fluent advanced avancado avancada intermediate intermediario
+  understanding entendimento compreensao background ability abilities habilidade habilidades skill skills
+  degree graduacao formacao bachelor bacharelado previous previa anterior desirable desejavel diferencial
+  nice preferred required obrigatorio must solid strong good great excellent excelente boa bom domain dominio
+  comfort comfortable hands-on practical pratica proven comprovada comprovado years anos working
+  `
     .split(/\s+/u)
     .filter(Boolean),
 );
@@ -146,12 +161,6 @@ function fold(word: string): string {
 function foldAll(words: readonly string[]): Set<string> {
   return new Set(words.map(fold));
 }
-
-/** Requirement categories whose terms a segment may adopt when it targets them ("competências"). */
-const COMPETENCE_CATEGORIES: ReadonlySet<JobRequirementCategory> = new Set([
-  "technical",
-  "behavioral",
-]);
 
 function tokens(text: string): string[] {
   return text
@@ -181,30 +190,63 @@ function lowercaseOccurrences(text: string): Set<string> {
   );
 }
 
-/** Folded words named right after an entity marker ("at Nubank", "project Apollo", "cliente Itaú"). */
-function markedEntities(text: string): Set<string> {
-  const marked = new Set<string>();
-  const words = tokens(text);
-  words.forEach((token, index) => {
-    const next = words[index + 1];
-    if (next !== undefined && ENTITY_MARKERS.has(fold(token)) && /^\p{Lu}/u.test(next)) {
-      marked.add(fold(next));
-    }
-  });
-  return marked;
+/** Every spelling of every lexicon entry, as folded token sequences, longest first. */
+const LEXICON_FORMS: ReadonlyArray<{ entry: number; words: readonly string[] }> =
+  CV_COMPETENCY_LEXICON.entries
+    .flatMap((item, entry) =>
+      [item.term, ...(item.aliases ?? [])].map((form) => ({
+        entry,
+        words: tokens(form).map(fold),
+      })),
+    )
+    .filter((form) => form.words.length > 0)
+    .sort((a, b) => b.words.length - a.words.length);
+
+/** For each position of `words`, the lexicon entry whose phrase covers it (or undefined). */
+function lexiconCoverage(words: readonly string[]): (number | undefined)[] {
+  const covered: (number | undefined)[] = new Array<number | undefined>(words.length).fill(
+    undefined,
+  );
+  for (let start = 0; start < words.length; start += 1) {
+    if (covered[start] !== undefined) continue;
+    const form = LEXICON_FORMS.find(
+      (candidate) =>
+        start + candidate.words.length <= words.length &&
+        candidate.words.every((word, offset) => words[start + offset] === word),
+    );
+    if (form) for (let i = 0; i < form.words.length; i += 1) covered[start + i] = form.entry;
+  }
+  return covered;
 }
 
-export interface EntityCandidate {
+/** Lexicon entries named anywhere in a text. */
+function lexiconEntries(text: string): Set<number> {
+  return new Set(
+    lexiconCoverage(tokens(text).map(fold)).filter((e): e is number => e !== undefined),
+  );
+}
+
+/**
+ * The text without the tokens of lexicon terms, for the numbers check: the digits of `ISO 27001`, `OAuth 2.0` or
+ * `GA4` name a competence, not a result (the entity guard decides whether the term itself is allowed).
+ */
+export function withoutLexiconTerms(text: string): string {
+  const words = tokens(text);
+  const covered = lexiconCoverage(words.map(fold));
+  return words.filter((_word, index) => covered[index] === undefined).join(" ");
+}
+
+interface Token {
   word: string;
-  /** Capitalized only because it opens the sentence (may be exempt as an opening or common word). */
+  /** Capitalized token, acronym, mixed token or month. */
+  nameLike: boolean;
+  /** Name-like only because it is capitalized and opens a sentence. */
   opening: boolean;
 }
 
-/** Entity candidates of a segment (folded). */
-export function entityCandidates(text: string): EntityCandidate[] {
-  const candidates: EntityCandidate[] = [];
-  const sentences = text.normalize("NFKC").split(/(?<=[.!?;:])\s+/u);
-  for (const sentence of sentences) {
+function analyse(text: string): Token[] {
+  const result: Token[] = [];
+  for (const sentence of text.normalize("NFKC").split(/(?<=[.!?;:])\s+/u)) {
     tokens(sentence).forEach((token, index) => {
       const word = fold(token);
       const capitalized = /^\p{Lu}/u.test(token);
@@ -212,52 +254,83 @@ export function entityCandidates(text: string): EntityCandidate[] {
       const mixed = /\p{L}/u.test(token) && /[\p{N}+#.]/u.test(token);
       const innerCaps = /.\p{Lu}/u.test(token);
       const strong = MONTHS.has(word) || acronym || mixed || innerCaps;
-      if (strong || capitalized) {
-        candidates.push({ word, opening: !strong && index === 0 });
-      }
+      result.push({
+        word,
+        nameLike: strong || capitalized,
+        opening: !strong && capitalized && index === 0,
+      });
     });
   }
-  return candidates;
+  return result;
+}
+
+/** Entity candidates of a segment (folded): its name-like tokens. */
+export function entityCandidates(text: string): string[] {
+  return analyse(text)
+    .filter((token) => token.nameLike)
+    .map((token) => token.word);
 }
 
 export interface EntityGuard {
-  /** Entity candidates of `text` not allowed for a segment targeting `targetRequirementIds`. */
+  /** Names in `text` that the base CV does not have and the lexicon/cited requirements do not allow. */
   newEntities(text: string, targetRequirementIds: readonly string[]): string[];
 }
 
 export function createEntityGuard(base: CvStructured, job: JobPostingExtracted): EntityGuard {
   const baseText = [...cvItemTexts(base).values()].join("\n");
-  const jobText = [job.title, ...job.requirements.flatMap((r) => [r.text, r.evidence])].join("\n");
+  const jobTexts = [
+    job.title,
+    ...job.keywords,
+    ...job.requirements.flatMap((r) => [r.text, r.evidence]),
+  ];
+  const jobText = jobTexts.join("\n");
   const baseWords = vocabulary(baseText);
+  const baseEntries = lexiconEntries(baseText);
   const commonWords = new Set([
     ...lowercaseOccurrences(baseText),
     ...lowercaseOccurrences(jobText),
   ]);
-  // Never released by a requirement: the employer's name and anything named after an entity marker.
-  const neverReleased = new Set([...vocabulary(job.company ?? ""), ...markedEntities(jobText)]);
-  const competenceWords = new Map(
-    job.requirements
-      .filter((requirement) => COMPETENCE_CATEGORIES.has(requirement.category))
-      .map((requirement) => [
-        requirement.id,
-        vocabulary(`${requirement.text}\n${requirement.evidence}`),
-      ]),
+  const isCommon = (word: string) => OPENING_WORDS.has(word) || commonWords.has(word);
+
+  // Names the posting uses that are not competences (its company, a client or project in a requirement):
+  // rejected in any case. Title-cased texts (the job title, headings) are skipped: their capitals are style.
+  const postingNames = new Set(vocabulary(job.company ?? ""));
+  for (const requirement of job.requirements) {
+    for (const text of [requirement.text, requirement.evidence]) {
+      const analysed = analyse(text);
+      const capitalized = analysed.filter((token) => /^\p{Lu}/u.test(token.word) || token.nameLike);
+      if (analysed.length > 2 && capitalized.length / analysed.length > 0.6) continue;
+      const covered = lexiconCoverage(analysed.map((token) => token.word));
+      analysed.forEach((token, index) => {
+        if (!token.nameLike || covered[index] !== undefined) return;
+        if (token.opening && (isCommon(token.word) || REQUIREMENT_OPENERS.has(token.word))) return;
+        if (!commonWords.has(token.word)) postingNames.add(token.word);
+      });
+    }
+  }
+  const requirementEntries = new Map(
+    job.requirements.map((r) => [r.id, lexiconEntries(`${r.text}\n${r.evidence}`)]),
   );
+
   return {
     newEntities(text, targetRequirementIds) {
-      const allowed = (word: string) =>
-        baseWords.has(word) ||
-        LANGUAGE_NAMES.has(word) ||
-        (!neverReleased.has(word) &&
-          targetRequirementIds.some((id) => competenceWords.get(id)?.has(word) === true));
-      return entityCandidates(text)
-        .filter(({ word, opening }) => {
-          if (opening && (OPENING_WORDS.has(word) || commonWords.has(word))) return false;
-          if (allowed(word)) return false;
-          const parts = word.split(/[-./]/u).filter((part) => part.length > 0);
-          return !(parts.length > 1 && parts.every(allowed));
-        })
-        .map(({ word }) => word);
+      const analysed = analyse(text);
+      const covered = lexiconCoverage(analysed.map((token) => token.word));
+      const violations: string[] = [];
+      analysed.forEach((token, index) => {
+        const namedByPosting = postingNames.has(token.word);
+        if (!token.nameLike && !namedByPosting) return;
+        const entry = covered[index];
+        if (entry !== undefined) {
+          const cited = targetRequirementIds.some((id) => requirementEntries.get(id)?.has(entry));
+          if (!baseEntries.has(entry) && !cited) violations.push(token.word);
+          return;
+        }
+        if (baseWords.has(token.word) || LANGUAGE_NAMES.has(token.word)) return;
+        if (!namedByPosting && token.opening && isCommon(token.word)) return;
+        violations.push(token.word);
+      });
+      return violations;
     },
   };
 }

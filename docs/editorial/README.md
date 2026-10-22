@@ -9,6 +9,7 @@ Sistema editorial do LinkedIn Ops. Mantido por Pena (AI Editorial & Human Voice)
 | [structured-outputs.md](./structured-outputs.md) | JSON Schemas (Structured Outputs) de classificação de oportunidade, brief, post com hooks e fontes, sugestão de mídia, avaliação de qualidade, extração de Voice Profile; mapeamento para `contracts.md` |
 | [career-editorial-exception.md](./career-editorial-exception.md) | Exceção D4 do módulo Carreira: conteúdo plausível só no CV adaptado, limites duros, proveniência obrigatória, língua do CV, decisões de Rodrigo de 2026-10-22 |
 | [career-prompts.md](./career-prompts.md) | Prompts `cv-extract`, `job-extract`, `cv-tailor` e `cv-humanize` v1.0.0, contrato comum, pós-processamento em código e nota de aderência |
+| [cv-competency-lexicon.md](./cv-competency-lexicon.md) | Léxico fechado de competências que um trecho do CV adaptado pode nomear além do CV base, `denyTerms` e custo de um termo fora da lista |
 | [humanizer-cv-rules.md](./humanizer-cv-rules.md) | Humanizer adaptado para CV (PT-BR e EN) e lista `cv-banned-phrases@1.0.0` do verificador determinístico |
 | [evals-plan.md](./evals-plan.md) | Harness de evals (Vitest determinístico + Promptfoo/online): métricas, casos bons/ruins/adversariais, graders, gate para mudança de prompt |
 
