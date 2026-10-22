@@ -97,8 +97,13 @@ services:
         required: true
     environment:
       <<: *app-env
-    # TODO(T-006): liveness check for the pg-boss worker (no HTTP; e.g. heartbeat file or pg-boss
-    # `getQueueSize`) once the worker runtime exists.
+    # Liveness without HTTP: heartbeat file written while pg-boss runs and the database answers (ADR-0002).
+    healthcheck:
+      test: ["CMD", "node", "apps/worker/dist/health/healthcheck.js"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy

@@ -115,6 +115,7 @@ services:
     volumes:
       - ../../apps/worker/src:/app/apps/worker/src
       - ../../packages/contracts/src:/app/packages/contracts/src
+      - ../../packages/editorial-engine/src:/app/packages/editorial-engine/src
     depends_on:
       s3-init:
         condition: service_completed_successfully

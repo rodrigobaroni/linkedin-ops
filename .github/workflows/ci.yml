@@ -164,6 +164,11 @@ jobs:
       - name: API readiness and auth against PostgreSQL (Testcontainers, T-008/T-015)
         run: pnpm --filter @linkedin-ops/api test:integration
 
+      - name: Worker on pg-boss (Testcontainers, Career PR 1)
+        run: |
+          pnpm turbo build --filter=@linkedin-ops/worker^...
+          pnpm --filter @linkedin-ops/worker test:integration
+
   # --- compose-smoke (T-003) ---------------------------------------------------------------------
   # Decision by Rodrigo (2026-10-13): Docker is not available on the local machine, so the Compose stack
   # is validated here, in the combination developers run (base + docker-compose.dev.yml). Credentials are
@@ -353,8 +358,21 @@ jobs:
             echo "::error::the api runtime image health body is not the HealthStatus contract: $health"
             exit 1
           fi
-          # The worker is still a placeholder: its runtime image must start and exit cleanly.
-          timeout 60 docker run --rm linkedin-ops/worker:smoke-runtime
+          # The worker (pg-boss, Career PR 1) loads all its modules (domain with argon2 and the Prisma client,
+          # editorial-engine, pg-boss) and then refuses to start without a valid production environment: it must
+          # exit non-zero naming the variables, never their values. Its healthcheck script must be present and
+          # report unhealthy when no heartbeat was written. Running against PostgreSQL is covered by the dev
+          # combination below and by the db-integration job.
+          set +e
+          worker_out="$(timeout 60 docker run --rm linkedin-ops/worker:smoke-runtime 2>&1)"; worker_rc=$?
+          timeout 30 docker run --rm --entrypoint node linkedin-ops/worker:smoke-runtime apps/worker/dist/health/healthcheck.js; health_rc=$?
+          set -e
+          if [ "$worker_rc" -eq 0 ] || ! printf '%s\n' "$worker_out" | grep -q 'Invalid runtime environment'; then
+            echo "::error::the worker runtime image did not fail closed without environment (rc=$worker_rc)"
+            printf '%s\n' "$worker_out" | tail -n 30
+            exit 1
+          fi
+          if [ "$health_rc" -ne 1 ]; then echo "::error::worker healthcheck returned $health_rc without a heartbeat"; exit 1; fi
           docker rm -f smoke-web smoke-api > /dev/null
           echo "runtime images OK: web serves HTML ($(printf '%s' "$body" | wc -c) bytes), api health $health"
 
@@ -362,7 +380,8 @@ jobs:
         run: |
           set -euo pipefail
           docker compose build api web worker
-          docker compose up -d --wait web api caddy
+          # The worker joins the stack (Career PR 1): healthy = pg-boss started on PostgreSQL and heartbeating.
+          docker compose up -d --wait web api caddy worker
           docker compose ps
 
       - name: Caddy serves web and api on one TLS host with the security headers

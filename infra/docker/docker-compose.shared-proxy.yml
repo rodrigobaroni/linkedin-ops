@@ -6,13 +6,10 @@
 #   infra/caddy/shared-proxy.site.caddy.example (same headers and access-log filter as infra/caddy/Caddyfile).
 # - web and api are published only on the docker0 bridge address (172.17.0.1), never on a public interface,
 #   so they are reachable from the host's Caddy (host.docker.internal) and not from the internet.
-# - The worker is not part of MVP-0 (T-006); it stays behind a profile.
+# - The worker runs with the stack since the Career module (PR 1): pg-boss jobs, no published ports.
 services:
   caddy:
     profiles: ["own-proxy"]
-
-  worker:
-    profiles: ["worker"]
 
   api:
     ports:
