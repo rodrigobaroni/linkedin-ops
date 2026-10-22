@@ -104,35 +104,39 @@ export const jobExtractionOutput: JobExtractionOutput = {
 
 export const tailoredCvContent: TailoredCvContent = {
   language: "en",
-  headline: { text: "Senior backend engineer", provenance: "rewritten", sourceRef: "summary" },
+  headline: { text: "Senior backend engineer", provenance: "rewritten", sourceRefs: ["summary"] },
   summary: {
     text: "Backend engineer with eight years in payment systems.",
     provenance: "rewritten",
-    sourceRef: "summary",
+    sourceRefs: ["summary"],
   },
   experiences: [
     {
       baseId: "exp-1",
-      title: { text: "Senior software engineer", provenance: "rewritten", sourceRef: "exp-1" },
+      title: { text: "Senior software engineer", provenance: "rewritten", sourceRefs: ["exp-1"] },
       bullets: [
         {
           text: "Led the migration of the billing service to durable queues.",
           provenance: "rewritten",
-          sourceRef: "exp-1",
+          sourceRefs: ["exp-1"],
         },
-        { text: "Evaluated Kafka for event streaming.", provenance: "added", sourceRef: null },
+        {
+          text: "Evaluated Kafka for event streaming.",
+          provenance: "added",
+          sourceRefs: ["req-2"],
+        },
       ],
     },
   ],
   education: [
     {
       baseId: "edu-1",
-      degree: { text: "Bachelor's degree", provenance: "rewritten", sourceRef: "edu-1" },
+      degree: { text: "Bachelor's degree", provenance: "rewritten", sourceRefs: ["edu-1"] },
       field: null,
     },
   ],
-  skills: [{ text: "TypeScript", provenance: "original", sourceRef: "skill-1" }],
-  languages: [{ text: "English (advanced)", provenance: "rewritten", sourceRef: "lang-1" }],
+  skills: [{ text: "TypeScript", provenance: "original", sourceRefs: ["skill-1"] }],
+  languages: [{ text: "English (advanced)", provenance: "rewritten", sourceRefs: ["lang-1"] }],
   certifications: [],
 };
 
@@ -188,7 +192,14 @@ export const matchReport: MatchReport = {
       evidence: [],
     },
   ],
-  added: [{ section: "experience", baseId: "exp-1", text: "Evaluated Kafka for event streaming." }],
+  added: [
+    {
+      section: "experience",
+      baseId: "exp-1",
+      text: "Evaluated Kafka for event streaming.",
+      requirementIds: ["req-2"],
+    },
+  ],
   humanizer: { passed: true, regenerations: 0, failedRuleIds: [], rulesVersion: "1.0.0" },
   injectionSuspected: false,
 };
@@ -242,17 +253,25 @@ export const careerCases: SchemaCase[] = [
     schema: TailoredCvContentSchema,
     valid: tailoredCvContent,
     invalid: {
-      "added with sourceRef": set("experiences.0.bullets.1.sourceRef", "exp-1"),
-      "rewritten without sourceRef": set("summary.sourceRef", null),
+      "segment without sourceRefs": set("summary.sourceRefs", []),
+      "too many sourceRefs": set("experiences.0.bullets.0.sourceRefs", [
+        "exp-1",
+        "exp-2",
+        "skill-1",
+        "skill-2",
+        "lang-1",
+        "edu-1",
+      ]),
+      "added language": set("languages.0.provenance", "added"),
       "added experience title": set("experiences.0.title", {
         text: "Staff engineer",
         provenance: "added",
-        sourceRef: null,
+        sourceRefs: ["req-2"],
       }),
       "added education degree": set("education.0.degree", {
         text: "PhD",
         provenance: "added",
-        sourceRef: null,
+        sourceRefs: ["req-2"],
       }),
       "duplicate experience baseId": set("experiences", [
         tailoredCvContent.experiences[0],
@@ -291,7 +310,8 @@ export const careerCases: SchemaCase[] = [
       "score over 100": set("baseScore", 101),
       "fractional score": set("baseScore", 66.7),
       "too many regenerations": set("humanizer.regenerations", 3),
-      "unknown added section": set("added.0.section", "photo"),
+      "unknown added section": set("added.0.section", "languages"),
+      "added without requirement": set("added.0.requirementIds", []),
     },
   },
 ];

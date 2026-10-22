@@ -284,29 +284,32 @@ export type JobExtractionOutput = z.infer<typeof JobExtractionOutputSchema>;
 // Tailored CV (cv.tailor → cv.humanize)
 // ---------------------------------------------------------------------------------------------------
 
-/** `original` = verbatim from the base CV; `rewritten` = reworded/translated; `added` = not in the base CV (D4). */
+/**
+ * `original` = verbatim from the base CV (may be reordered); `rewritten` = same content reworded, translated or
+ * re-emphasized (translation is never `original`); `added` = not in the base CV, D4 exception
+ * (`docs/editorial/career-editorial-exception.md`).
+ */
 export const ProvenanceSchema = z
   .enum(["original", "rewritten", "added"])
   .meta({ id: "Provenance" });
 export const Provenance = ProvenanceSchema.enum;
 export type Provenance = z.infer<typeof ProvenanceSchema>;
 
+/**
+ * One tailored text segment. `sourceRefs` cite base CV item ids for `original`/`rewritten` and job requirement
+ * ids for `added` (the requirement that motivated the addition). The engine checks the ids exist.
+ */
 export const ProvenancedTextSchema = z
   .strictObject({
     text: LongText,
     provenance: ProvenanceSchema,
-    sourceRef: CareerItemIdSchema.nullable().describe(
-      "Base CV item id the text comes from; null exactly when provenance = added.",
-    ),
-  })
-  .superRefine((segment, ctx) => {
-    if ((segment.provenance === "added") !== (segment.sourceRef === null)) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["sourceRef"],
-        message: "sourceRef must be null exactly when provenance is added",
-      });
-    }
+    sourceRefs: z
+      .array(CareerItemIdSchema)
+      .min(1)
+      .max(5)
+      .describe(
+        "original/rewritten: base CV item ids the text comes from; added: job requirement ids that motivated it.",
+      ),
   })
   .meta({ id: "ProvenancedText" });
 export type ProvenancedText = z.infer<typeof ProvenancedTextSchema>;
@@ -367,10 +370,12 @@ export const TailoredCvContentSchema = z
     experiences: z.array(TailoredExperienceSchema).max(MAX_ITEMS),
     education: z.array(TailoredEducationSchema).max(MAX_ITEMS),
     skills: z.array(ProvenancedTextSchema).max(100),
+    /** Never `added`: a language with a declared level is not invented (D4 hard limit 1). */
     languages: z.array(ProvenancedTextSchema).max(20),
     certifications: z.array(TailoredCertificationSchema).max(MAX_ITEMS),
   })
   .superRefine((cv, ctx) => {
+    cv.languages.forEach((segment, index) => addNotAddedIssue(segment, ctx, ["languages", index]));
     addUniqueIdIssues(
       cv.experiences.map((item) => item.baseId),
       ctx,
@@ -488,7 +493,7 @@ export const MatchedRequirementSchema = z
 export type MatchedRequirement = z.infer<typeof MatchedRequirementSchema>;
 
 export const AddedContentSectionSchema = z
-  .enum(["headline", "summary", "experience", "education", "skills", "languages", "certifications"])
+  .enum(["headline", "summary", "experience", "skills"])
   .meta({ id: "AddedContentSection" });
 export type AddedContentSection = z.infer<typeof AddedContentSectionSchema>;
 
@@ -498,6 +503,8 @@ export const AddedContentSchema = z
     /** Base experience the bullet was added to; null outside `experience`. */
     baseId: CareerItemIdSchema.nullable(),
     text: LongText,
+    /** Job requirements that motivated the addition. */
+    requirementIds: z.array(CareerItemIdSchema).min(1).max(5),
   })
   .meta({ id: "AddedContent" });
 export type AddedContent = z.infer<typeof AddedContentSchema>;
