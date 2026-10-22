@@ -81,6 +81,36 @@ describe("registerWorkers", () => {
     expect(created).toEqual(expect.arrayContaining(["cv.extract", "job.fetch", "cv.tailor"]));
   });
 
+  it("consumes retention.purge and schedules it daily only when its handler is wired (T-063)", async () => {
+    const fake = fakeBoss();
+    const scheduled: unknown[][] = [];
+    const boss = {
+      ...fake.boss,
+      schedule: (...args: unknown[]) => (scheduled.push(args), Promise.resolve()),
+    };
+    await registerWorkers({ boss: boss as never, logger: pino({ level: "silent" }), career: null });
+    expect(scheduled).toEqual([]);
+    await registerWorkers({
+      boss: boss as never,
+      logger: pino({ level: "silent" }),
+      career: null,
+      maintenance: { "retention.purge": () => Promise.resolve() },
+    });
+    expect(fake.calls).toContain("work:retention.purge");
+    expect(scheduled).toEqual([
+      [
+        "retention.purge",
+        "0 4 * * *",
+        {
+          schemaVersion: 1,
+          correlationId: "cron:retention.purge",
+          requestedBy: { type: "SYSTEM", id: "cron" },
+        },
+        { tz: "America/Sao_Paulo" },
+      ],
+    ]);
+  });
+
   it("onStopped runs after pg-boss stopped", async () => {
     const signals = new EventEmitter();
     const fake = fakeBoss();

@@ -5,17 +5,33 @@
 import type { PgBoss } from "pg-boss";
 import type { Logger } from "pino";
 import type { WiredCareerHandlers } from "./career/handlers.js";
-import { createJobRunner, type RequeueOptions } from "./jobs/runner.js";
-import { WORK_OPTIONS, WORKER_QUEUES, provisionQueues } from "./jobs/queues.js";
+import { createJobRunner, type JobHandler, type RequeueOptions } from "./jobs/runner.js";
+import {
+  RETENTION_PURGE_CRON,
+  RETENTION_PURGE_TIMEZONE,
+  retentionPurgePayload,
+} from "./maintenance/retention.js";
+import {
+  WORK_OPTIONS,
+  WORKER_QUEUES,
+  provisionQueues,
+  type WorkerQueueName,
+} from "./jobs/queues.js";
+
+export interface MaintenanceHandlers {
+  "retention.purge"?: JobHandler<"retention.purge">;
+}
 
 export interface WorkerDeps {
-  boss: Pick<PgBoss, "createQueue" | "updateQueue" | "getQueue" | "work" | "send">;
+  boss: Pick<PgBoss, "createQueue" | "updateQueue" | "getQueue" | "work" | "send" | "schedule">;
   logger: Logger;
   /**
    * Handlers of the queues whose stores are wired (`cv.extract` since the CV base store; `job.fetch` and
    * `cv.tailor` with career PR 3). Every queue is provisioned; only those with a handler are consumed.
    */
   career: WiredCareerHandlers | null;
+  /** Maintenance handlers (T-063 `retention.purge`); a wired one is also scheduled. */
+  maintenance?: MaintenanceHandlers;
   /** Aborted by the lifecycle before pg-boss stops, so handlers end and re-enqueue their jobs. */
   shutdown?: AbortSignal;
 }
@@ -25,10 +41,12 @@ export async function registerWorkers({
   boss,
   logger,
   career,
+  maintenance,
   shutdown,
 }: WorkerDeps): Promise<string[]> {
   await provisionQueues(boss);
-  const wired = WORKER_QUEUES.filter((queue) => career?.[queue] !== undefined);
+  const handlers: Partial<Record<WorkerQueueName, unknown>> = { ...career, ...maintenance };
+  const wired = WORKER_QUEUES.filter((queue) => handlers[queue] !== undefined);
   const unwired = WORKER_QUEUES.filter((queue) => !wired.includes(queue));
   if (unwired.length > 0) {
     logger.warn({ queues: unwired }, "career handlers not wired; queues provisioned only");
@@ -43,7 +61,7 @@ export async function registerWorkers({
     };
     const runner = createJobRunner(
       queue,
-      career?.[queue] as never,
+      handlers[queue] as never,
       logger,
       requeue,
       shutdown ?? null,
@@ -53,5 +71,15 @@ export async function registerWorkers({
     );
   }
   if (wired.length > 0) logger.info({ queues: wired }, "career workers registered");
+  // Idempotent: pg-boss keeps one schedule per name, updated on every boot.
+  if (maintenance?.["retention.purge"] !== undefined) {
+    await boss.schedule("retention.purge", RETENTION_PURGE_CRON, retentionPurgePayload(), {
+      tz: RETENTION_PURGE_TIMEZONE,
+    });
+    logger.info(
+      { cron: RETENTION_PURGE_CRON, tz: RETENTION_PURGE_TIMEZONE },
+      "retention purge scheduled",
+    );
+  }
   return ids;
 }

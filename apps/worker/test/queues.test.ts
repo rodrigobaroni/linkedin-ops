@@ -33,6 +33,8 @@ describe("provisionQueues", () => {
       "create:job.fetch",
       "create:cv.tailor.dlq",
       "create:cv.tailor",
+      "create:retention.purge.dlq",
+      "create:retention.purge",
     ]);
     expect(calls[3]?.[2]).toEqual({
       retryLimit: 1,
@@ -50,8 +52,13 @@ describe("provisionQueues", () => {
   });
 
   it("runs the career queues with concurrency 3 and job.fetch one per domain group", () => {
-    expect(WORKER_QUEUES).toEqual(["cv.extract", "job.fetch", "cv.tailor"]);
-    for (const queue of WORKER_QUEUES) expect(WORK_OPTIONS[queue].localConcurrency).toBe(3);
+    expect(WORKER_QUEUES).toEqual(["cv.extract", "job.fetch", "cv.tailor", "retention.purge"]);
+    for (const queue of ["cv.extract", "job.fetch", "cv.tailor"] as const)
+      expect(WORK_OPTIONS[queue].localConcurrency).toBe(3);
     expect(WORK_OPTIONS["job.fetch"].groupConcurrency).toBe(1);
+  });
+
+  it("runs one retention purge at a time (T-063)", () => {
+    expect(WORK_OPTIONS["retention.purge"].localConcurrency).toBe(1);
   });
 });
