@@ -22,6 +22,8 @@ const POSTGRES_IMAGE =
 
 let container: StartedPostgreSqlContainer | undefined;
 let databaseUrl: string;
+/** Server and name of the database this file created on `INTEGRATION_DATABASE_URL` (dropped afterwards). */
+let created: { adminUrl: string; name: string } | undefined;
 let prisma: PrismaClient;
 let throttle: LoginThrottle;
 
@@ -33,6 +35,7 @@ beforeAll(async () => {
     await admin.connect();
     await admin.query(`CREATE DATABASE "${name}"`);
     await admin.end();
+    created = { adminUrl: external, name };
     const url = new URL(external);
     url.pathname = `/${name}`;
     databaseUrl = url.toString();
@@ -52,6 +55,15 @@ beforeAll(async () => {
 afterAll(async () => {
   await prisma?.$disconnect();
   await container?.stop();
+  if (created) {
+    const admin = new pg.Client({ connectionString: created.adminUrl });
+    await admin.connect();
+    try {
+      await admin.query(`DROP DATABASE IF EXISTS "${created.name}" WITH (FORCE)`);
+    } finally {
+      await admin.end();
+    }
+  }
 });
 
 /** Waits until a backend of this database is blocked on a lock (the attempt reached its row lock). */
