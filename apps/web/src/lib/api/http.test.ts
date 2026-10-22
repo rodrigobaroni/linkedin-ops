@@ -135,6 +135,37 @@ describe("createApiClient", () => {
     );
   });
 
+  it("binary route: a 200 that is not a PDF (HTML, JSON) is an error, never a download", async () => {
+    const id = "0199a3f2-0000-7000-8000-000000000009";
+    for (const contentType of ["text/html; charset=utf-8", "application/json", ""]) {
+      const body = new Response("<html><script>alert(1)</script></html>", { status: 200 });
+      // A string body defaults to text/plain; "" stands for no Content-Type at all.
+      if (contentType) body.headers.set("Content-Type", contentType);
+      else body.headers.delete("Content-Type");
+      const { client } = setup([body]);
+      await expect(
+        client.request(routesV1["career.jobs.pdf"], { params: { id } }),
+      ).rejects.toMatchObject({ code: "INTERNAL" });
+    }
+  });
+
+  it("binary route: the Blob type is forced to application/pdf", async () => {
+    const pdf = new Response(new Uint8Array([0x25, 0x50, 0x44, 0x46]), {
+      status: 200,
+      headers: {
+        "Content-Type": "Application/PDF; name=x",
+        "Content-Disposition": 'attachment; filename="run.exe"',
+      },
+    });
+    const { client } = setup([pdf]);
+    const result = await client.request(routesV1["career.jobs.pdf"], {
+      params: { id: "0199a3f2-0000-7000-8000-000000000009" },
+    });
+    expect(result.blob.type).toBe("application/pdf");
+    // Not a .pdf name: the caller falls back to its own.
+    expect(result.filename).toBeNull();
+  });
+
   it("binary route: errors are still Problem Details, with Retry-After", async () => {
     const { client } = setup([problem("RATE_LIMITED", { "Retry-After": "120" })]);
     const failure = client.request(routesV1["career.jobs.pdf"], {
@@ -276,6 +307,10 @@ describe("filenameFromDisposition", () => {
     expect(filenameFromDisposition('attachment; filename="../etc/passwd"')).toBeNull();
     expect(filenameFromDisposition('attachment; filename=".hidden.pdf"')).toBeNull();
     expect(filenameFromDisposition('attachment; filename="CV Ana.pdf"')).toBeNull();
+    expect(filenameFromDisposition('attachment; filename="evil.html"')).toBeNull();
+    expect(filenameFromDisposition('attachment; filename="run.exe"')).toBeNull();
+    expect(filenameFromDisposition('attachment; filename="a.pdf.lnk"')).toBeNull();
+    expect(filenameFromDisposition('attachment; filename="CV.PDF"')).toBe("CV.PDF");
   });
 });
 

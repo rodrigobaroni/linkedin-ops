@@ -459,6 +459,7 @@ export const messages = {
             minutes <= 1
               ? "Muitos downloads em pouco tempo. Tente de novo em 1 minuto."
               : `Muitos downloads em pouco tempo. Tente de novo em ${minutes} minutos.`,
+          tooLarge: "O CV adaptado ficou grande demais para o PDF; reprocesse a vaga.",
           sessionExpired: "Sua sessão expirou. Entre de novo para baixar o PDF.",
           notFound: "Esta vaga não existe mais.",
         },

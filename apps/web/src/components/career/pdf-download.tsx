@@ -16,13 +16,14 @@ import { useCareerJobsApi, useInvalidateJobs } from "./use-career-jobs";
 const copy = messages.career.jobs.detail.pdf;
 const actionsCopy = messages.career.jobs.actions;
 
+/** `stale`: the fix is reprocessing the posting, so the alert offers "Reprocessar". */
 type Failure = { message: string; stale: boolean } | null;
 
 /**
  * "Baixar PDF" (Aurora §3; route `GET /career/jobs/{id}/pdf`, PR 3c). The caller renders it only for a
  * `READY` posting with a tailoring. `fetch` → `Blob` → temporary `<a download>`, so an error is shown here in
  * PT-BR (`role="alert"`) instead of the browser opening the Problem JSON. `409 TAILORED_CV_STALE` (the CV base
- * the tailoring used lost items) offers "Reprocessar"; `429` says when to try again (`Retry-After`). The PDF
+ * the tailoring used lost items) and `422 TAILORED_CV_TOO_LARGE` offer "Reprocessar"; `429` says when to try again (`Retry-After`). The PDF
  * carries no provenance marks; the file name comes from the API.
  */
 export function PdfDownload({
@@ -106,6 +107,8 @@ export function PdfDownload({
 
 function failureFrom(cause: unknown): Failure {
   if (isApiProblem(cause, "TAILORED_CV_STALE")) return { message: copy.stale, stale: true };
+  // `422` (#116): the tailored CV does not fit the PDF limits; reprocessing tailors it again.
+  if (isApiProblem(cause, "TAILORED_CV_TOO_LARGE")) return { message: copy.tooLarge, stale: true };
   if (isApiProblem(cause, "RATE_LIMITED")) {
     const minutes = Math.max(1, Math.ceil((cause.retryAfterSeconds ?? 60) / 60));
     return { message: copy.rateLimited(minutes), stale: false };

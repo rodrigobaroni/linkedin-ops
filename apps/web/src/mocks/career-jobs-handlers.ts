@@ -66,7 +66,7 @@ type MockJobsState = {
   /** Answer the next batch with this problem instead (tests). */
   nextBatchProblem: "UPSTREAM_UNAVAILABLE" | "VALIDATION_FAILED" | null;
   /** Answer the next PDF download with this problem instead (tests). */
-  nextPdfProblem: "TAILORED_CV_STALE" | "RATE_LIMITED" | null;
+  nextPdfProblem: "TAILORED_CV_STALE" | "TAILORED_CV_TOO_LARGE" | "RATE_LIMITED" | null;
   /** `GET /career/jobs/{id}/pdf` calls that returned a PDF. */
   pdfDownloads: number;
 };
@@ -94,7 +94,9 @@ export function mockJobsState(): Readonly<MockJobsState> {
 }
 
 /** Answers the next `GET /career/jobs/{id}/pdf` with this problem (tests). */
-export function failNextMockPdf(problem: "TAILORED_CV_STALE" | "RATE_LIMITED"): void {
+export function failNextMockPdf(
+  problem: "TAILORED_CV_STALE" | "TAILORED_CV_TOO_LARGE" | "RATE_LIMITED",
+): void {
   state.nextPdfProblem = problem;
 }
 
@@ -636,6 +638,11 @@ export const careerJobsHandlers = [
     state.nextPdfProblem = null;
     if (problem === "RATE_LIMITED") {
       return problemResponse("RATE_LIMITED", { headers: { "Retry-After": "300" } });
+    }
+    if (problem === "TAILORED_CV_TOO_LARGE") {
+      return problemResponse("TAILORED_CV_TOO_LARGE", {
+        detail: "O CV adaptado ficou grande demais para o PDF; reprocesse a vaga",
+      });
     }
     if (problem === "TAILORED_CV_STALE" || job.detail.url.includes("cv-mudou")) {
       return problemResponse("TAILORED_CV_STALE", {

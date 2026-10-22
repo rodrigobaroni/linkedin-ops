@@ -254,6 +254,19 @@ describe("CareerJobDetailScreen", () => {
       expect(screen.queryByRole("button", { name: copy.pdf.download })).not.toBeInTheDocument();
     });
 
+    it("422 TAILORED_CV_TOO_LARGE: alert and 'Reprocessar'", async () => {
+      const job = mockJob("https://empresa.com/vaga");
+      failNextMockPdf("TAILORED_CV_TOO_LARGE");
+      const user = await renderDetail(job.id);
+      await user.click(await screen.findByRole("button", { name: copy.pdf.download }));
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent(copy.pdf.tooLarge);
+      expect(
+        within(alert).getByRole("button", { name: jobsCopy.actions.retry }),
+      ).toBeInTheDocument();
+      expect(saved).toHaveLength(0);
+    });
+
     it("429: says when to try again (Retry-After)", async () => {
       const job = mockJob("https://empresa.com/vaga");
       failNextMockPdf("RATE_LIMITED");

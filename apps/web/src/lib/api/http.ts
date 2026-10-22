@@ -91,13 +91,13 @@ function buildQuery(query: RequestOptions<RouteDefinition>["query"]): string {
 
 /**
  * `attachment; filename="CV-Nome-Empresa-Cargo.pdf"` → the name, kept only when it is plain ASCII letters,
- * digits, dot, underscore and hyphen (the API emits exactly that); anything else yields `null` and the caller
- * picks its own name. `filename*` (RFC 5987) is not used by the API.
+ * digits, dot, underscore and hyphen ending in `.pdf` (the API emits exactly that): `evil.html`, `run.exe` or
+ * `a.pdf.lnk` yield `null` and the caller uses its own name. `filename*` (RFC 5987) is not used by the API.
  */
 export function filenameFromDisposition(value: string | null): string | null {
   const match = value ? /filename="([^"]*)"/i.exec(value) : null;
   const name = match?.[1];
-  return name && /^[A-Za-z0-9._-]{1,200}$/.test(name) && !name.startsWith(".") ? name : null;
+  return name && /^[A-Za-z0-9._-]{1,200}\.pdf$/i.test(name) && !name.startsWith(".") ? name : null;
 }
 
 /** Same-origin absolute URL: `fetch` in Node (Vitest/MSW) does not resolve relative paths by itself. */
@@ -180,12 +180,25 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     }
 
     if (isBinary) {
-      let blob: Blob;
+      // Only a PDF is ever handed to the browser as a download: a 200 with HTML or JSON (a proxy page, a
+      // misrouted response) is an error, never a file.
+      const contentType = (response.headers.get("Content-Type") ?? "").trim().toLowerCase();
+      if (!contentType.startsWith("application/pdf")) {
+        throw new ApiProblem({
+          code: "INTERNAL",
+          status: 500,
+          title: "Resposta inesperada da API",
+          detail: `${route.method} ${route.path}: expected application/pdf`,
+        });
+      }
+      let bytes: Blob;
       try {
-        blob = await response.blob();
+        bytes = await response.blob();
       } catch (cause) {
         throw new ApiNetworkError(cause);
       }
+      // The type is forced, whatever the response declared after `application/pdf` (parameters, casing).
+      const blob = new Blob([bytes], { type: "application/pdf" });
       const filename = filenameFromDisposition(response.headers.get("Content-Disposition"));
       return { blob, filename } as SuccessBody<Route>;
     }
