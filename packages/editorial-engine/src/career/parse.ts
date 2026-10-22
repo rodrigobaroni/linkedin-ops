@@ -189,12 +189,18 @@ export function parseCvTailorResponse(
     text: string,
     code: TailorIssueCode,
     where: string,
-    excerpt?: string,
+    excerpt?: string | readonly string[],
     source?: string,
   ) => {
     issues.push(text);
-    const kept = source === undefined ? excerpt?.trim() || undefined : excerptFrom(source, excerpt);
-    feedback.push(kept === undefined ? { code, where } : { code, where, excerpt: kept });
+    // Several offending words ("Globex", "Umbrella") are one structured issue each: joined they would not occur
+    // in the output and the excerpt would be lost (Pena §6.12, follow-up a).
+    const excerpts = excerpt === undefined || typeof excerpt === "string" ? [excerpt] : excerpt;
+    for (const candidate of excerpts.length > 0 ? excerpts : [undefined]) {
+      const kept =
+        source === undefined ? candidate?.trim() || undefined : excerptFrom(source, candidate);
+      feedback.push(kept === undefined ? { code, where } : { code, where, excerpt: kept });
+    }
   };
   const itemTexts = cvItemTexts(base);
   const requirementIds = new Set(job.requirements.map((requirement) => requirement.id));
@@ -349,13 +355,7 @@ export function parseCvTailorResponse(
     // other proper noun absent from the base CV, in added and rewritten text alike.
     const entities = entityGuard.newEntities(segment.text, segment.targetRequirementIds);
     if (entities.length > 0) {
-      report(
-        `${where}: hard limit, new entity`,
-        "new_entity",
-        where,
-        entities.join(" "),
-        segment.text,
-      );
+      report(`${where}: hard limit, new entity`, "new_entity", where, entities, segment.text);
     }
     // A credential's words never become a title the base CV does not have (Sentinela S-1, PR #91).
     const credentialTitles = titlesFromCredentials(segment.text, baseText, titles);

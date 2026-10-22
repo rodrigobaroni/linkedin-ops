@@ -4,10 +4,24 @@
  * version adds a new line to `PINNED` (old lines stay). The texts must also match Pena's canonical document.
  */
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { CAREER_PROMPTS, CAREER_SECURITY_PREAMBLE } from "../src/index.js";
+import { CAREER_PROMPTS, CAREER_SECURITY_PREAMBLE, type PromptDefinition } from "../src/index.js";
+import { CV_EXTRACT_V1_0_0 } from "../src/prompts/cv-extract/v1.0.0.js";
+import { CV_HUMANIZE_V1_0_0 } from "../src/prompts/cv-humanize/v1.0.0.js";
+import { CV_TAILOR_V1_0_0 } from "../src/prompts/cv-tailor/v1.0.0.js";
+import { CV_TAILOR_V1_1_0 } from "../src/prompts/cv-tailor/v1.1.0.js";
+import { JOB_EXTRACT_V1_0_0 } from "../src/prompts/job-extract/v1.0.0.js";
+
+/** Every released prompt version, in use or not (a superseded one must still match its pin; QA of #109). */
+const RELEASED: readonly PromptDefinition[] = [
+  CV_EXTRACT_V1_0_0,
+  JOB_EXTRACT_V1_0_0,
+  CV_TAILOR_V1_0_0,
+  CV_TAILOR_V1_1_0,
+  CV_HUMANIZE_V1_0_0,
+];
 
 const PINNED: Record<string, string> = {
   "cv-extract@1.0.0": "373feaa03d456afbe89210fd7bded7b3a30ec7da14edd7e0d02ee0d7d98e67f0",
@@ -24,7 +38,21 @@ const DOC = readFileSync(
 );
 
 describe("career prompts are immutable once released", () => {
-  for (const prompt of Object.values(CAREER_PROMPTS)) {
+  it("every pin is checked: each pinned version is released, each released version is pinned and in use or kept", () => {
+    const released = RELEASED.map((prompt) => `${prompt.id}@${prompt.version}`).sort();
+    expect(Object.keys(PINNED).sort()).toEqual(released);
+    const files = readdirSync(join(import.meta.dirname, "..", "src", "prompts"), {
+      recursive: true,
+    })
+      .map(String)
+      .filter((file) => /v\d+\.\d+\.\d+\.ts$/.test(file))
+      .map((file) => file.replace(/\\/g, "/").replace(/\/v(\d+\.\d+\.\d+)\.ts$/, "@$1"))
+      .sort();
+    expect(files).toEqual(released);
+    for (const prompt of Object.values(CAREER_PROMPTS)) expect(RELEASED).toContain(prompt);
+  });
+
+  for (const prompt of RELEASED) {
     const key = `${prompt.id}@${prompt.version}`;
 
     it(`${key} matches its pinned hash`, () => {

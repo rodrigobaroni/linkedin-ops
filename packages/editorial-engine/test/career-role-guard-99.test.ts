@@ -170,3 +170,64 @@ describe("cv.tailor and the humanizer apply the label guard (issue #99)", () => 
     expect(result.ok && result.value.revertedSegmentIds).toEqual(["seg-1"]);
   });
 });
+
+describe("label guard: leading articles and adjectives (QA of #109, Pena §6.12.1)", () => {
+  const PT = ["Engenheiro de Dados Sênior"];
+  const EN = ["Senior Software Engineer"];
+  it.each([
+    // probe/labels-bypass.mjs
+    ["Experienced data engineer with 8 years in payments.", EN],
+    ["Uma engenheira de dados com foco em pagamentos.", PT],
+    ["A tech lead focused on payments.", EN],
+    ["Um tech lead de dados com foco em custo.", PT],
+    ["Seasoned product manager for fintechs.", EN],
+    ["Experiente tech lead de dados com foco em custo.", PT],
+    ["Results-driven data scientist with Python.", EN],
+    ["An engineering manager with a data background.", EN],
+    ["Hands-on staff engineer for platforms.", EN],
+    ["Accomplished data architect with cloud focus.", EN],
+    // QA of #109
+    ["Proven engineering manager with a data background.", EN],
+    ["The tech lead behind the billing migration.", EN],
+    ["Hands-on tech lead for payments platforms.", EN],
+    ["Head of data platform at a fintech.", EN],
+    ["VP of engineering for payments.", EN],
+    ["Tech lead e arquiteta de dados com foco em custo.", PT],
+    ["Tech lead que liderou a migração de cobrança.", PT],
+    ["Data engineer who builds reliable pipelines.", EN],
+    ["Tech Lead — pagamentos e plataforma.", PT],
+  ])("negative: '%s'", (text, titles) => {
+    expect(inventedRoleLabels(text, titles)).not.toEqual([]);
+  });
+
+  it.each([
+    "Lead time caiu pela metade.",
+    "Developer experience is a recurring focus.",
+    "PM e design definiram o escopo comigo.",
+    "Engenharia de dados em plataformas de pagamento.",
+    "Led the data engineering guild for two years.",
+    "Hired a data engineer with Kafka experience.",
+    "Supported the PM with pricing analyses.",
+    "Partnered with the engineering manager for the billing roadmap.",
+    "Mentored data engineers on testing.",
+    "The migration cut costs with durable queues.",
+  ])("positive: '%s'", (text) => {
+    expect(inventedRoleLabels(text, ["Senior Software Engineer"])).toEqual([]);
+  });
+
+  it("positive: the base title with an article or an adjective is still covered", () => {
+    expect(
+      inventedRoleLabels("Um engenheiro de dados sênior com foco em plataforma.", [
+        "Engenheiro de Dados Sênior",
+      ]),
+    ).toEqual([]);
+  });
+});
+
+describe("list continuation: 'e staff da plataforma' (QA of #109)", () => {
+  it("negative: a staff role listed after another", () => {
+    expect(
+      inventedRoleTitles("Atuei como engenheira e staff da plataforma.", ["Engenheira"]),
+    ).not.toEqual([]);
+  });
+});

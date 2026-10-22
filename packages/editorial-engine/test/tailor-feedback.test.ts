@@ -46,6 +46,15 @@ describe("parseCvTailorResponse reports structured issues (§4.2)", () => {
     );
   });
 
+  it("several new entities in one segment: one issue per entity (Pena §6.12, follow-up a)", () => {
+    const output = tailoringOutput();
+    const added = output.tailoredCv.experiences[0]?.bullets.segments[1];
+    if (added) added.text = "Evaluated Kafka for Globex and Umbrella event streaming.";
+    const entities = feedbackOf(output).filter((issue) => issue.code === "new_entity");
+    expect(entities.map((issue) => issue.excerpt).sort()).toEqual(["globex", "umbrella"]);
+    expect(entities.every((issue) => issue.where === "seg-3")).toBe(true);
+  });
+
   it("a schema failure is one schema_invalid issue without excerpt", () => {
     expect(feedbackOf({ nonsense: true })).toEqual([{ code: "schema_invalid", where: "(root)" }]);
   });

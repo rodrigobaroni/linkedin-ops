@@ -940,6 +940,16 @@ function introducedRoles(text: string, vocabulary: ReadonlySet<string>): RolePhr
         !vocabulary.has(word(opener)) &&
         covered[opener] === undefined &&
         (article || (word(opener).length >= 5 && AGENTIVE.test(word(opener))));
+      // After a list separator, a lone modifier with a complement is a role ("e staff da plataforma"; QA of #109).
+      if (
+        head < 0 &&
+        window === words.length &&
+        opener > start &&
+        ROLE_COMPLEMENT.has(word(opener)) &&
+        !words[opener - 1]?.pause
+      ) {
+        head = opener - 1;
+      }
       if (head < 0 && !notRole && (strong || candidate)) {
         for (let at = opener; at < Math.min(words.length, opener + ROLE_STRONG_WINDOW); at += 1) {
           if (stop(at) || ROLE_COMPLEMENT.has(word(at))) break;
@@ -1090,11 +1100,35 @@ const LABEL_FOLLOWERS = new Set([
   "em",
   "in",
   "for",
+  // QA of #109: "Head of data", "VP of engineering", "Tech lead at…", "The tech lead behind…", "Engineer who…".
+  "of",
+  "at",
+  "on",
+  "behind",
+  "from",
+  "who",
+  "que",
 ]);
 /** Adjectives a PT label head takes before its complement ("Líder técnica de dados"). */
 const LABEL_ADJECTIVES = new Set(["tecnico", "tecnica"]);
-/** How many words may open a sentence before the label's head ("Senior staff data engineer"). */
-const LABEL_WINDOW = 4;
+/**
+ * How many words may open a sentence before the label's head, leading articles skipped ("Senior staff data
+ * engineer", "Experienced data engineer", "Hands-on staff engineer").
+ */
+const LABEL_WINDOW = 5;
+/** Leading articles skipped before the label ("A tech lead…", "Uma engenheira de dados…"; QA of #109). */
+const LABEL_MAX_ARTICLES = 2;
+
+/**
+ * Text of a sentence as the label check reads it: hyphenated words joined ("hands-on", "results-driven", so the
+ * halves are no stop words) and a spaced dash as a pause ("Tech Lead — pagamentos"; QA of #109).
+ */
+function labelText(text: string): string {
+  return text
+    .normalize("NFKC")
+    .replace(/(\p{L})-(\p{L})/gu, "$1$2")
+    .replace(/\s+[\u2013\u2014-]+\s+/gu, ", ");
+}
 
 /**
  * Role titles `text` uses as a label, without an introducer, at the opening of a sentence (every sentence of
@@ -1109,16 +1143,34 @@ export function inventedRoleLabels(
   titles: readonly string[],
   firstSentenceOnly = false,
 ): string[] {
-  const titleWords = titles.map((title) => roleWords(title).map((role) => role.word));
+  const titleWords = titles.map((title) => roleWords(labelText(title)).map((role) => role.word));
   const sentences = text.normalize("NFKC").split(/(?<=[.!?;])\s+/u);
   const found = new Set<string>();
   for (const sentence of firstSentenceOnly ? sentences.slice(0, 1) : sentences) {
-    const words = roleWords(sentence);
+    const words = roleWords(labelText(sentence));
     const word = (at: number) => words[at]?.word ?? "";
-    if (words.length === 0 || OPENING_WORDS.has(word(0))) continue;
+    // Leading articles are skipped; leading adjectives ("Experienced", "Seasoned", "Experiente") are part of the
+    // window, never a reason to skip the sentence (QA of #109, Pena §6.12.1). Inside the window an article, a
+    // stop word or a complement ends the search: "Hired a data engineer…", "Supported the PM…" are no labels.
+    let start = 0;
+    while (start < LABEL_MAX_ARTICLES && ARTICLES.has(word(start)) && !words[start]?.pause) {
+      start += 1;
+    }
     let head = -1;
-    for (let at = 0; at < Math.min(words.length, LABEL_WINDOW); at += 1) {
-      if (ROLE_STOP_WORDS.has(word(at)) || ROLE_COMPLEMENT.has(word(at))) break;
+    for (let at = start; at < Math.min(words.length, start + LABEL_WINDOW); at += 1) {
+      // A role introducer ("Atuei como engenheira…", "Worked as…") makes it `inventedRoleTitles`'s phrase, and a
+      // credential ("Certificação AWS Certified Solutions Architect…") `newCredentials`'s: no label.
+      if (introducerAt(words, at) !== null || CREDENTIAL_WORD.test(word(at))) {
+        head = -1;
+        break;
+      }
+      if (
+        ROLE_STOP_WORDS.has(word(at)) ||
+        ROLE_COMPLEMENT.has(word(at)) ||
+        ARTICLES.has(word(at))
+      ) {
+        break;
+      }
       if (LABEL_HEADS.has(word(at))) head = at;
       if (words[at]?.pause) break;
     }
@@ -1126,10 +1178,23 @@ export function inventedRoleLabels(
     let after = head + 1;
     while (!words[after - 1]?.pause && LABEL_ADJECTIVES.has(word(after))) after += 1;
     while (!words[after - 1]?.pause && ROLE_SENIORITY.has(word(after))) after += 1;
+    // Another role after a conjunction lists roles ("Tech lead e arquiteta de dados…"); a non-role does not
+    // ("PM e design definiram…").
+    const listed = (at: number) =>
+      ROLE_CONJUNCTIONS.has(word(at)) &&
+      !words[at - 1]?.pause &&
+      (ROLE_TITLE_WORDS.has(word(at + 1)) ||
+        ((ROLE_SENIORITY.has(word(at + 1)) || ROLE_MODIFIERS.has(word(at + 1))) &&
+          ROLE_TITLE_WORDS.has(word(at + 2))));
     const followed = (at: number) =>
-      at >= words.length || words[at - 1]?.pause !== null || LABEL_FOLLOWERS.has(word(at));
-    // One postposed modifier ("Engenheira backend com…", "Desenvolvedora fullstack com…").
+      at >= words.length ||
+      words[at - 1]?.pause !== null ||
+      LABEL_FOLLOWERS.has(word(at)) ||
+      listed(at);
+    // One postposed modifier ("Engenheira backend com…", "Desenvolvedora fullstack com…"), never after a head
+    // that is also an action verb ("Lead time de entrega…").
     if (
+      !OPENING_WORDS.has(word(head)) &&
       !followed(after) &&
       !ROLE_STOP_WORDS.has(word(after)) &&
       !OPENING_WORDS.has(word(after)) &&
@@ -1140,9 +1205,11 @@ export function inventedRoleLabels(
     if (!followed(after)) continue;
     // Adjectives, seniority and a modifier are part of the label; complements extend it as for an introduced role.
     const { end, cuts } = extendRolePhrase(words, after - 1, (at) => ROLE_STOP_WORDS.has(word(at)));
+    // Leading articles are not part of the label ("Um engenheiro de dados sênior…" is the base title); leading
+    // adjectives are ("Experienced data engineer" is not "Software Engineer").
     const phrase: RolePhrase = {
-      words: words.slice(0, end).map((role) => role.word),
-      cuts: [after, ...cuts],
+      words: words.slice(start, end).map((role) => role.word),
+      cuts: [after, ...cuts].map((cut) => cut - start),
       context: "",
     };
     if (!titleWords.some((title) => coversRole(title, phrase))) found.add(phrase.words.join(" "));
