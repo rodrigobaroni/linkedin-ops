@@ -14,10 +14,13 @@ import {
   createFirstOwner,
   createPrismaClient,
   hashSessionSecret,
+  LoginThrottle,
   PrismaSessionService,
   SESSION_ABSOLUTE_TTL_MS,
   SESSION_IDLE_TTL_MS,
   SetupUserError,
+  THROTTLE_LOCK_MS,
+  THROTTLE_MAX_FAILURES,
   validateRuntimeEnv,
   type PrismaClient,
   type RequestMeta,
@@ -359,5 +362,108 @@ describe("PrismaSessionService (clock-controlled)", () => {
     expect(kinds.filter((kind) => kind === "invalid")).toHaveLength(5);
     expect(kinds.filter((kind) => kind === "rate_limited")).toHaveLength(5);
     expect((await service.login(OWNER.email, OWNER.password, META)).kind).toBe("rate_limited");
+  });
+
+  it("10 concurrent wrong reauths: exactly 5 reach Argon2id, the other 5 are refused with 429", async () => {
+    const issued = await freshSession();
+    const outcomes = await Promise.all(
+      Array.from({ length: 10 }, () => service.reauth(issued.session, "nope nope nope nope", META)),
+    );
+    const kinds = outcomes.map((outcome) => outcome.kind);
+    expect(kinds.filter((kind) => kind === "invalid")).toHaveLength(5);
+    expect(kinds.filter((kind) => kind === "rate_limited")).toHaveLength(5);
+    expect((await service.reauth(issued.session, OWNER.password, META)).kind).toBe("rate_limited");
+  });
+});
+
+/**
+ * #90: an attempt is all-or-nothing across its keys. Keys are opaque to `LoginThrottle`, so these use
+ * readable stand-ins for the e-mail/reauth and IP keys that `PrismaSessionService` derives.
+ */
+describe("LoginThrottle (all-or-nothing across keys, clock-controlled)", () => {
+  const PRIMARY = "email:issue-90";
+  const REAUTH = "reauth:issue-90";
+  const IP = "ip:issue-90";
+  let clock: number;
+  let throttle: LoginThrottle;
+
+  beforeEach(async () => {
+    await prisma.loginThrottle.deleteMany();
+    clock = Date.now();
+    throttle = new LoginThrottle(prisma, () => new Date(clock));
+  });
+
+  const row = (key: string) => prisma.loginThrottle.findUnique({ where: { key } });
+
+  async function lock(key: string) {
+    for (let attempt = 0; attempt < THROTTLE_MAX_FAILURES; attempt += 1) {
+      expect(await throttle.consume([key])).toBeNull();
+    }
+    expect(await throttle.consume([key])).toBe(THROTTLE_LOCK_MS / 1000);
+  }
+
+  async function concurrentPasses(keyOrders: readonly (readonly string[])[]): Promise<number> {
+    const results = await Promise.all(keyOrders.map((keys) => throttle.consume(keys)));
+    return results.filter((result) => result === null).length;
+  }
+
+  it("a refused attempt does not count in its other key (either key locked)", async () => {
+    for (const [locked, other] of [
+      [PRIMARY, IP],
+      [IP, PRIMARY],
+    ] as const) {
+      await prisma.loginThrottle.deleteMany();
+      expect(await throttle.consume([other])).toBeNull();
+      const before = await row(other);
+      await lock(locked);
+      clock += 1_000;
+      expect(await throttle.consume([PRIMARY, IP])).toBe(THROTTLE_LOCK_MS / 1000 - 1);
+      expect(await row(other)).toEqual(before);
+      expect(before?.failures).toBe(1);
+    }
+  });
+
+  it("a refused attempt does not open the window of its other key", async () => {
+    await lock(PRIMARY);
+    expect(await throttle.consume([PRIMARY, IP])).not.toBeNull();
+    expect((await row(IP))?.failures ?? 0).toBe(0);
+    clock += 50_000;
+    for (let attempt = 0; attempt < THROTTLE_MAX_FAILURES - 1; attempt += 1) {
+      expect(await throttle.consume([IP])).toBeNull();
+    }
+    clock += 20_000;
+    expect(await throttle.consume([IP])).toBeNull();
+    expect(await row(IP)).toMatchObject({
+      failures: THROTTLE_MAX_FAILURES,
+      lockedUntil: new Date(clock + THROTTLE_LOCK_MS),
+    });
+  });
+
+  it("an accepted attempt counts in every key", async () => {
+    expect(await throttle.consume([PRIMARY, IP])).toBeNull();
+    expect(await throttle.consume([IP, PRIMARY, IP])).toBeNull();
+    expect((await row(PRIMARY))?.failures).toBe(2);
+    expect((await row(IP))?.failures).toBe(2);
+  });
+
+  it("20 rounds of 10 concurrent attempts: exactly 5 pass each round (login and reauth keys)", async () => {
+    for (const primary of [PRIMARY, REAUTH]) {
+      const passes: number[] = [];
+      for (let round = 0; round < 20; round += 1) {
+        await prisma.loginThrottle.deleteMany();
+        passes.push(await concurrentPasses(Array.from({ length: 10 }, () => [primary, IP])));
+      }
+      expect(passes).toEqual(Array.from({ length: 20 }, () => THROTTLE_MAX_FAILURES));
+    }
+  });
+
+  it("concurrent attempts with keys in opposite orders do not deadlock", async () => {
+    for (let round = 0; round < 20; round += 1) {
+      await prisma.loginThrottle.deleteMany();
+      const orders = Array.from({ length: 10 }, (_, index) =>
+        index % 2 === 0 ? [PRIMARY, IP] : [IP, PRIMARY],
+      );
+      expect(await concurrentPasses(orders)).toBe(THROTTLE_MAX_FAILURES);
+    }
   });
 });
