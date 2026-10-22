@@ -63,6 +63,8 @@ const GENERATION = {
 };
 
 let container: StartedPostgreSqlContainer | undefined;
+/** Server and name of the database this file created on `INTEGRATION_DATABASE_URL` (dropped afterwards). */
+let created: { adminUrl: string; name: string } | undefined;
 let prisma: PrismaClient;
 let clock: Date;
 let postings: PrismaJobPostings;
@@ -232,6 +234,7 @@ beforeAll(async () => {
     await admin.connect();
     await admin.query(`CREATE DATABASE "${name}"`);
     await admin.end();
+    created = { adminUrl: external, name };
     const url = new URL(external);
     url.pathname = `/${name}`;
     databaseUrl = url.toString();
@@ -261,6 +264,15 @@ beforeEach(() => {
 afterAll(async () => {
   await prisma?.$disconnect();
   await container?.stop();
+  if (created) {
+    const admin = new pg.Client({ connectionString: created.adminUrl });
+    await admin.connect();
+    try {
+      await admin.query(`DROP DATABASE IF EXISTS "${created.name}" WITH (FORCE)`);
+    } finally {
+      await admin.end();
+    }
+  }
 });
 
 describe("createBatch", () => {
