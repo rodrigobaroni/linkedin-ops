@@ -3,7 +3,7 @@
 - Status: proposed
 - Date: 2026-10-22
 - Deciders: Rodrigo (product owner); Atlas (architect, review); Claude Code (Maestro, library choice);
-  implementation Pêndulo (renderer), Alicerce (route), Vitral (download button)
+  implementation Pêndulo (renderer and route), Vitral (download button)
 
 ## Context
 
@@ -29,19 +29,32 @@ to be recorded.
    addition notes never reach the PDF.
 3. **Fonts:** Source Sans 3 Regular and Semibold (Adobe, SIL OFL 1.1), versioned in `apps/api/assets/fonts`
    with their hashes. They are embedded as subsets (CID TrueType, Identity-H, with `ToUnicode`), so the text is
-   selectable with accents and the standard 14 fonts are never used.
+   selectable with accents and the standard 14 fonts are never used. They are read at module load, so a missing
+   font fails the API at boot rather than at the first download; the runtime image copies `apps/api/assets`
+   explicitly (`apps/api/Dockerfile`).
 4. **Neutral, deterministic output.** pdfkit writes `Producer`/`Creator` = `PDFKit`, a `CreationDate`, an XMP
-   packet repeating them, and a trailer `/ID` hashed from that date. The renderer empties the Info dictionary,
-   skips the XMP packet and sets `/ID` to the first 16 bytes of a SHA-256 over the input. These three hooks are
-   pdfkit internals; the pinned version and the tests (same bytes under two different clocks, no
-   `Producer`/`Creator`/date/XMP in the bytes, a mutation that removes the hooks fails both) guard them on every
-   bump.
+   packet repeating them, and a trailer `/ID` hashed from that date. The renderer empties the Info dictionary
+   through `doc.info` (public API), and through two pdfkit internals it skips the XMP packet (`endMetadata`)
+   and sets `/ID` (`_id`) to the first 16 bytes of a SHA-256 over the input. The pinned version and the tests
+   (same bytes under two different clocks, no `Producer`/`Creator`/date/XMP in the bytes, a mutation that
+   removes the hooks fails both) guard the internals on every bump.
 5. **Tagged PDF:** structure tree (`Document`, `H1`–`H3`, `P`, `L`/`LI`), `/Lang` set to the posting language,
    rules marked as layout artifacts. This costs about 40 bytes and no measurable time, and helps screen readers
    and ATS reading order. It is not a PDF/UA conformance claim.
 6. **File name:** `CV-<name>-<company>-<title>.pdf`. The name comes from `contact.name` of the base CV (never
    hard-coded) and company and title from the posting. Each part is reduced to ASCII letters, digits and
    hyphens and capped at 40 characters.
+7. **Glyph coverage:** text is NFC-normalized and every character both embedded fonts lack (checked against
+   their `cmap` with fontkit, the version pdfkit already uses) is dropped before drawing, together with control
+   characters. Without this, pdfkit would print an empty `.notdef` box.
+8. **Route:** `GET /career/jobs/{id}/pdf` (`career.jobs.pdf`, `responseContentType: application/pdf`) renders on
+   each request from `tailored_cvs.cv_base_id`, the CV base **version the tailoring used**, never the active
+   one: otherwise companies and dates of another version would mix with the tailored text. It requires a
+   session, answers `404` for another owner's posting, and serves `READY` postings only (else
+   `409 TAILORED_CV_NOT_READY`). A reference the base version no longer resolves gives `409 TAILORED_CV_STALE`
+   ("reprocesse a vaga"), and the audit trail records the missing id only. The response carries
+   `Content-Disposition: attachment; filename="<file name>"` (re-checked against `^[A-Za-z0-9-]+\.pdf$` before
+   it reaches the header) and `Cache-Control: no-store`, and the route is rate limited per user (60 per hour).
 
 ## Alternatives considered
 
@@ -65,8 +78,17 @@ to be recorded.
 - Upgrading pdfkit can break the metadata hooks silently at runtime, but not in CI: the determinism and
   metadata tests fail. A bump PR must keep them green, never relax them.
 - Layout changes are code changes (one layout, spec §12: multiple layouts are out of this cycle).
-- Sections of the base CV outside the tailored content (`other`) are not printed: the tailored content has no
-  slot for them, and they are in the base CV language.
+- Rendering is **synchronous**: pdfkit lays out and compresses on the event loop, under 100 ms per CV,
+  during which the API serves nothing else. This is acceptable for one owner, behind the per-user rate limit. If
+  downloads ever compete with other traffic, move rendering to a worker thread (as `cv-pdf.worker.ts` does for
+  extraction) or to the worker with a stored file.
+- **Known limit, glyphs:** characters outside Source Sans 3 (CJK ideographs, emoji, other scripts it does not
+  cover) are dropped from the PDF. Latin with diacritics, Greek and Cyrillic are covered. The review screen still
+  shows the full text. A CV in another script would need another font family (a new decision).
+- **MVP decision (Maestro, 2026-10-22; for Rodrigo):** sections of the base CV outside the tailored content
+  (`other`) are not printed: the tailored content has no slot for them, and they are in the base CV language.
+  Education, certifications and languages are printed as written in the base CV, even for a posting in
+  English. Contact links are plain text, without link annotations.
 
 ## Security / compliance impact
 
@@ -76,6 +98,8 @@ to be recorded.
 - Neutral metadata (D6): there is no tool identification, no creation or modification date, no XMP and no
   clock-derived `/ID`. The `/ID` does not reveal content: it is a truncated hash of the input.
 - No provenance in the PDF (spec §8). This is tested on the extracted text and on the raw bytes.
-- `TailoredCvRenderError` carries only the missing item id, never CV content (spec §8: no CV content in logs or
-  Problem Details).
+- `TailoredCvRenderError` and `TailoredCvStaleError` carry only the missing item id, never CV content (spec §8:
+  no CV content in logs, audit or Problem Details); `tailored_cv.stale` audit events store that id alone.
+- The download is a `GET` with the session cookie (`SameSite`, `__Host-`), never cached (`no-store`), and the
+  file name cannot inject headers: it is ASCII letters, digits and hyphens only, checked twice.
 - The fonts are OFL 1.1: embedding and redistribution are allowed, and the license ships next to the files.
