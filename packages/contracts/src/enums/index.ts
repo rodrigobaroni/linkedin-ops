@@ -13,3 +13,4 @@ export * from "./schedule.js";
 export * from "./publication.js";
 export * from "./media.js";
 export * from "./notification.js";
+export * from "./cv-base.js";

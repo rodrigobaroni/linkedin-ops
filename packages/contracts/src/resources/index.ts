@@ -20,3 +20,4 @@ export * from "./publication.js";
 export * from "./media-asset.js";
 export * from "./notification.js";
 export * from "./audit-event.js";
+export * from "./cv-base.js";
