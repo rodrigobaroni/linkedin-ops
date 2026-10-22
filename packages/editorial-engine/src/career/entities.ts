@@ -568,51 +568,85 @@ export function titlesFromCredentials(
 
 /**
  * Words that head a role title once a role introducer presents them (issue #93): the role nouns plus leadership,
- * founder, seniority and C-level terms. Wider than `ROLE_NOUNS`, which only cuts titles out of credentials.
+ * founder, coaching, seniority and C-level terms. Wider than `ROLE_NOUNS`, which only cuts titles out of
+ * credentials.
  */
 const ROLE_TITLE_WORDS = new Set([
   ...ROLE_NOUNS,
   ...`
   lider head chefe coordenador coordenadora coordinator diretor diretora director supervisor supervisora
   presidente president cto ceo cfo coo cio cpo vp intern estagiario estagiaria trainee senior pleno junior sr jr
-  founder cofounder fundador fundadora cofundador cofundadora socio socia partner mentor mentora
+  founder cofounder fundador fundadora cofundador cofundadora socio socia partner mentor mentora coach evangelist
+  evangelista advocate steward
   `
     .split(/\s+/u)
     .filter(Boolean),
 ]);
+
+interface RoleIntroducer {
+  words: string[];
+  /** What follows is a role by grammar, even without a role title word ("No papel de responsável técnico"). */
+  strong: boolean;
+  /** A role reached ("promoted to", "became"): a credential after it names the credential, not a role. */
+  promotion: boolean;
+  /** "promoted from X to Y": `to`/`a`/`para` after the first role introduces the second. */
+  from: boolean;
+}
+
 /**
- * Words that present what follows as a role reached, besides `ROLE_INTRODUCERS` (Codex review, issue #93):
- * "promoted to engineering manager", "me tornei tech lead". Only for this check: "Became an AWS Certified …" names
- * a credential, so a phrase with a credential marker after these is left to `newCredentials`.
+ * Introducers for this check: `ROLE_INTRODUCERS` (the multi-word ones are strong) plus promotions (Codex review,
+ * issue #93): "promoted to", "promovido a", "appointed", "nomeado" (strong); "became", "me tornei", "virei";
+ * "promoted from … to …".
  */
-const PROMOTION_INTRODUCERS = [
-  "promoted to",
-  "promovido a",
-  "promovida a",
-  "promovido para",
-  "promovida para",
-  "became",
-  "become",
-  "becoming",
-  "me tornei",
-  "tornei me",
-  "virei",
-  "appointed",
-  "nomeado",
-  "nomeada",
-].map((phrase) => phrase.split(" "));
+const INTRODUCERS: RoleIntroducer[] = [
+  ...ROLE_INTRODUCERS.map((words) => ({
+    words,
+    strong: words.length > 1,
+    promotion: false,
+    from: false,
+  })),
+  ...["promoted to", "promovido a", "promovida a", "promovido para", "promovida para"]
+    .concat(["appointed", "nomeado", "nomeada"])
+    .map((phrase) => ({ words: phrase.split(" "), strong: true, promotion: true, from: false })),
+  ...["became", "become", "becoming", "me tornei", "tornei me", "virei"].map((phrase) => ({
+    words: phrase.split(" "),
+    strong: false,
+    promotion: true,
+    from: false,
+  })),
+  ...["promoted from", "promovido de", "promovida de"].map((phrase) => ({
+    words: phrase.split(" "),
+    strong: true,
+    promotion: true,
+    from: true,
+  })),
+];
 /** What may follow a title's head and still be the title: seniority ("engenheiro sênior") and complements. */
 const ROLE_SENIORITY = new Set(["senior", "pleno", "junior", "sr", "jr"]);
 const ROLE_COMPLEMENT = new Set(["de", "da", "do", "dos", "das", "of"]);
+/** Complements that attach the role to a team or area ("do time", "of the team") rather than name it. */
+const ROLE_ATTACHMENTS = new Set(["da", "do", "dos", "das"]);
 const ROLE_MAX_COMPLEMENTS = 3;
+/** Words that end the search for a title's head ("como parte do time em pagamentos", "appointed to lead"). */
+const ROLE_STOP_WORDS = new Set(
+  "em no na nos nas in at on for para pelo pela com with durante during after apos onde where que that which who e and ou or & to".split(
+    " ",
+  ),
+);
 /** Words that list another role after the first ("engenheira e tech lead"). */
 const ROLE_CONJUNCTIONS = new Set(["e", "and", "ou", "or", "&"]);
+/** "promoted from engineer to product manager", "promovido de analista a gerente". */
+const ROLE_FROM_TO = new Set(["to", "a", "para"]);
 /** Words before or after `como`/`as` that make it a comparison, not a role ("bem como", "such as", "as well"). */
 const COMPARISON_BEFORE = new Set(["assim", "bem", "tanto", "such", "well"]);
 const COMPARISON_AFTER = new Set(["well", "soon", "long", "much", "far"]);
-/** How many words after an introducer (an article skipped) may hold the title's head; after a list separator. */
+/**
+ * How many words after an introducer (an article skipped) may hold the title's head; after a list separator; and
+ * how many a strong introducer takes as the role when none of them is a role title word.
+ */
 const ROLE_WINDOW = 4;
 const ROLE_LIST_WINDOW = 2;
+const ROLE_STRONG_WINDOW = 3;
 
 interface RoleWord {
   word: string;
@@ -635,72 +669,88 @@ function roleWords(text: string): RoleWord[] {
   return result;
 }
 
-/** The introducer starting at `start` of `words`: where it ends and whether it is a promotion, or null. */
-function introducerAt(
-  words: readonly RoleWord[],
-  start: number,
-): { end: number; promotion: boolean } | null {
-  for (const [promotion, list] of [
-    [false, ROLE_INTRODUCERS],
-    [true, PROMOTION_INTRODUCERS],
-  ] as const) {
-    for (const phrase of list) {
+/** The introducer starting at `start` of `words`, or null. */
+function introducerAt(words: readonly RoleWord[], start: number): RoleIntroducer | null {
+  return (
+    INTRODUCERS.find((introducer) => {
+      const phrase = introducer.words;
       const end = start + phrase.length;
-      if (!phrase.every((word, offset) => words[start + offset]?.word === word)) continue;
-      if (phrase.some((_word, offset) => words[start + offset]?.pause)) continue;
-      if (!promotion && phrase.length === 1) {
-        if (COMPARISON_BEFORE.has(words[start - 1]?.word ?? "")) continue;
-        if (COMPARISON_AFTER.has(words[end]?.word ?? "")) continue;
-      }
-      return { end, promotion };
-    }
-  }
-  return null;
+      if (!phrase.every((word, offset) => words[start + offset]?.word === word)) return false;
+      if (phrase.some((_word, offset) => words[start + offset]?.pause)) return false;
+      if (introducer.promotion || phrase.length > 1) return true;
+      return (
+        !COMPARISON_BEFORE.has(words[start - 1]?.word ?? "") &&
+        !COMPARISON_AFTER.has(words[end]?.word ?? "")
+      );
+    }) ?? null
+  );
 }
 
 interface RolePhrase {
   words: string[];
   /** Lengths at which the phrase may end as a title: after the head (and seniority), after each complement. */
   cuts: number[];
+  /** The word before the introducer and the introducer ("atuei como"): who the text says holds the role. */
+  context: string;
 }
 
 /**
- * Role phrases a text presents with a role introducer (issue #93; Pena review §6.10.2), folded: from the first
- * word after the introducer (an article skipped) up to the last role title word within `ROLE_WINDOW` words, then
- * any seniority and up to `ROLE_MAX_COMPLEMENTS` complements ("tech lead", "product manager", "coordenador de
- * engenharia de dados", "engenheiro de dados sênior"), without a credential's words up to its last marker. A
- * comma or conjunction right after it lists another role, whose head must come within `ROLE_LIST_WINDOW` words
- * ("engenheira de software, tech lead e mentora"; "engineer, architect, and product manager"). Without a role
- * title word ("como parte do time", "as part of") there is no phrase.
+ * Role phrases a text presents with a role introducer (issue #93; Pena review §6.10.2), folded. After the
+ * introducer, its article and a nested introducer ("promoted to the role of …", "appointed as …"), the phrase runs
+ * up to the last role title word within `ROLE_WINDOW` words, short of a stop word; a strong introducer takes up to
+ * `ROLE_STRONG_WINDOW` words when there is none ("No papel de responsável técnico"). Then any seniority and up to
+ * `ROLE_MAX_COMPLEMENTS` complements ("coordenador de engenharia de dados", "engenheiro de dados sênior"), without
+ * a credential's words up to its last marker. A comma or conjunction right after it lists another role, whose head
+ * must come within `ROLE_LIST_WINDOW` words ("engenheira de software, tech lead e mentora"; "engineer, architect,
+ * and product manager"). Without a role ("como parte do time", "as part of") there is no phrase.
  */
 function introducedRoles(text: string): RolePhrase[] {
   const words = roleWords(text);
+  const word = (at: number) => words[at]?.word ?? "";
   const phrases: RolePhrase[] = [];
   for (let index = 0; index < words.length; index += 1) {
     const introducer = introducerAt(words, index);
     if (introducer === null) continue;
-    let start = introducer.end;
+    const context = [word(index - 1), ...introducer.words].join(" ");
+    let start = index + introducer.words.length;
+    let strong = introducer.strong;
+    let from = introducer.from;
     let window = ROLE_WINDOW;
     while (start < words.length) {
-      if (ARTICLES.has(words[start]?.word ?? "") && !words[start]?.pause) start += 1;
+      for (let skip = 0; skip < 2; skip += 1) {
+        if (ARTICLES.has(word(start)) && !words[start]?.pause) start += 1;
+        const nested = introducerAt(words, start);
+        if (nested === null || nested.promotion) break;
+        start += nested.words.length;
+        strong ||= nested.strong;
+      }
       let head = -1;
       for (let at = start; at < Math.min(words.length, start + window); at += 1) {
-        if (ROLE_TITLE_WORDS.has(words[at]?.word ?? "")) head = at;
+        if (ROLE_STOP_WORDS.has(word(at))) break;
+        if (ROLE_TITLE_WORDS.has(word(at))) head = at;
         if (words[at]?.pause) break;
+      }
+      if (head < 0 && strong) {
+        for (let at = start; at < Math.min(words.length, start + ROLE_STRONG_WINDOW); at += 1) {
+          if (ROLE_STOP_WORDS.has(word(at)) || ROLE_COMPLEMENT.has(word(at))) break;
+          head = at;
+          if (words[at]?.pause) break;
+        }
       }
       if (head < 0) break;
       let end = head + 1;
       const open = () => end < words.length && !words[end - 1]?.pause;
       const seniority = () => {
-        while (open() && ROLE_SENIORITY.has(words[end]?.word ?? "")) end += 1;
+        while (open() && ROLE_SENIORITY.has(word(end))) end += 1;
       };
       seniority();
       const cuts = [end];
       for (let complement = 0; complement < ROLE_MAX_COMPLEMENTS; complement += 1) {
-        if (!open() || !ROLE_COMPLEMENT.has(words[end]?.word ?? "") || end + 1 >= words.length) {
-          break;
-        }
-        end += 2;
+        if (!open() || !ROLE_COMPLEMENT.has(word(end)) || words[end]?.pause) break;
+        let next = end + 1;
+        if (word(end) === "of" && ARTICLES.has(word(next)) && !words[next]?.pause) next += 1;
+        if (next >= words.length) break;
+        end = next + 1;
         seniority();
         cuts.push(end);
       }
@@ -711,17 +761,25 @@ function introducedRoles(text: string): RolePhrase[] {
         .slice(start, head)
         .findLastIndex(({ word }) => CREDENTIAL_WORD.test(word) || word === "professional");
       if (!(introducer.promotion && marker >= 0)) {
-        const from = start + marker + 1;
+        const first = start + marker + 1;
         phrases.push({
-          words: words.slice(from, end).map((word) => word.word),
-          cuts: cuts.map((cut) => cut - from),
+          words: words.slice(first, end).map((role) => role.word),
+          cuts: cuts.map((cut) => cut - first),
+          context,
         });
       }
       const pause = words[end - 1]?.pause;
       if (pause === "stop") break;
-      if (ROLE_CONJUNCTIONS.has(words[end]?.word ?? "")) start = end + 1;
+      if (from && ROLE_FROM_TO.has(word(end))) {
+        start = end + 1;
+        from = false;
+        window = ROLE_WINDOW;
+        continue;
+      }
+      if (ROLE_CONJUNCTIONS.has(word(end))) start = end + 1;
       else if (pause === "comma") start = end;
       else break;
+      strong = false;
       window = ROLE_LIST_WINDOW;
     }
   }
@@ -729,17 +787,22 @@ function introducedRoles(text: string): RolePhrase[] {
 }
 
 /**
- * Whether `source` (a title's or a stated role's words) covers `phrase`: some cut of the phrase occurs in it, and
- * either the phrase ends there or the source does not go on with a complement of its own. "engenheiro de dados do
- * time" is covered by "Engenheiro de Dados"; "coordenadora de engenharia de dados" is not by "Coordenadora de
- * Engenharia de Software", nor "engenheiro do time" by "Engenheiro de Dados" (Codex review, issue #93).
+ * Whether a title's words cover `phrase`: some cut of the phrase occurs in the title, and either the phrase ends
+ * there or what follows only attaches the role to a team ("do time", "of the team") while the title has no
+ * complement of its own next. "engenheiro de dados do time" is covered by "Engenheiro de Dados"; "gerente de
+ * produto" is not by "Gerente", "coordenadora de engenharia de dados" not by "Coordenadora de Engenharia de
+ * Software", nor "engenheiro do time" by "Engenheiro de Dados" (Codex review, issue #93).
  */
-function coversRole(source: readonly string[], phrase: RolePhrase): boolean {
+function coversRole(title: readonly string[], phrase: RolePhrase): boolean {
   return phrase.cuts.some((cut) => {
-    const prefix = phrase.words.slice(0, cut);
-    for (let at = 0; at + cut <= source.length; at += 1) {
-      if (!prefix.every((word, offset) => source[at + offset] === word)) continue;
-      if (cut === phrase.words.length || !ROLE_COMPLEMENT.has(source[at + cut] ?? "")) return true;
+    const next = phrase.words[cut] ?? "";
+    const attached =
+      ROLE_ATTACHMENTS.has(next) || (next === "of" && ARTICLES.has(phrase.words[cut + 1] ?? ""));
+    if (cut < phrase.words.length && !attached) return false;
+    for (let at = 0; at + cut <= title.length; at += 1) {
+      if (!phrase.words.slice(0, cut).every((word, offset) => title[at + offset] === word))
+        continue;
+      if (cut === phrase.words.length || !ROLE_COMPLEMENT.has(title[at + cut] ?? "")) return true;
     }
     return false;
   });
@@ -748,22 +811,27 @@ function coversRole(source: readonly string[], phrase: RolePhrase): boolean {
 /**
  * Role titles `text` presents with a role introducer that the base CV does not have (D4 hard limit 1, issue #93):
  * "Atuei como tech lead…", "Worked as a product manager…", "Fui contratado como coordenador de engenharia". A
- * role phrase passes only when one of the base CV's experience `titles` (any case) covers it, or a role phrase
- * that `reference` itself introduces (the cited base items of a rewritten segment, the humanizer's text before):
- * keeping a role the base CV states is not creating one. Fails closed: a comparison it misreads as a role costs a
- * regeneration or a reverted segment.
+ * role phrase passes only when one of the base CV's experience `titles` (any case) covers it, or when `reference`
+ * (the cited base items of a rewritten segment, the humanizer's text before) states the same role in the same
+ * context ("atuei como tech lead"): keeping a role the base CV states is not creating one, but "uma colega que
+ * atuou como product manager" does not make it the candidate's. Fails closed: a comparison it misreads as a role
+ * costs a regeneration or a reverted segment.
  */
 export function inventedRoleTitles(
   text: string,
   titles: readonly string[],
   reference = "",
 ): string[] {
-  const allowed = [
-    ...titles.map((title) => roleWords(title).map((word) => word.word)),
-    ...introducedRoles(reference).map((phrase) => phrase.words),
-  ];
+  const titleWords = titles.map((title) => roleWords(title).map((role) => role.word));
+  const stated = introducedRoles(reference).map(
+    (phrase) => `${phrase.context}|${phrase.words.join(" ")}`,
+  );
   return introducedRoles(text)
-    .filter((phrase) => !allowed.some((source) => coversRole(source, phrase)))
+    .filter(
+      (phrase) =>
+        !titleWords.some((title) => coversRole(title, phrase)) &&
+        !stated.includes(`${phrase.context}|${phrase.words.join(" ")}`),
+    )
     .map((phrase) => phrase.words.join(" "));
 }
 

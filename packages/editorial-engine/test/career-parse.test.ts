@@ -738,6 +738,14 @@ describe("inventedRoleTitles (issue #93, Codex review)", () => {
       "product manager",
     ],
     ["Worked as an engineering manager and tech lead.", ["Engineering Manager"], "tech lead"],
+    ["Worked as an agile coach.", ["Software Engineer"], "agile coach"],
+    [
+      "Led delivery after being promoted from engineer to product manager.",
+      ["Engineer"],
+      "product manager",
+    ],
+    ["Atuei como gerente de produto.", ["Gerente"], "gerente de produto"],
+    ["No papel de responsável técnico, conduzi a migração.", ["Engenheira"], "responsavel tecnico"],
   ])("negative: '%s' with titles %j names '%s'", (text, titles, role) => {
     expect(inventedRoleTitles(text, titles).some((found) => found.startsWith(role))).toBe(true);
   });
@@ -753,7 +761,25 @@ describe("inventedRoleTitles (issue #93, Codex review)", () => {
     ["Colaborei com design, bem como com o gerente de produto.", ["Engenheira de software"]],
     ["Partnered with design as well as the product manager.", ["Software Engineer"]],
     ["Partnered with stakeholders such as the engineering manager.", ["Software Engineer"]],
+    ["Promoted to the role of engineering manager.", ["Engineering Manager"]],
+    ["Appointed as product manager in 2023.", ["Product Manager"]],
+    ["Appointed to lead the payments migration.", ["Software Engineer"]],
+    ["Worked as an engineering manager of the payments team.", ["Engineering Manager"]],
   ])("positive: '%s' with titles %j", (text, titles) => {
     expect(inventedRoleTitles(text, titles)).toEqual([]);
+  });
+});
+
+describe("inventedRoleTitles with a reference (issue #93, Codex review)", () => {
+  it("a role the reference states in the same context passes", () => {
+    const reference = "Atuei como tech lead do time de dados.";
+    expect(inventedRoleTitles("Atuei como tech lead do time de dados.", [], reference)).toEqual([]);
+  });
+
+  it("negative: a role the reference gives someone else", () => {
+    const reference = "Colaborei com uma colega que atuou como product manager.";
+    expect(inventedRoleTitles("Atuei como product manager.", [], reference)).toEqual([
+      "product manager",
+    ]);
   });
 });
