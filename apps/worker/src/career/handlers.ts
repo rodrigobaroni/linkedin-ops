@@ -184,7 +184,10 @@ export function createCareerHandlers(deps: CareerHandlerDeps): CareerHandlers {
         { outcome: "paste-text", reason: "kill-switch" },
         "linkedin fetch disabled",
       );
-      await markFailed("fetch_blocked");
+      await deps.jobStore.markFailed(jobPostingId, "fetch_blocked", meta, {
+        kind: "DISABLED",
+        retryAt: null,
+      });
       return;
     } else {
       try {
@@ -199,7 +202,11 @@ export function createCareerHandlers(deps: CareerHandlerDeps): CareerHandlers {
         }
         const kind = error instanceof JobFetchError ? error.kind : "transient";
         context.logger.info({ fetchOutcome: kind }, "job page fetch failed");
-        if (kind === "blocked") return markFailed("fetch_blocked");
+        if (kind === "blocked") {
+          // What blocked it and when to retry, for the web (issue #112).
+          const blocked = error instanceof JobFetchError ? error.blocked : undefined;
+          return deps.jobStore.markFailed(jobPostingId, "fetch_blocked", meta, blocked);
+        }
         if (kind === "permanent") return markFailed("fetch");
         return failIfFinal(new RetryableJobError("fetch"), context, markFailed, "fetch");
       }

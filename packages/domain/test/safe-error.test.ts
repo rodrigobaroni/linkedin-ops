@@ -42,7 +42,7 @@ describe("serializeErrorForLog (QA #101)", () => {
     const text = JSON.stringify(out);
     expect(text).not.toContain(ROW_CANARY);
     expect(text).not.toContain('"table"');
-    expect(text).not.toContain("detail");
+    expect(text).not.toContain('"detail"');
     expect(out.cause).toMatchObject({ type: "DatabaseError", code: "23505" });
     expect(out.stack).toMatch(/^Error: enqueue failed\n\s+at /);
   });

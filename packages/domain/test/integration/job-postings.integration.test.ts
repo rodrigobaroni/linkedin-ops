@@ -525,6 +525,41 @@ describe("worker store", () => {
     expect(await current.loadForFetch(fetching)).not.toBeNull();
   });
 
+  it("a blocked failure stores what blocked it and when to retry, cleared on restart (issue #112)", async () => {
+    const { userId } = await ownerWithCv();
+    const { postings: list } = await batchOf(userId, [
+      "https://acme.gupy.io/jobs/blocked-1",
+      "https://acme.gupy.io/jobs/blocked-2",
+      "https://acme.gupy.io/jobs/blocked-3",
+    ]);
+    const [quota, disabled, plain] = list.map((p) => p.id) as [string, string, string];
+    const retryAt = new Date("2026-10-23T09:00:00.000Z");
+    await store.markFailed(quota, "fetch_blocked", await workerMeta(quota), {
+      kind: "QUOTA",
+      retryAt,
+    });
+    await store.markFailed(disabled, "fetch_blocked", await workerMeta(disabled), {
+      kind: "DISABLED",
+      retryAt: null,
+    });
+    // A detail only goes with fetch_blocked.
+    await store.markFailed(plain, "fetch", await workerMeta(plain), { kind: "BREAKER", retryAt });
+
+    expect((await postings.get(userId, quota)).blocked).toEqual({ kind: "QUOTA", retryAt });
+    expect((await postings.get(userId, disabled)).blocked).toEqual({
+      kind: "DISABLED",
+      retryAt: null,
+    });
+    expect((await postings.get(userId, plain)).blocked).toBeNull();
+    expect((await auditOf(quota)).at(-1)?.after).toMatchObject({ blockedKind: "QUOTA" });
+
+    await postings.pasteText(userId, quota, POSTING_TEXT, userMeta(userId), enqueueFetch);
+    expect(await prisma.jobPosting.findUniqueOrThrow({ where: { id: quota } })).toMatchObject({
+      blockedKind: null,
+      blockedRetryAt: null,
+    });
+  });
+
   it("marks failures with the stored reason and the worker's cause in the audit", async () => {
     const { userId } = await ownerWithCv();
     const { postings: list } = await batchOf(userId, [

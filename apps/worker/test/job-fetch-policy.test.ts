@@ -152,7 +152,7 @@ describe("JobFetchHops: per-hop policy by destination domain", () => {
     ["https://acme.gupy.io/jobs/1", "https://acme.gupy.io/login"],
   ])("%s → its own login (%s) is blocked and opens that domain's breaker", async (first, login) => {
     const h = harness();
-    expect(await rejection(chain(h.hops(), [first, login]))).toEqual(new JobFetchError("blocked"));
+    expect(await rejection(chain(h.hops(), [first, login]))).toMatchObject({ kind: "blocked" });
     const domain = first.includes("gupy") ? "gupy.io" : "linkedin.com";
     expect(h.tripped).toEqual([`${domain}:login_redirect`]);
   });
@@ -169,11 +169,11 @@ describe("JobFetchHops: per-hop policy by destination domain", () => {
   it("with the kill switch, a redirect to LinkedIn is not followed", async () => {
     const h = harness("disabled");
     const error = await rejection(chain(h.hops(), ["https://jobs.acme.example/r/1", JOB]));
-    expect(error).toEqual(new JobFetchError("blocked"));
+    expect(error).toMatchObject({ kind: "blocked" });
     expect(h.granted).toEqual(["acme.example"]);
-    expect(await rejection(chain(h.hops(), ["https://lnkd.in/abc"]))).toEqual(
-      new JobFetchError("blocked"),
-    );
+    expect(await rejection(chain(h.hops(), ["https://lnkd.in/abc"]))).toMatchObject({
+      kind: "blocked",
+    });
   });
 
   it("defers the job when the first hop must wait (reschedule, never sleep)", async () => {
@@ -235,7 +235,7 @@ describe("JobFetchHops: per-hop policy by destination domain", () => {
       await chain(h.hops(), [JOB]);
       h.advance(15_000);
     }
-    expect(await rejection(chain(h.hops(), [JOB]))).toEqual(new JobFetchError("blocked"));
+    expect(await rejection(chain(h.hops(), [JOB]))).toMatchObject({ kind: "blocked" });
     expect(h.granted).toHaveLength(40);
   });
 });
@@ -253,13 +253,13 @@ describe("classifyFetchFailure", () => {
       const error = await rejection(
         classifyFetchFailure(new SafeHttpError("http_status", status), policy),
       );
-      expect(error).toEqual(new JobFetchError("blocked"));
+      expect(error).toMatchObject({ kind: "blocked" });
       expect(h.tripped).toEqual([`greenhouse.io:http_${status}`]);
       // The breaker holds for 24 h and the manual retry respects it.
       h.advance(23 * 60 * 60 * 1000);
       expect(
         await rejection(chain(h.hops(), ["https://boards.greenhouse.io/acme/jobs/2"])),
-      ).toEqual(new JobFetchError("blocked"));
+      ).toMatchObject({ kind: "blocked" });
     },
   );
 
@@ -279,5 +279,52 @@ describe("classifyFetchFailure", () => {
     await chain(policy, ["https://jobs.acme.example/r"]);
     expect(await rejection(classifyFetchFailure(error, policy))).toEqual(new JobFetchError(kind));
     expect(h.tripped).toEqual([]);
+  });
+});
+
+describe("blocked detail (issue #112)", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const blockedOf = (error: unknown) => (error as JobFetchError).blocked;
+
+  it("the kill switch: DISABLED, no retry time", async () => {
+    const h = harness("disabled");
+    expect(blockedOf(await rejection(chain(h.hops(), [JOB])))).toEqual({
+      kind: "DISABLED",
+      retryAt: null,
+    });
+  });
+
+  it("the daily quota: QUOTA, when the oldest request leaves the 24 h window", async () => {
+    const h = harness();
+    for (let i = 0; i < 40; i += 1) {
+      await chain(h.hops(), [JOB]);
+      h.advance(15_000);
+    }
+    expect(blockedOf(await rejection(chain(h.hops(), [JOB])))).toEqual({
+      kind: "QUOTA",
+      retryAt: new Date(T0.getTime() + DAY),
+    });
+  });
+
+  it("a stop signal opens the breaker: BREAKER until it closes, then while it stays open", async () => {
+    const h = harness();
+    const policy = h.hops();
+    await chain(policy, ["https://boards.greenhouse.io/acme/jobs/1"]);
+    const tripped = await rejection(
+      classifyFetchFailure(new SafeHttpError("http_status", 429), policy),
+    );
+    const until = new Date(T0.getTime() + DAY);
+    expect(blockedOf(tripped)).toEqual({ kind: "BREAKER", retryAt: until });
+    h.advance(60 * 60 * 1000);
+    const open = await rejection(chain(h.hops(), ["https://boards.greenhouse.io/acme/jobs/2"]));
+    expect(blockedOf(open)).toEqual({ kind: "BREAKER", retryAt: until });
+  });
+
+  it("a login wall of the domain itself: BREAKER", async () => {
+    const h = harness();
+    const error = await rejection(
+      chain(h.hops(), [JOB, "https://www.linkedin.com/authwall?trk=x"]),
+    );
+    expect(blockedOf(error)?.kind).toBe("BREAKER");
   });
 });

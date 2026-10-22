@@ -468,6 +468,10 @@ Regras:
   - `source`: {`LINKEDIN`, `OTHER`, `PASTED`};
   - `status`: {`FETCHING`, `ANALYZING`, `READY`, `FAILED`};
   - `failure_reason`: {`FETCH`, `FETCH_BLOCKED`, `NOT_A_JOB`, `AI`, `TIMED_OUT`}, null fora de `FAILED`;
+  - `blocked_kind` {`DISABLED`, `QUOTA`, `BREAKER`} e `blocked_retry_at`: só em `FAILED`/`FETCH_BLOCKED`
+    (issue #112). Dizem o que bloqueou a busca (busca do LinkedIn desligada, cota diária do domínio, breaker aberto
+    por um sinal de parada) e, exceto em `DISABLED`, quando tentar de novo. São gravados pelo `markFailed` e limpos
+    ao colar texto ou reprocessar; não guardam URL (`CHECK`);
   - `attempt`: ciclo de processamento, ≥ 1. Cada reprocessamento (texto colado ou retry) soma 1, e o payload de
     `job.fetch`/`cv.tailor` carrega esse número. Job atrasado de um ciclo anterior não lê nem grava nada, mesmo
     quando encontra a vaga de volta no mesmo status (ABA);

@@ -878,6 +878,35 @@ describe("job postings and tailored CVs (career PR 3b, migration 20261023000000)
     ).resolves.toBeTruthy();
   });
 
+  it("a blocked detail only on FAILED/FETCH_BLOCKED, without a retry time when DISABLED (issue #112)", async () => {
+    const fixture = await batchFixture();
+    let n = 200;
+    const at = (data: Record<string, unknown>) => posting(fixture, { urlHash: hash(n++), ...data });
+    const blocked = { status: "FAILED", failureReason: "FETCH_BLOCKED" };
+    const later = new Date(Date.now() + 3_600_000);
+    await expectRejects(at({ blockedKind: "QUOTA", blockedRetryAt: later }), CHECK);
+    await expectRejects(
+      at({
+        status: "FAILED",
+        failureReason: "FETCH",
+        blockedKind: "BREAKER",
+        blockedRetryAt: later,
+      }),
+      CHECK,
+    );
+    await expectRejects(at({ ...blocked, blockedKind: "DISABLED", blockedRetryAt: later }), CHECK);
+    await expectRejects(at({ ...blocked, blockedRetryAt: later }), CHECK);
+    await expect(
+      at({ ...blocked, blockedKind: "QUOTA", blockedRetryAt: later }),
+    ).resolves.toBeTruthy();
+    await expect(
+      at({ ...blocked, blockedKind: "BREAKER", blockedRetryAt: later }),
+    ).resolves.toBeTruthy();
+    await expect(at({ ...blocked, blockedKind: "DISABLED" })).resolves.toBeTruthy();
+    // Rows of an older failure carry no detail.
+    await expect(at(blocked)).resolves.toMatchObject({ blockedKind: null, blockedRetryAt: null });
+  });
+
   it("bounds the URL, the hash, the text and the extraction metadata", async () => {
     const fixture = await batchFixture();
     let n = 100;

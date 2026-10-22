@@ -86,7 +86,11 @@ function fakeStores(source: JobPostingSource | null = { kind: "pasted", text: po
       events.push("job:tailored"),
       Promise.resolve()
     ),
-    markFailed: (_id, reason) => (events.push(`job:failed:${reason}`), Promise.resolve()),
+    markFailed: (_id, reason, _meta, blocked) => (
+      (saved.blocked = blocked),
+      events.push(`job:failed:${reason}`),
+      Promise.resolve()
+    ),
   };
   return { cvStore, jobStore, events, saved };
 }
@@ -224,6 +228,25 @@ describe("job.fetch", () => {
     await short.h["job.fetch"]({ ...envelope, jobPostingId: IDS.posting, attempt: 1 }, context());
     expect(short.events).toEqual(["job:failed:fetch_blocked"]);
     expect(fetched).toBe(false);
+  });
+
+  it("passes what blocked the fetch to markFailed (issue #112)", async () => {
+    const off = handlers(
+      {},
+      fakeStores({ kind: "url", url: "https://www.linkedin.com/jobs/view/123" }),
+      { fetchJobText: () => Promise.reject(new Error("never called")) },
+      false,
+    );
+    await off.h["job.fetch"]({ ...envelope, jobPostingId: IDS.posting, attempt: 1 }, context());
+    expect(off.saved.blocked).toEqual({ kind: "DISABLED", retryAt: null });
+
+    const retryAt = new Date("2026-10-23T12:00:00.000Z");
+    const quota = handlers({}, fakeStores({ kind: "url", url: "https://jobs.example.com/1" }), {
+      fetchJobText: () => Promise.reject(new JobFetchError("blocked", { kind: "QUOTA", retryAt })),
+    });
+    await quota.h["job.fetch"]({ ...envelope, jobPostingId: IDS.posting, attempt: 1 }, context());
+    expect(quota.events).toEqual(["job:failed:fetch_blocked"]);
+    expect(quota.saved.blocked).toEqual({ kind: "QUOTA", retryAt });
   });
 
   it("reschedules a deferred fetch without marking the posting failed", async () => {

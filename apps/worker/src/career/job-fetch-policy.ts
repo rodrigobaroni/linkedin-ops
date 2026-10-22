@@ -115,8 +115,8 @@ export class JobFetchHops {
 
   /** A stop signal from the domain: open its breaker for 24 h and fail with `fetch_blocked`. */
   async stop(domain: string, signal: FetchStopSignal): Promise<never> {
-    await this.deps.guard.tripBreaker(domain, signal);
-    throw new JobFetchError("blocked");
+    const { openUntil } = await this.deps.guard.tripBreaker(domain, signal);
+    throw new JobFetchError("blocked", { kind: "BREAKER", retryAt: openUntil });
   }
 
   private async acquire(domain: string, hop: number): Promise<void> {
@@ -138,10 +138,13 @@ export class JobFetchHops {
         return;
       case "wait":
         throw new JobFetchDeferredError(slot.retryAt);
+      // What blocked it and when to retry go to the posting (issue #112).
       case "quota_exhausted":
+        throw new JobFetchError("blocked", { kind: "QUOTA", retryAt: slot.retryAt });
       case "breaker_open":
+        throw new JobFetchError("blocked", { kind: "BREAKER", retryAt: slot.until });
       case "disabled":
-        throw new JobFetchError("blocked");
+        throw new JobFetchError("blocked", { kind: "DISABLED", retryAt: null });
     }
   }
 

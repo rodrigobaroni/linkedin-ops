@@ -9,6 +9,7 @@ import { IsoDateTimeSchema } from "../common/datetime.js";
 import { UuidSchema } from "../common/ids.js";
 import { PaginationQuerySchema } from "../common/pagination.js";
 import {
+  JobPostingBlockedKindSchema,
   JobPostingFailureSchema,
   JobPostingSourceKindSchema,
   JobPostingStatusSchema,
@@ -109,6 +110,19 @@ export const JobPostingTailoringSchema = z
   .meta({ id: "JobPostingTailoring" });
 export type JobPostingTailoring = z.infer<typeof JobPostingTailoringSchema>;
 
+/**
+ * What blocked a `FETCH_BLOCKED` posting and when to try again (issue #112): `DISABLED` (the LinkedIn fetch is
+ * switched off; no time), `QUOTA` (the domain's daily quota; when it frees up) or `BREAKER` (the site answered
+ * with a stop signal; when the breaker closes). Never a URL.
+ */
+export const JobPostingBlockedDetailSchema = z
+  .object({
+    kind: JobPostingBlockedKindSchema,
+    retryAt: IsoDateTimeSchema.nullable().describe("When to try again; null when DISABLED"),
+  })
+  .meta({ id: "JobPostingBlockedDetail" });
+export type JobPostingBlockedDetail = z.infer<typeof JobPostingBlockedDetailSchema>;
+
 export const JobPostingDetailSchema = JobPostingSummarySchema.extend({
   extracted: JobPostingExtractedSchema.nullable().describe("Set from ANALYZING on"),
   droppedRequirementCount: z
@@ -126,6 +140,9 @@ export const JobPostingDetailSchema = JobPostingSummarySchema.extend({
     .describe("Offending excerpt of the posting, set only when injectionSuspected"),
   fetchedAt: IsoDateTimeSchema.nullable(),
   tailoring: JobPostingTailoringSchema.nullable().describe("Set only when READY"),
+  blockedDetail: JobPostingBlockedDetailSchema.nullable()
+    .optional()
+    .describe("Set only when FAILED with FETCH_BLOCKED, when the worker knew why (issue #112)"),
 }).meta({ id: "JobPostingDetail" });
 export type JobPostingDetail = z.infer<typeof JobPostingDetailSchema>;
 

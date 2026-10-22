@@ -567,6 +567,31 @@ describe("GET /career/jobs and /career/jobs/{id}", () => {
 });
 
 describe("POST /career/jobs/{id}/text and /retry, DELETE /career/jobs/{id}", () => {
+  it("a blocked posting says what blocked it and when to retry; others say nothing (issue #112)", async () => {
+    const actor = await newActor();
+    const batch = await submit(actor, [link(70), link(71), "https://acme.gupy.io/jobs/72"]);
+    const [quota, off, plain] = batch.postings.map((p) => p.id) as [string, string, string];
+    const retryAt = new Date("2026-10-23T09:00:00.000Z");
+    await worker.markFailed(quota, "fetch_blocked", await jobMeta(quota), {
+      kind: "QUOTA",
+      retryAt,
+    });
+    await worker.markFailed(off, "fetch_blocked", await jobMeta(off), {
+      kind: "DISABLED",
+      retryAt: null,
+    });
+    const detail = async (id: string) =>
+      JobPostingDetailSchema.parse((await get(actor, `/career/jobs/${id}`).expect(200)).body);
+    expect((await detail(quota)).blockedDetail).toEqual({
+      kind: "QUOTA",
+      retryAt: "2026-10-23T09:00:00.000Z",
+    });
+    expect((await detail(off)).blockedDetail).toEqual({ kind: "DISABLED", retryAt: null });
+    expect((await detail(plain)).blockedDetail).toBeNull();
+    // No URL in it, by construction.
+    expect(JSON.stringify((await detail(quota)).blockedDetail)).not.toContain("linkedin");
+  });
+
   it("pastes text into a failed posting: 202, PASTED, job.fetch in the pasted group", async () => {
     const actor = await newActor();
     const id = (await submit(actor, [link(30)])).postings[0]!.id;

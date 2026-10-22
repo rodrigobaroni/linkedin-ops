@@ -22,6 +22,7 @@ import {
 import type {
   CareerFailureReason,
   GenerationInfo,
+  JobPostingBlockedDetail,
   JobPostingJobMeta,
   JobPostingSource,
   JobPostingStore,
@@ -258,8 +259,17 @@ export class PrismaJobPostingStore implements JobPostingStore {
     jobPostingId: string,
     reason: CareerFailureReason,
     meta: JobPostingJobMeta,
+    blocked?: JobPostingBlockedDetail,
   ): Promise<void> {
     const failureReason = FAILURE_REASONS[reason];
+    // The detail belongs to `fetch_blocked` only; `DISABLED` has no time to retry (issue #112).
+    const detail =
+      reason === "fetch_blocked" && blocked !== undefined
+        ? {
+            blockedKind: blocked.kind,
+            blockedRetryAt: blocked.kind === "DISABLED" ? null : blocked.retryAt,
+          }
+        : {};
     await this.prisma.$transaction(async (tx) => {
       const row = await tx.jobPosting.findFirst({
         where: {
@@ -272,7 +282,7 @@ export class PrismaJobPostingStore implements JobPostingStore {
       if (!row) return;
       const { count } = await tx.jobPosting.updateMany({
         where: { id: jobPostingId, status: row.status, attempt: meta.attempt },
-        data: { status: "FAILED", failureReason, updatedAt: this.now() },
+        data: { status: "FAILED", failureReason, ...detail, updatedAt: this.now() },
       });
       if (count === 0) return;
       await audit(
@@ -284,7 +294,13 @@ export class PrismaJobPostingStore implements JobPostingStore {
         jobPostingId,
         {
           before: { status: row.status },
-          after: { status: "FAILED", failureReason, cause: reason, attempt: meta.attempt },
+          after: {
+            status: "FAILED",
+            failureReason,
+            cause: reason,
+            attempt: meta.attempt,
+            ...(detail.blockedKind === undefined ? {} : { blockedKind: detail.blockedKind }),
+          },
         },
       );
     });

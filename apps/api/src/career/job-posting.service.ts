@@ -342,6 +342,10 @@ export function toDetail(record: JobPostingRecord): JobPostingDetail {
     injectionSuspected: record.injectionSuspected,
     injectionEvidence: record.injectionEvidence,
     fetchedAt: record.fetchedAt?.toISOString() ?? null,
+    blockedDetail:
+      record.blocked === null
+        ? null
+        : { kind: record.blocked.kind, retryAt: record.blocked.retryAt?.toISOString() ?? null },
     tailoring:
       record.tailoring === null
         ? null
