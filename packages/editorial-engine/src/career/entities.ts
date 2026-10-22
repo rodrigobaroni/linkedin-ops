@@ -608,6 +608,13 @@ const INTRODUCERS: RoleIntroducer[] = [
   ...["promoted to", "promovido a", "promovida a", "promovido para", "promovida para"]
     .concat(["appointed", "nomeado", "nomeada"])
     .map((phrase) => ({ words: phrase.split(" "), strong: true, promotion: true, from: false })),
+  // A copula before a role title word ("Fui gerente de produto", "I was a product manager"; Codex review).
+  ...["fui", "sou", "era", "i was", "i am", "i'm", "was", "am"].map((phrase) => ({
+    words: phrase.split(" "),
+    strong: false,
+    promotion: false,
+    from: false,
+  })),
   ...["became", "become", "becoming", "me tornei", "tornei me", "virei"].map((phrase) => ({
     words: phrase.split(" "),
     strong: false,
@@ -732,7 +739,10 @@ interface RolePhrase {
   words: string[];
   /** Lengths at which the phrase may end as a title: after the head (and seniority), after each complement. */
   cuts: number[];
-  /** The clause up to the introducer ("atuei como", "a colleague worked as"): who the text says holds the role. */
+  /**
+   * The clause before the introducer ("" for "Atuei como …" or "Served as …", "a colleague" for "A colleague worked
+   * as …"): who the text says holds the role, whatever the introducer's wording.
+   */
   context: string;
 }
 
@@ -760,30 +770,36 @@ function introducedRoles(text: string): RolePhrase[] {
     let clause = index;
     while (clause > 0 && !words[clause - 1]?.pause) clause -= 1;
     const context = words
-      .slice(clause, index + introducer.words.length)
+      .slice(clause, index)
       .map((role) => role.word)
       .join(" ");
     let start = index + introducer.words.length;
     let strong = introducer.strong;
+    let promotion = introducer.promotion;
     let from = introducer.from;
     let window = ROLE_WINDOW;
     while (start < words.length) {
       for (let skip = 0; skip < 2; skip += 1) {
         if (ARTICLES.has(word(start)) && !words[start]?.pause) start += 1;
         const nested = introducerAt(words, start);
-        if (nested === null || nested.promotion) break;
+        if (nested === null) break;
         start += nested.words.length;
         strong ||= nested.strong;
+        promotion ||= nested.promotion;
+        from ||= nested.from;
       }
       let head = -1;
+      // "Promovido de analista a analista sênior": the source role ends at `a`.
+      const stop = (at: number) =>
+        ROLE_STOP_WORDS.has(word(at)) || (from && ROLE_FROM_TO.has(word(at)));
       for (let at = start; at < Math.min(words.length, start + window); at += 1) {
-        if (ROLE_STOP_WORDS.has(word(at))) break;
+        if (stop(at)) break;
         if (ROLE_TITLE_WORDS.has(word(at))) head = at;
         if (words[at]?.pause) break;
       }
       if (head < 0 && strong && !NOT_ROLES.has(word(start))) {
         for (let at = start; at < Math.min(words.length, start + ROLE_STRONG_WINDOW); at += 1) {
-          if (ROLE_STOP_WORDS.has(word(at)) || ROLE_COMPLEMENT.has(word(at))) break;
+          if (stop(at) || ROLE_COMPLEMENT.has(word(at))) break;
           head = at;
           if (words[at]?.pause) break;
         }
@@ -805,7 +821,7 @@ function introducedRoles(text: string): RolePhrase[] {
           next < words.length &&
           next - first < ROLE_COMPLEMENT_WORDS &&
           (next === first || !words[next - 1]?.pause) &&
-          !ROLE_STOP_WORDS.has(word(next)) &&
+          !stop(next) &&
           !ROLE_COMPLEMENT.has(word(next)) &&
           !ROLE_SENIORITY.has(word(next)) &&
           !/ndo$/u.test(word(next)) &&
@@ -821,11 +837,12 @@ function introducedRoles(text: string): RolePhrase[] {
       // A credential naming the role ("como AWS Certified Solutions Architect") is `newCredentials`'s call; the
       // role is what follows its last marker. After a promotion it is the credential itself ("Became an AWS
       // Certified …", "Became an AWS Solutions Architect Associate").
-      const isMarker = ({ word }: RoleWord) =>
-        CREDENTIAL_WORD.test(word) || word === "professional";
-      const marker = words.slice(start, head).findLastIndex(isMarker);
-      const credential = words.slice(start, end + 1).some(isMarker);
-      if (!(introducer.promotion && credential)) {
+      // `Professional` only cuts the prefix: alone it does not make "a professional product manager" a credential.
+      const marker = words
+        .slice(start, head)
+        .findLastIndex(({ word }) => CREDENTIAL_WORD.test(word) || word === "professional");
+      const credential = words.slice(start, end + 1).some(({ word }) => CREDENTIAL_WORD.test(word));
+      if (!(promotion && credential)) {
         const first = start + marker + 1;
         phrases.push({
           words: words.slice(first, end).map((role) => role.word),
@@ -877,8 +894,8 @@ function coversRole(title: readonly string[], phrase: RolePhrase): boolean {
  * Role titles `text` presents with a role introducer that the base CV does not have (D4 hard limit 1, issue #93):
  * "Atuei como tech lead…", "Worked as a product manager…", "Fui contratado como coordenador de engenharia". A
  * role phrase passes only when one of the base CV's experience `titles` (any case) covers it, or when `reference`
- * (the cited base items of a rewritten segment, the humanizer's text before) states the same role in the same
- * clause ("atuei como tech lead"): keeping a role the base CV states is not creating one, but "uma colega que
+ * (the cited base items of a rewritten segment, the humanizer's text before) states the same role for the same
+ * holder, the clause before the introducer ("Atuei como tech lead" → "Trabalhei como tech lead"): keeping a role the base CV states is not creating one, but "uma colega que
  * atuou como product manager" does not make it the candidate's. Fails closed: a comparison it misreads as a role
  * costs a regeneration or a reverted segment.
  */
@@ -891,13 +908,14 @@ export function inventedRoleTitles(
   const stated = introducedRoles(reference).map(
     (phrase) => `${phrase.context}|${phrase.words.join(" ")}`,
   );
-  return introducedRoles(text)
+  const invented = introducedRoles(text)
     .filter(
       (phrase) =>
         !titleWords.some((title) => coversRole(title, phrase)) &&
         !stated.includes(`${phrase.context}|${phrase.words.join(" ")}`),
     )
     .map((phrase) => phrase.words.join(" "));
+  return [...new Set(invented)];
 }
 
 function containsPhrase(words: readonly string[], phrase: readonly string[]): boolean {

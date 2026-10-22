@@ -753,6 +753,10 @@ describe("inventedRoleTitles (issue #93, Codex review)", () => {
     ["Worked as head of data engineering.", ["Head of Data Science"], "head of data engineering"],
     ["Worked as a recruiter.", ["Software Engineer"], "recruiter"],
     ["Atuei como recrutador.", ["Engenheira de software"], "recrutador"],
+    ["I was a product manager at a fintech.", ["Software Engineer"], "product manager"],
+    ["Fui gerente de produto.", ["Engenheira de software"], "gerente de produto"],
+    ["Fui contratado como coordenador de engenharia.", ["Engenheiro"], "coordenador de engenharia"],
+    ["Became a professional product manager.", ["Software Engineer"], "product manager"],
   ])("negative: '%s' with titles %j names '%s'", (text, titles, role) => {
     expect(inventedRoleTitles(text, titles).some((found) => found.startsWith(role))).toBe(true);
   });
@@ -777,6 +781,8 @@ describe("inventedRoleTitles (issue #93, Codex review)", () => {
     ["Worked as head of data leading teams.", ["Head of Data"]],
     ["Became an AWS Solutions Architect Associate.", ["Software Engineer"]],
     ["Worked as a member of the payments team.", ["Software Engineer"]],
+    ["Promovido de analista a analista sênior.", ["Analista", "Analista Sênior"]],
+    ["The migration was a success.", ["Software Engineer"]],
   ])("positive: '%s' with titles %j", (text, titles) => {
     expect(inventedRoleTitles(text, titles)).toEqual([]);
   });
@@ -786,6 +792,12 @@ describe("inventedRoleTitles with a reference (issue #93, Codex review)", () => 
   it("a role the reference states in the same context passes", () => {
     const reference = "Atuei como tech lead do time de dados.";
     expect(inventedRoleTitles("Atuei como tech lead do time de dados.", [], reference)).toEqual([]);
+  });
+
+  it("a role kept by the same holder passes with another introducer", () => {
+    expect(
+      inventedRoleTitles("Served as a product manager.", [], "Worked as a product manager."),
+    ).toEqual([]);
   });
 
   it("negative: an English reference that gives the role to a colleague", () => {
