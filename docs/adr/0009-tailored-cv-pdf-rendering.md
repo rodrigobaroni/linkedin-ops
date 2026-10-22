@@ -47,6 +47,12 @@ to be recorded.
 7. **Glyph coverage:** text is NFC-normalized and every character both embedded fonts lack (checked against
    their `cmap` with fontkit, the version pdfkit already uses) is dropped before drawing, together with control
    characters. Without this, pdfkit would print an empty `.notdef` box.
+   **Bounded layout:** pdfkit breaks a run with no break opportunity character by character, re-measuring
+   the line each time, so its cost is quadratic in the run's length (QA #110: 20 000 characters took about
+   6 s). Every run longer than 60 characters gets a zero-width space (U+200B, present in the font, drawn as
+   nothing) every 40 characters. A document is also capped at 30 000 printed characters (about 12 dense
+   pages; the schema allows far more): above it the route answers `422 TAILORED_CV_TOO_LARGE` before
+   layout.
 8. **Route:** `GET /career/jobs/{id}/pdf` (`career.jobs.pdf`, `responseContentType: application/pdf`) renders on
    each request from `tailored_cvs.cv_base_id`, the CV base **version the tailoring used**, never the active
    one: otherwise companies and dates of another version would mix with the tailored text. It requires a
@@ -55,6 +61,8 @@ to be recorded.
    ("reprocesse a vaga"), and the audit trail records the missing id only. The response carries
    `Content-Disposition: attachment; filename="<file name>"` (re-checked against `^[A-Za-z0-9-]+\.pdf$` before
    it reaches the header) and `Cache-Control: no-store`, and the route is rate limited per user (60 per hour).
+   The limit counts renders only: it is consumed after the ownership and status checks, so a `404` or `409`
+   never spends it.
 
 ## Alternatives considered
 
@@ -78,8 +86,10 @@ to be recorded.
 - Upgrading pdfkit can break the metadata hooks silently at runtime, but not in CI: the determinism and
   metadata tests fail. A bump PR must keep them green, never relax them.
 - Layout changes are code changes (one layout, spec §12: multiple layouts are out of this cycle).
-- Rendering is **synchronous**: pdfkit lays out and compresses on the event loop, under 100 ms per CV,
-  during which the API serves nothing else. This is acceptable for one owner, behind the per-user rate limit. If
+- Rendering is **synchronous**: pdfkit lays out and compresses on the event loop. A typical CV takes under
+  100 ms, and the worst case allowed by the cap (30 000 characters of the widest glyph with no spaces) about
+  50 ms with the token breaks, against ~1.3 s without them. A timing test guards this bound. While it runs,
+  the API serves nothing else. This is acceptable for one owner, behind the per-user rate limit. If
   downloads ever compete with other traffic, move rendering to a worker thread (as `cv-pdf.worker.ts` does for
   extraction) or to the worker with a stored file.
 - **Known limit, glyphs:** characters outside Source Sans 3 (CJK ideographs, emoji, other scripts it does not
