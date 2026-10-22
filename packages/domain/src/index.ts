@@ -109,3 +109,9 @@ export type {
   JobPostingSource,
   JobPostingStore,
 } from "./career/ports.js";
+export {
+  ERROR_MESSAGE_OMITTED,
+  scrubErrorText,
+  serializeErrorForLog,
+  type SafeLoggedError,
+} from "./logging/safe-error.js";

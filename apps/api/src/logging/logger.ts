@@ -1,5 +1,5 @@
 import { isSensitiveKey } from "@linkedin-ops/contracts";
-import type { LogLevel } from "@linkedin-ops/domain";
+import { serializeErrorForLog, type LogLevel } from "@linkedin-ops/domain";
 import type { DestinationStream, Logger, LoggerOptions } from "pino";
 import { pino } from "pino";
 
@@ -107,6 +107,9 @@ export function buildLoggerOptions({ level, pretty }: LoggerConfig): LoggerOptio
         url: loggableUrl(request.url),
       }),
       res: (reply: { statusCode?: number }) => ({ statusCode: reply.statusCode }),
+      // Allow-list of error fields (QA #101): Prisma/pg errors carry the offending row in `meta`/`cause`.
+      err: serializeErrorForLog,
+      error: serializeErrorForLog,
     },
     ...(pretty ? { transport: { target: "pino-pretty", options: { colorize: true } } } : {}),
   };
