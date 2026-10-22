@@ -13,7 +13,8 @@ Domínio: `linkedin.baroni.dedyn.io` (registro A na deSEC apontando para o IP re
   filtro de access log (sem `code`/`state`/tokens/cookies) do `infra/caddy/Caddyfile`.
 - `infra/deploy/deploy-shared-host.sh`: `init-env` (cria `~/linkedin-ops/.env` 0600 na VM, segredos gerados
   lá; credenciais do LinkedIn e `OPENAI_API_KEY`/`OPENAI_MODEL` vão por stdin, lidas do `.env` local),
-  `escrow-key` (cópia da `ENCRYPTION_KEY` no Keychain do Mac), `deploy [ref]` (git archive via SSH, build de
+  `escrow-key` (cópia da `ENCRYPTION_KEY` no Keychain do Mac; recusa sobrescrever uma entrada com valor
+  diferente), `add-openai [--replace]` (acrescenta as chaves da OpenAI a um `.env` existente), `deploy [ref]` (git archive via SSH, build de
   api/web/worker na VM, migrations, sobe o worker e espera as filas, depois api+web, health), `status`
   (containers, release atual e presença — nunca o valor — de `OPENAI_API_KEY`/`OPENAI_MODEL`).
 - `infra/deploy/backup-db.sh` + `infra/deploy/backup-offsite.sh`: dump diário cifrado com a chave GPG
@@ -35,7 +36,7 @@ Domínio: `linkedin.baroni.dedyn.io` (registro A na deSEC apontando para o IP re
    precisa de `LINKEDIN_CLIENT_ID/SECRET`, `OPENAI_API_KEY` e `OPENAI_MODEL` (o worker não sobe em produção sem
    os dois últimos, `validateWorkerEnv`).
 3. `infra/deploy/deploy-shared-host.sh init-env` (idempotente; recusa um `.env` remoto incompleto, inclusive sem
-   as chaves da OpenAI) e `infra/deploy/deploy-shared-host.sh escrow-key`.
+   as chaves da OpenAI, e lista o que falta) e `infra/deploy/deploy-shared-host.sh escrow-key`.
 4. `infra/deploy/backup-offsite.sh setup-key` (gera a chave GPG no Mac com senha; instala a pública, o
    `backup-db.sh` e o cron na VM). A partir do segundo deploy, `deploy` recusa migrar sem backup.
 5. `REQUIRE_PUBLIC=0 infra/deploy/deploy-shared-host.sh deploy origin/main` (o bloco do Caddy ainda não existe).
@@ -49,11 +50,25 @@ Domínio: `linkedin.baroni.dedyn.io` (registro A na deSEC apontando para o IP re
    `backup-offsite.sh restore-test`, e `backup-offsite.sh install-launchd` **a partir do checkout principal**
    (`~/Developer/LinkedinAutomation`, não de um floor, que pode ser removido).
 
+## Upgrade de um `.env` anterior ao worker
+
+**Nunca apague `~/linkedin-ops/.env` depois que a stack rodou.** Um `init-env` novo geraria outra
+`POSTGRES_PASSWORD` (o volume `pg-data` deixa de abrir) e outra `ENCRYPTION_KEY` (os tokens do LinkedIn deixam de
+decifrar): perda irreversível. Se faltarem só `OPENAI_API_KEY`/`OPENAI_MODEL`:
+
+1. Colocar as duas no `.env` local do Mac (nunca em Git).
+2. `infra/deploy/deploy-shared-host.sh add-openai`: envia por stdin, mantém 0600, não imprime valores, não toca nas
+   outras linhas (confere byte a byte antes de trocar o arquivo) e recusa se alguma já existir; para trocar a
+   chave ou o modelo, `add-openai --replace`.
+3. `infra/deploy/deploy-shared-host.sh status` (presença das duas) e depois `deploy`.
+
 ## Falhas e rollback
 
 - `deploy` usa lock (um deploy por vez) e imagens imutáveis por sha (`linkedin-ops/api:<sha>`).
 - Backup cifrado antes de qualquer migration; se a migration falhar, a release em execução **não** é tocada e o
   script imprime os próximos passos (status do Prisma, `migrate resolve`, restore). Sem retry cego.
+- Todo `up --wait` tem limite: `--wait-timeout 120` quando o Compose da VM suporta a flag, e sempre um
+  `timeout 150` externo, para um Compose antigo não travar deploy nem rollback.
 - Antes do build, `deploy` recusa seguir se `OPENAI_API_KEY` ou `OPENAI_MODEL` faltar no `.env` da VM (checa só
   a presença; o valor nunca é impresso).
 - Depois das migrations o `worker` sobe **antes** de api/web e precisa ficar healthy e criar as filas
