@@ -7345,12 +7345,21 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 2000
+          },
+          "requirementIds": {
+            "minItems": 1,
+            "maxItems": 5,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CareerItemId"
+            }
           }
         },
         "required": [
           "section",
           "baseId",
-          "text"
+          "text",
+          "requirementIds"
         ],
         "additionalProperties": false
       },
@@ -7360,10 +7369,7 @@
           "headline",
           "summary",
           "experience",
-          "education",
-          "skills",
-          "languages",
-          "certifications"
+          "skills"
         ]
       },
       "AlternativeHook": {
@@ -12333,20 +12339,20 @@
           "provenance": {
             "$ref": "#/components/schemas/Provenance"
           },
-          "sourceRef": {
-            "nullable": true,
-            "description": "Base CV item id the text comes from; null exactly when provenance = added.",
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/CareerItemId"
-              }
-            ]
+          "sourceRefs": {
+            "minItems": 1,
+            "maxItems": 5,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CareerItemId"
+            },
+            "description": "original/rewritten: base CV item ids the text comes from; added: job requirement ids that motivated it."
           }
         },
         "required": [
           "text",
           "provenance",
-          "sourceRef"
+          "sourceRefs"
         ],
         "additionalProperties": false
       },

@@ -15,6 +15,9 @@ versioning: internal SemVer (see `README.md`).
   are `strictObject`.
 - Queues `cv.extract` (`{ cvBaseId }`, retry 2 with backoff), `job.fetch` (`{ jobPostingId }`, retry 1 after 60 s,
   ADR-0008 §4) and `cv.tailor` (`{ jobPostingId }`, retry 2 with backoff). Payloads carry ids only.
+- `ProvenancedText.sourceRefs` (1–5 ids) replaces `sourceRef`: base CV item ids for `original`/`rewritten`, job
+  requirement ids for `added` (`career-editorial-exception.md` §4). `AddedContent` gains `requirementIds`; added
+  content is limited to headline, summary, experience bullets and skills (languages are never `added`).
 
 - `openapi/document.ts` (`buildOpenApiDocument`, `serializeOpenApiDocument`): OpenAPI 3.0.3 generated from `routes/v1.ts`
   with `z.toJSONSchema` only; committed as `openapi/v1.json` with a drift test (`pnpm openapi:generate` refreshes it).
