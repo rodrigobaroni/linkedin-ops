@@ -1,8 +1,9 @@
 # Política de uso da API do LinkedIn
 
 - Owner: Sentinela; implementação: Pêndulo
-- Versão da revisão: 2026-10-13
-- Escopo do produto: publicação e, somente quando autorizada, leitura/analytics do perfil pessoal de Rodrigo
+- Versão da revisão: 2026-10-22 (exceção do ADR-0008 para leitura anônima de vagas)
+- Escopo do produto: publicação e, somente quando autorizada, leitura/analytics do perfil pessoal de Rodrigo;
+  leitura anônima de páginas públicas de vagas no módulo Carreira (§8.1, ADR-0008)
 - Regra de precedência: termos e permissões exibidos para o app no Developer Portal prevalecem sobre este resumo
 
 > Este documento é um controle de produto e engenharia, não aconselhamento jurídico. A API e seus
@@ -23,7 +24,10 @@ vetted, destinado atualmente a organizações legais registradas e casos comerci
 
 1. Operar o LinkedIn somente por OAuth 2.0 e APIs oficiais disponibilizadas ao app.
 2. Nunca usar Selenium, Playwright, extensão de navegador, cookies de sessão do LinkedIn, scraping,
-   endpoint privado/reverse-engineered ou automação do site.
+   endpoint privado/reverse-engineered ou automação do site. **Única exceção** (ADR-0008, decisão de
+   Rodrigo em 2026-10-22): `GET` anônimo de uma página pública de vaga
+   `https://www.linkedin.com/jobs/view/<id>` fornecida por Rodrigo no módulo Carreira, sem sessão, sem
+   cookies e sem as credenciais do app de publicação, nas condições da §8.1.
 3. Nunca criar conta falsa, interação falsa, bot de engajamento, mass comment/like/repost/DM, ou
    mecanismo para manipular algoritmo/distribuição.
 4. O usuário vê exatamente o texto/mídia/visibilidade que será publicado; modos automáticos obedecem
@@ -163,13 +167,49 @@ O LinkedIn Ops não deve:
 - gerar/operar fake accounts ou interações coordenadas/inautênticas;
 - automatizar comentários em terceiros; a feature futura de comentário é somente sugestão, para URL
   fornecida por Rodrigo, com revisão humana e execução manual/oficial se a API autorizada existir;
-- burlar rate limit, acesso, CAPTCHA, robots, versão, role ou restrição de produto;
+- burlar rate limit, acesso, login wall, CAPTCHA, robots, versão, role ou restrição de produto (na exceção da
+  §8.1 o `robots.txt` não é consultado, por ser busca única iniciada pelo usuário; isso é parte do desvio
+  aceito, e qualquer recusa do site encerra a busca);
 - copiar/distribuir conteúdo ou dados de membros sem direito/consentimento;
 - armazenar token em localStorage, browser, log, prompt, analytics ou issue;
 - usar dados do LinkedIn para leads, CRM, recrutamento, ads targeting ou enriquecimento de pessoas;
 - representar a aplicação como parceira/certificada pelo LinkedIn sem autorização escrita.
 
 Violação pode levar a restrição/encerramento da conta e acesso à API.
+
+### 8.1 Exceção: leitura anônima de vagas (módulo Carreira, ADR-0008)
+
+**Risco aceito por Rodrigo em 2026-10-22 (D2/D8).** O User Agreement do LinkedIn proíbe acesso automatizado e
+scraping, e o `robots.txt` do site não autoriza agentes genéricos. Esta exceção **não** é conformidade: é um
+desvio estreito, de baixo volume e iniciado pelo usuário, com risco à conta pessoal, ao app de publicação e ao
+IP da VM (que é o mesmo da integração de publicação). Ver SEC-006 em `threat-model.md`.
+
+Permitido:
+
+- só `GET` de `https://www.linkedin.com/jobs/view/<id numérico>` informado por Rodrigo (normalizado, sem
+  parâmetros de rastreamento); qualquer outro caminho do LinkedIn (busca, empresa, perfil, feed, posts,
+  coleções de vagas) é recusado na validação e vai para "colar texto";
+- uma página por vaga, sem seguir links, sem paginação, sem descoberta de URLs.
+
+Obrigatório:
+
+- cliente HTTP próprio do adapter de vagas, **sem** cookies (`Set-Cookie` descartado), sem `Authorization`,
+  sem token OAuth, client id ou client secret, sem acesso ao cofre de tokens; teste de arquitetura e teste
+  com credenciais canário provam isso;
+- HTTP simples: sem navegador headless, sem executar JavaScript;
+- user agent fixo e identificável (`LinkedInOpsJobFetcher/<versão>`); sem rotação de user agent, sem imitar
+  navegador, sem proxy ou rotação de IP, sem resolver CAPTCHA;
+- concorrência 1 por domínio, no mínimo 15 s entre requisições ao `linkedin.com` e no máximo 40 por 24 h;
+- **recuo imediato** em `429`, `999`, `403`, redirecionamento para `/login`, `/authwall`, `/checkpoint` ou
+  `/uas/`, ou página de login wall/CAPTCHA: a vaga falha com `fetch_blocked`, a URL não é retentada
+  automaticamente e o domínio entra em pausa de 24 h (circuit breaker persistido);
+- retentativa só para erro de rede ou `5xx` diferente de `999`: no máximo 1, após pelo menos 60 s;
+- chave `JOB_FETCH_LINKEDIN=enabled|disabled`; desligar ao primeiro sinal de restrição de conta, app ou IP;
+- "colar texto" disponível em toda falha; conteúdo da página é dado não confiável (`prompt-injection.md`);
+- logs e auditoria registram domínio, classe de status, resultado e duração, nunca conteúdo da página.
+
+Continua proibido: ler perfis, feed, posts, comentários, empresas ou buscas; usar a sessão de Rodrigo;
+usar os dados para leads, CRM, recrutamento ou enriquecimento. Qualquer ampliação exige novo ADR.
 
 ## 9. Gate de release verificável
 

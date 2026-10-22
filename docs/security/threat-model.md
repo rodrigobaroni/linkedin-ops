@@ -1,10 +1,11 @@
 # Threat model — LinkedIn Ops
 
 - Owner: Sentinela (Security & LinkedIn Compliance)
-- Versão: 0.1 — 2026-10-13
+- Versão: 0.2 — 2026-10-22 (módulo Carreira e leitura anônima de vagas, ADR-0008)
 - Método: STRIDE, com referências ao OWASP ASVS 5.0
 - Escopo: `web`, `api`, `worker`, `editorial-engine`, PostgreSQL/pg-boss, S3-compatible,
-  OpenAI, LinkedIn API, Telegram, Caddy e Oracle Cloud
+  OpenAI, LinkedIn API, Telegram, Caddy e Oracle Cloud; módulo Carreira (CV base, busca anônima de
+  páginas de vagas, CV adaptado em PDF)
 - Relacionados: `oauth-and-tokens.md`, `linkedin-policy.md`, `data-and-lgpd.md`,
   `prompt-injection.md`, `docs/architecture/system-overview.md`
 
@@ -41,6 +42,8 @@ implementados.
 | Audit log e correlações de jobs | alta | crítica | alta | Necessários para atribuição e investigação sem registrar segredos. |
 | Dados pessoais de autores/comentaristas | alta | alta | média | Sujeitos à LGPD e às restrições específicas do LinkedIn. |
 | Backups, exports e observabilidade | alta | alta | alta | Cópias frequentemente escapam dos controles primários. |
+| CV base e CVs adaptados | alta | alta | média | Dados pessoais e profissionais de Rodrigo; nunca em logs, traces ou Problem Details. |
+| Reputação da conta pessoal, do app e do IP da VM perante o LinkedIn | — | — | alta | Leitura anônima de vagas (ADR-0008) pode levar a bloqueio que afete a publicação. |
 
 ## 4. Atores
 
@@ -90,6 +93,8 @@ Nenhuma saída de LLM, Telegram ou fonte externa pode iniciar esse fluxo diretam
 | API REST | JSON, ids, paginação, uploads | autenticação/autorização em objeto, Zod strict, limites, CSRF, Problem Details sem detalhes sensíveis. |
 | Webhook Telegram | headers/body/update id | secret token, chat/user allowlist, dedupe, limite de corpo; nunca aprova/publica. |
 | RSS/URLs | DNS, redirects, HTML/XML | allowlist, proteção SSRF, limites de bytes/tempo, parser seguro, sanitização e provenance. |
+| Páginas de vagas (Carreira) | URL do usuário, DNS, redirects, HTML | `SafeHttpClient` (SSRF, 3 redirects, 2 MB, 15 s), cliente sem cookies/tokens, limite por domínio, recuo em 429/999/login wall, conteúdo como dado (ADR-0008). |
+| Upload de CV (PDF) | bytes, metadados, texto embutido | multipart só nessa rota, ≤ 5 MB, magic bytes, extração de texto sem executar conteúdo, PDF original descartado. |
 | Upload de mídia | bytes, MIME, nome e metadados | magic bytes, re-encode, limites, objetos privados, nomes gerados, antivírus quando aplicável. |
 | Jobs/scheduler | payload e retries | schema strict, assinatura lógica por tipo, singleton, transação/outbox, dead-letter e revalidação. |
 | OpenAI | prompt/output/model metadata | `store:false`, sem segredos, sem tools livres, Structured Outputs strict e validação pós-modelo. |
@@ -125,6 +130,11 @@ Nenhuma saída de LLM, Telegram ou fonte externa pode iniciar esse fluxo diretam
 | TM-22 | T/R | autonomia | Mudança de modo ou relógio agenda conteúdo sem ciência de Rodrigo. | high | Padrão assistido; reautenticação para elevar; audit event; janela de veto; clock injetado; timezone IANA; revalidar modo no publish. | Atlas/Alicerce/Pêndulo |
 | TM-23 | I/T | LinkedIn data | API restrita é usada para coletar/armazenar atividade de membros além do permitido. | high | Feature flag desligada sem scope/aprovação; inventário de campos; TTL 24 h/48 h quando aplicável; sem export/combinação; ver `linkedin-policy.md`. | Pêndulo/Sentinela |
 | TM-24 | T | conteúdo | Sistema inventa experiência/opinião de Rodrigo ou converte dado externo em ação. | high | Story Bank com flag publicável; provenance; gates G5/G6/G7; revisão humana inicial; evals adversariais. | Pena |
+| TM-25 | E/I | worker/vagas | URL de vaga ou redirect leva a SSRF (metadata OCI, loopback, Postgres, rede Docker). | critical | `SafeHttpClient` compartilhado com RSS: só http/https nas portas 80/443, sem IP literal nem credencial na URL, DNS resolvido e conexão fixada no IP validado, revalidação a cada redirect (máx. 3), bloqueio de faixas privadas/link-local/CGNAT/metadata, 15 s e 2 MB; testes da T-058. | Pêndulo/Estaleiro |
+| TM-26 | R/D | LinkedIn/compliance | Leitura de `linkedin.com/jobs/view` é detectada como acesso automatizado e leva a bloqueio do IP, restrição do app de publicação ou da conta pessoal. | high | Escopo de uma página por vaga, user agent identificável, limite por domínio, recuo imediato e circuit breaker de 24 h, sem evasão, chave `JOB_FETCH_LINKEDIN`, alerta por taxa de sinais de recusa. **Risco residual aceito por Rodrigo** (SEC-006). | Pêndulo/Sentinela |
+| TM-27 | I | worker/vagas | Cookie de sessão, token OAuth ou client secret vaza numa requisição de busca de vaga. | critical | Adapter com cliente HTTP próprio, sem cookie jar, sem `Authorization`, sem acesso ao cofre (ADR-0004); teste de arquitetura de imports e teste com credenciais canário. | Pêndulo/Alicerce |
+| TM-28 | T | editorial-engine/vagas | Página de vaga com instrução embutida altera a adaptação do CV ou o relatório. | high | Texto da vaga só como dado delimitado; Structured Outputs strict; corpus adversarial da T-058 inclui páginas de vaga. | Pena/Pêndulo |
+| TM-29 | I | Carreira | CV base ou CV adaptado aparece em log, trace, Problem Details ou é enviado à OpenAI além do necessário. | high | Redaction, `store:false`, minimização por tarefa, PDF original descartado, apagamento em cascata sob demanda. | Alicerce/Pena |
 
 ## 8. Gates obrigatórios antes de produção
 
@@ -136,6 +146,7 @@ Nenhuma saída de LLM, Telegram ou fonte externa pode iniciar esse fluxo diretam
 | G-04 | Teste de publicação concorrente/timeout prova no máximo um post ou entra em estado ambíguo sem retry cego. | publicação | Pêndulo/Atlas |
 | G-05 | Corpus adversarial de prompt injection falha fechado, sem tool-use, sem URLs/source IDs inventados. | curadoria/geração | Pena |
 | G-06 | Restore de backup cifrado, varredura de secrets e scan Semgrep/Trivy/gitleaks com triagem documentada. | deploy | Estaleiro |
+| G-07 | Testes provam: bloqueio SSRF (faixas privadas, metadata, redirect para rede interna, DNS rebinding), nenhuma requisição de vaga com cookie/token/secret (canário), limite por domínio, recuo e circuit breaker em 429/999/403/login wall, rejeição de caminhos do LinkedIn fora de `/jobs/view/<id>`. | busca de vagas em produção | Pêndulo/Sentinela |
 
 ## 9. Findings abertos
 
@@ -191,6 +202,18 @@ Formato compatível com `.github/ISSUE_TEMPLATE/security.md`.
   gitleaks obrigatório, pois `.gitignore` não é controle suficiente.
 - **Referências:** revisão somente leitura de `.gitignore` em 2026-10-13.
 
+### SEC-006 — Leitura anônima de vagas do LinkedIn contraria o User Agreement
+
+- **Severidade:** high (risco aceito)
+- **Componente afetado:** worker (adapter de vagas), conta pessoal, app de publicação e IP da VM
+- **Cenário de exploração / impacto:** o LinkedIn identifica as leituras de `linkedin.com/jobs/view` como
+  acesso automatizado e bloqueia o IP, restringe o app ou a conta; como o IP é o mesmo da publicação, a
+  integração oficial pode ser afetada.
+- **Mitigação proposta:** controles do ADR-0008 e de `linkedin-policy.md` §8.1; G-07 antes de produção;
+  desligar `JOB_FETCH_LINKEDIN` ao primeiro sinal de restrição; "colar texto" sempre disponível.
+- **Aceite:** Rodrigo, 2026-10-22 (decisões D2 e D8 da spec de CV adaptado). Revisar se houver restrição.
+- **Referências:** ADR-0008; `linkedin-policy.md` §2 e §8.1; LinkedIn User Agreement.
+
 ## 10. Perguntas abertas — decisão de Rodrigo
 
 1. **[DECISÃO RODRIGO]** Confirmar login local (e-mail + Argon2id) separado da conexão LinkedIn ou usar
@@ -205,7 +228,8 @@ Formato compatível com `.github/ISSUE_TEMPLATE/security.md`.
 
 ## 11. Cadência de revisão
 
-- Revisar em toda alteração de auth, OAuth, publicação, autonomia, webhook, upload, fonte ou ferramenta de IA.
+- Revisar em toda alteração de auth, OAuth, publicação, autonomia, webhook, upload, fonte, busca de páginas
+  externas ou ferramenta de IA.
 - Revisar trimestralmente scopes, quotas, versões e termos oficiais do LinkedIn.
 - Reexecutar G-01 após mudança de produto/app/scopes e G-05 após mudança de prompt/modelo/schema.
 - Abrir finding separado usando o template de segurança quando um risco sair de “design” e for observado
