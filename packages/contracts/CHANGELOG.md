@@ -31,6 +31,8 @@ versioning: internal SemVer (see `README.md`).
   (`FETCHING | ANALYZING | READY | FAILED`), `JobPostingFailure` (`FETCH | FETCH_BLOCKED | NOT_A_JOB | AI |
   TIMED_OUT`) and `JobPostingSourceKind` (`LINKEDIN | OTHER | PASTED`); `ErrorCode` gains `CV_BASE_REQUIRED` (412)
   and `JOB_POSTING_INVALID_TRANSITION` (409) (contracts.md §2.14, §4).
+- `job.fetch` and `cv.tailor` payloads gain `attempt` (int ≥ 1): the posting's processing cycle, so a late job of
+  an earlier cycle is a no-op (career PR 3b; no job of these queues was produced before).
 - Queues `cv.extract` (`{ cvBaseId }`, retry 2 with backoff), `job.fetch` (`{ jobPostingId }`, retry 1 after 60 s,
   ADR-0008 §4) and `cv.tailor` (`{ jobPostingId }`, retry 2 with backoff). Payloads carry ids only.
 - `openapi/document.ts` (`buildOpenApiDocument`, `serializeOpenApiDocument`): OpenAPI 3.0.3 generated from `routes/v1.ts`

@@ -33,6 +33,7 @@ CREATE TABLE "job_postings" (
     "source" "job_posting_source_kind" NOT NULL,
     "status" "job_posting_status" NOT NULL,
     "failure_reason" "job_posting_failure",
+    "attempt" INTEGER NOT NULL DEFAULT 1,
     "page_text" TEXT,
     "fetched_at" TIMESTAMPTZ(3),
     "extracted" JSONB,
@@ -131,6 +132,8 @@ ALTER TABLE "job_postings" ADD CONSTRAINT "job_postings_page_text_check"
   CHECK ("page_text" IS NULL OR char_length("page_text") BETWEEN 1 AND 20000);
 ALTER TABLE "job_postings" ADD CONSTRAINT "job_postings_extracted_check"
   CHECK ("extracted" IS NULL OR (jsonb_typeof("extracted") = 'object' AND octet_length("extracted"::text) <= 262144));
+-- The processing cycle starts at 1; every job payload carries it (late jobs of an earlier cycle are no-ops).
+ALTER TABLE "job_postings" ADD CONSTRAINT "job_postings_attempt_check" CHECK ("attempt" >= 1);
 ALTER TABLE "job_postings" ADD CONSTRAINT "job_postings_dropped_requirement_count_check"
   CHECK ("dropped_requirement_count" IS NULL OR "dropped_requirement_count" >= 0);
 ALTER TABLE "job_postings" ADD CONSTRAINT "job_postings_injection_evidence_check"

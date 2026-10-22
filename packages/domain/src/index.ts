@@ -113,6 +113,7 @@ export {
   type CareerAuditMeta,
   type CreatedBatch,
   type CvTailorEnqueue,
+  type CvTailorJob,
   type JobFetchEnqueue,
   type JobFetchJob,
   type JobPostingRecord,
@@ -128,6 +129,7 @@ export {
 export type {
   CareerFailureReason,
   CareerJobMeta,
+  JobPostingJobMeta,
   CvBaseDraftStore,
   CvExtractionResult,
   FetchDomainGuard,

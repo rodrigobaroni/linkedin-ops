@@ -178,7 +178,11 @@ export class JobPostingService {
   private fetchEnqueue(session: AuthenticatedSession, correlationId: string): JobFetchEnqueue {
     return async (db, job) => {
       try {
-        const payload = { ...envelope(session, correlationId), jobPostingId: job.jobPostingId };
+        const payload = {
+          ...envelope(session, correlationId),
+          jobPostingId: job.jobPostingId,
+          attempt: job.attempt,
+        };
         return (await this.queue.enqueueFetch(payload, job.groupId, db)).jobId;
       } catch (error) {
         throw new CareerEnqueueError(error);
@@ -187,9 +191,13 @@ export class JobPostingService {
   }
 
   private tailorEnqueue(session: AuthenticatedSession, correlationId: string): CvTailorEnqueue {
-    return async (db, jobPostingId) => {
+    return async (db, job) => {
       try {
-        const payload = { ...envelope(session, correlationId), jobPostingId };
+        const payload = {
+          ...envelope(session, correlationId),
+          jobPostingId: job.jobPostingId,
+          attempt: job.attempt,
+        };
         return (await this.queue.enqueueTailor(payload, db)).jobId;
       } catch (error) {
         throw new CareerEnqueueError(error);

@@ -115,12 +115,24 @@ export type LinkedInTokenRefreshPayload = z.infer<typeof LinkedInTokenRefreshPay
 export const CvExtractPayloadSchema = v1.extend({ cvBaseId: UuidSchema });
 export type CvExtractPayload = z.infer<typeof CvExtractPayloadSchema>;
 
+/**
+ * Processing cycle of a posting (`job_postings.attempt`, bumped by every reprocessing): a late job of an
+ * earlier cycle finds the posting in a newer one and exits without effect.
+ */
+const PostingAttemptSchema = z.int().min(1);
+
 /** Fetches (or reads pasted text of) one posting and runs `job-extract` (ADR-0008 limits apply). */
-export const JobFetchPayloadSchema = v1.extend({ jobPostingId: UuidSchema });
+export const JobFetchPayloadSchema = v1.extend({
+  jobPostingId: UuidSchema,
+  attempt: PostingAttemptSchema,
+});
 export type JobFetchPayload = z.infer<typeof JobFetchPayloadSchema>;
 
 /** Tailors the base CV to one extracted posting (`cv-tailor` → `cv-humanize`). */
-export const CvTailorPayloadSchema = v1.extend({ jobPostingId: UuidSchema });
+export const CvTailorPayloadSchema = v1.extend({
+  jobPostingId: UuidSchema,
+  attempt: PostingAttemptSchema,
+});
 export type CvTailorPayload = z.infer<typeof CvTailorPayloadSchema>;
 
 const deadLetterOf = (name: QueueName) => `${name}.dlq`;

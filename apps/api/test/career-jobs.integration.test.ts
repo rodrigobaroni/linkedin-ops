@@ -243,10 +243,19 @@ async function submit(actor: Actor, urls: string[]) {
   return TailoringBatchAcceptedSchema.parse(res.body);
 }
 
+/** Meta of a job of the posting's current cycle (`attempt` as stored; 1 for a posting that is gone). */
+async function jobMeta(postingId: string) {
+  const row = await prisma.jobPosting.findUnique({
+    where: { id: postingId },
+    select: { attempt: true },
+  });
+  return { jobId: `job-${newId()}`, correlationId: `corr-${newId()}`, attempt: row?.attempt ?? 1 };
+}
+
 /** The worker's side of one posting, from `FETCHING` to `READY`, through the real producer. */
 async function runPipeline(postingId: string): Promise<void> {
-  const meta = { jobId: `job-${newId()}`, correlationId: `corr-${newId()}` };
-  await worker.saveFetchedText(postingId, POSTING_TEXT);
+  const meta = await jobMeta(postingId);
+  await worker.saveFetchedText(postingId, POSTING_TEXT, meta);
   await worker.completeExtraction(
     postingId,
     {
@@ -259,7 +268,7 @@ async function runPipeline(postingId: string): Promise<void> {
     },
     meta,
   );
-  const input = await worker.loadForTailoring(postingId);
+  const input = await worker.loadForTailoring(postingId, meta);
   expect(input).not.toBeNull();
   await worker.completeTailoring(
     postingId,
@@ -309,12 +318,13 @@ beforeAll(async () => {
   producer = new PgBossCvExtractQueue(databaseUrl, logger);
   await producer.onApplicationBootstrap();
   expect(producer.ready).toBe(true);
-  worker = new PrismaJobPostingStore(prisma, async (db, jobPostingId) => {
+  worker = new PrismaJobPostingStore(prisma, async (db, job) => {
     const payload = {
       schemaVersion: 1 as const,
       correlationId: `corr-${newId()}`,
       requestedBy: { type: "SYSTEM" as const, id: "worker" },
-      jobPostingId,
+      jobPostingId: job.jobPostingId,
+      attempt: job.attempt,
     };
     return (await producer.enqueueTailor(payload, db)).jobId;
   });
@@ -379,6 +389,7 @@ describe("POST /career/batches", () => {
         correlationId: res.headers["x-correlation-id"],
         requestedBy: { type: "USER", id: actor.userId },
         jobPostingId: body.postings[0]!.id,
+        attempt: 1,
       },
       singletonKey: body.postings[0]!.id,
       retryLimit: QUEUES["job.fetch"].retryLimit,
@@ -524,7 +535,7 @@ describe("POST /career/jobs/{id}/text and /retry, DELETE /career/jobs/{id}", () 
     const busy = await post(actor, `/career/jobs/${id}/text`, { text: POSTING_TEXT }).expect(409);
     expect(busy.body.code).toBe("JOB_POSTING_INVALID_TRANSITION");
 
-    await worker.markFailed(id, "fetch_blocked", { jobId: "job-x", correlationId: "corr-x" });
+    await worker.markFailed(id, "fetch_blocked", await jobMeta(id));
     const res = await post(actor, `/career/jobs/${id}/text`, { text: POSTING_TEXT }).expect(202);
     expect(res.headers.location).toBe(`/api/v1/career/jobs/${id}`);
     const accepted = JobPostingAcceptedSchema.parse(res.body);
@@ -532,7 +543,7 @@ describe("POST /career/jobs/{id}/text and /retry, DELETE /career/jobs/{id}", () 
     const jobs = await jobsOf(id);
     expect(jobs.at(-1)).toMatchObject({ id: accepted.jobId, name: "job.fetch", groupId: "pasted" });
     expect(JSON.stringify(jobs)).not.toContain(TEXT_MARKER);
-    expect(await worker.loadForFetch(id)).toEqual({
+    expect(await worker.loadForFetch(id, await jobMeta(id))).toEqual({
       source: { kind: "pasted", text: POSTING_TEXT.trim() },
       fetchedText: null,
     });
@@ -544,13 +555,18 @@ describe("POST /career/jobs/{id}/text and /retry, DELETE /career/jobs/{id}", () 
     const batch = await submit(actor, [link(40), "https://acme.gupy.io/jobs/41"]);
     const [ready, failed] = batch.postings.map((p) => p.id) as [string, string];
     await runPipeline(ready);
-    await worker.markFailed(failed, "fetch", { jobId: "job-y", correlationId: "corr-y" });
+    await worker.markFailed(failed, "fetch", await jobMeta(failed));
 
     const retried = JobPostingAcceptedSchema.parse(
       (await post(actor, `/career/jobs/${ready}/retry`).expect(202)).body,
     );
     expect(retried.status).toBe("ANALYZING");
-    expect((await jobsOf(ready)).at(-1)).toMatchObject({ id: retried.jobId, name: "cv.tailor" });
+    expect((await jobsOf(ready)).at(-1)).toMatchObject({
+      id: retried.jobId,
+      name: "cv.tailor",
+      // A new processing cycle: the cv.tailor of the first one can no longer act on the posting.
+      data: expect.objectContaining({ attempt: 2 }),
+    });
     await post(actor, `/career/jobs/${ready}/retry`).expect(409);
 
     const refetch = JobPostingAcceptedSchema.parse(
@@ -570,8 +586,8 @@ describe("POST /career/jobs/{id}/text and /retry, DELETE /career/jobs/{id}", () 
     expect(await prisma.tailoredCv.count({ where: { jobPostingId: id } })).toBe(0);
     expect(await prisma.tailoringBatch.count({ where: { id: batch.batchId } })).toBe(0);
     // The queued jobs of the deleted posting exit quietly.
-    expect(await worker.loadForFetch(id)).toBeNull();
-    expect(await worker.loadForTailoring(id)).toBeNull();
+    expect(await worker.loadForFetch(id, await jobMeta(id))).toBeNull();
+    expect(await worker.loadForTailoring(id, await jobMeta(id))).toBeNull();
   });
 });
 

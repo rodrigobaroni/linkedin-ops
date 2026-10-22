@@ -21,8 +21,8 @@ import {
 } from "./job-postings.js";
 import type {
   CareerFailureReason,
-  CareerJobMeta,
   GenerationInfo,
+  JobPostingJobMeta,
   JobPostingSource,
   JobPostingStore,
 } from "./ports.js";
@@ -40,7 +40,9 @@ const FAILURE_REASONS: Readonly<Record<CareerFailureReason, JobPostingFailure>> 
 /**
  * `JobPostingStore` over `job_postings`/`tailored_cvs` (career PR 3b), the worker side of
  * `PrismaJobPostings`. Every write is conditional on the posting still being in the status its step expects,
- * so a duplicated or late job changes nothing; every `load*` returns null otherwise (ADR-0002 §8). The
+ * and on the cycle (`attempt`) of the job's payload, so a duplicated or late job, even one of an earlier cycle
+ * that finds the posting back in the same status (ABA), changes nothing; every `load*` returns null otherwise
+ * (ADR-0002 §8). The
  * extraction and the `cv.tailor` job commit together (`enqueueTailor` runs on the same transaction,
  * ADR-0002 §3). Audit actor `WORKER`; snapshots carry statuses, counts and versions, never posting or CV
  * content.
@@ -54,9 +56,10 @@ export class PrismaJobPostingStore implements JobPostingStore {
 
   async loadForFetch(
     jobPostingId: string,
+    meta: JobPostingJobMeta,
   ): Promise<{ source: JobPostingSource; fetchedText: string | null } | null> {
     const row = await this.prisma.jobPosting.findFirst({
-      where: { id: jobPostingId, status: "FETCHING" },
+      where: { id: jobPostingId, status: "FETCHING", attempt: meta.attempt },
       select: { url: true, source: true, pageText: true },
     });
     if (!row) return null;
@@ -69,12 +72,21 @@ export class PrismaJobPostingStore implements JobPostingStore {
     return { source: { kind: "url", url: row.url }, fetchedText: row.pageText };
   }
 
-  async saveFetchedText(jobPostingId: string, text: string): Promise<void> {
+  async saveFetchedText(
+    jobPostingId: string,
+    text: string,
+    meta: JobPostingJobMeta,
+  ): Promise<void> {
     const pageText = boundedText(text);
     if (pageText === null) return;
     const now = this.now();
     await this.prisma.jobPosting.updateMany({
-      where: { id: jobPostingId, status: "FETCHING", source: { not: "PASTED" } },
+      where: {
+        id: jobPostingId,
+        status: "FETCHING",
+        attempt: meta.attempt,
+        source: { not: "PASTED" },
+      },
       data: { pageText, fetchedAt: now, updatedAt: now },
     });
   }
@@ -89,7 +101,7 @@ export class PrismaJobPostingStore implements JobPostingStore {
       injectionEvidence: string | null;
       generation: GenerationInfo;
     },
-    meta: CareerJobMeta,
+    meta: JobPostingJobMeta,
   ): Promise<void> {
     const job = JobPostingExtractedSchema.parse(result.job);
     const pageText = boundedText(result.rawText);
@@ -105,7 +117,7 @@ export class PrismaJobPostingStore implements JobPostingStore {
       });
       if (!row) return;
       const { count } = await tx.jobPosting.updateMany({
-        where: { id: jobPostingId, status: "FETCHING" },
+        where: { id: jobPostingId, status: "FETCHING", attempt: meta.attempt },
         data: {
           status: "ANALYZING",
           extracted: job as Prisma.InputJsonValue,
@@ -129,17 +141,21 @@ export class PrismaJobPostingStore implements JobPostingStore {
           before: { status: "FETCHING" },
           after: {
             status: "ANALYZING",
+            attempt: meta.attempt,
             requirements: job.requirements.length,
             droppedRequirements: result.droppedRequirementCount,
             injectionSuspected: String(result.injectionSuspected),
           },
         },
       );
-      await this.enqueueTailor(sqlExecutor(tx), jobPostingId);
+      await this.enqueueTailor(sqlExecutor(tx), { jobPostingId, attempt: meta.attempt });
     });
   }
 
-  async loadForTailoring(jobPostingId: string): Promise<{
+  async loadForTailoring(
+    jobPostingId: string,
+    meta: JobPostingJobMeta,
+  ): Promise<{
     cvBaseId: string;
     base: CvStructured;
     job: JobPostingExtracted;
@@ -147,7 +163,7 @@ export class PrismaJobPostingStore implements JobPostingStore {
     jobInjectionSuspected: boolean;
   } | null> {
     const row = await this.prisma.jobPosting.findFirst({
-      where: { id: jobPostingId, status: "ANALYZING" },
+      where: { id: jobPostingId, status: "ANALYZING", attempt: meta.attempt },
       select: { userId: true, extracted: true, pageText: true, injectionSuspected: true },
     });
     if (!row || row.extracted === null || row.pageText === null) return null;
@@ -174,7 +190,7 @@ export class PrismaJobPostingStore implements JobPostingStore {
       report: MatchReport;
       generation: GenerationInfo;
     },
-    meta: CareerJobMeta,
+    meta: JobPostingJobMeta,
   ): Promise<void> {
     const content = TailoredCvContentSchema.parse(result.content);
     const report = MatchReportSchema.parse(result.report);
@@ -187,7 +203,7 @@ export class PrismaJobPostingStore implements JobPostingStore {
       });
       if (!row) return;
       const { count } = await tx.jobPosting.updateMany({
-        where: { id: jobPostingId, status: "ANALYZING" },
+        where: { id: jobPostingId, status: "ANALYZING", attempt: meta.attempt },
         data: { status: "READY", updatedAt: now },
       });
       if (count === 0) return;
@@ -223,6 +239,7 @@ export class PrismaJobPostingStore implements JobPostingStore {
               : { status: "ANALYZING", ...replacedSnapshot(previous) },
           after: {
             status: "READY",
+            attempt: meta.attempt,
             cvBaseId: result.cvBaseId,
             baseScore: report.baseScore,
             added: report.added.length,
@@ -236,17 +253,21 @@ export class PrismaJobPostingStore implements JobPostingStore {
   async markFailed(
     jobPostingId: string,
     reason: CareerFailureReason,
-    meta: CareerJobMeta,
+    meta: JobPostingJobMeta,
   ): Promise<void> {
     const failureReason = FAILURE_REASONS[reason];
     await this.prisma.$transaction(async (tx) => {
       const row = await tx.jobPosting.findFirst({
-        where: { id: jobPostingId, status: { in: ["FETCHING", "ANALYZING"] } },
+        where: {
+          id: jobPostingId,
+          status: { in: ["FETCHING", "ANALYZING"] },
+          attempt: meta.attempt,
+        },
         select: { userId: true, status: true },
       });
       if (!row) return;
       const { count } = await tx.jobPosting.updateMany({
-        where: { id: jobPostingId, status: row.status },
+        where: { id: jobPostingId, status: row.status, attempt: meta.attempt },
         data: { status: "FAILED", failureReason, updatedAt: this.now() },
       });
       if (count === 0) return;
@@ -259,14 +280,14 @@ export class PrismaJobPostingStore implements JobPostingStore {
         jobPostingId,
         {
           before: { status: row.status },
-          after: { status: "FAILED", failureReason, cause: reason },
+          after: { status: "FAILED", failureReason, cause: reason, attempt: meta.attempt },
         },
       );
     });
   }
 }
 
-function workerMeta(meta: CareerJobMeta): CareerAuditMeta {
+function workerMeta(meta: JobPostingJobMeta): CareerAuditMeta {
   return { correlationId: meta.correlationId, actor: { type: "WORKER", jobId: meta.jobId } };
 }
 

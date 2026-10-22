@@ -61,16 +61,21 @@ export const JOB_POSTING_FAILED_TEXT_RETENTION_MS = CV_EXTRACTION_STALE_MS;
 /** Who acted, for the audit trail; snapshots carry ids, statuses and counts, never URLs nor text. */
 export type CareerAuditMeta = CvAuditMeta;
 
-/** One `job.fetch` to enqueue: `groupId` is the domain of the link, or `pasted` (no site is touched). */
-export interface JobFetchJob {
+/** A job of one posting's processing cycle (`attempt` goes into the payload: late-job guard). */
+export interface CvTailorJob {
   jobPostingId: string;
+  attempt: number;
+}
+
+/** One `job.fetch` to enqueue: `groupId` is the domain of the link, or `pasted` (no site is touched). */
+export interface JobFetchJob extends CvTailorJob {
   groupId: string;
 }
 
 /** Enqueues `job.fetch` on `db` (the posting's transaction) and returns the job id. */
 export type JobFetchEnqueue = (db: SqlExecutor, job: JobFetchJob) => Promise<string>;
 /** Enqueues `cv.tailor` on `db` (the posting's transaction) and returns the job id. */
-export type CvTailorEnqueue = (db: SqlExecutor, jobPostingId: string) => Promise<string>;
+export type CvTailorEnqueue = (db: SqlExecutor, job: CvTailorJob) => Promise<string>;
 
 export interface TailoringRecord {
   /** The CV base version the tailoring used. */
@@ -224,6 +229,7 @@ export class PrismaJobPostings {
         jobIds.push(
           await enqueueFetch(sqlExecutor(tx), {
             jobPostingId: row.id,
+            attempt: row.attempt,
             groupId: jobFetchGroupId(url),
           }),
         );
@@ -295,11 +301,13 @@ export class PrismaJobPostings {
           source: "PASTED",
           pageText,
           fetchedAt: null,
+          attempt: { increment: 1 },
           updatedAt: this.now(),
         },
       });
       const jobId = await enqueueFetch(sqlExecutor(tx), {
         jobPostingId: row.id,
+        attempt: updated.attempt,
         groupId: JOB_FETCH_PASTED_GROUP,
       });
       return { updated, jobId };
@@ -322,22 +330,32 @@ export class PrismaJobPostings {
       if (row.extracted !== null && row.pageText !== null) {
         const updated = await tx.jobPosting.update({
           where: { id: row.id },
-          data: { status: "ANALYZING", failureReason: null, updatedAt: now },
+          data: {
+            status: "ANALYZING",
+            failureReason: null,
+            attempt: { increment: 1 },
+            updatedAt: now,
+          },
         });
-        return { updated, jobId: await enqueue.tailor(sqlExecutor(tx), row.id) };
+        const job = { jobPostingId: row.id, attempt: updated.attempt };
+        return { updated, jobId: await enqueue.tailor(sqlExecutor(tx), job) };
       }
       // A pasted posting whose text expired falls back to its link.
       const source =
         row.source === "PASTED" && row.pageText === null ? jobPostingSourceOf(row.url) : row.source;
       const updated = await tx.jobPosting.update({
         where: { id: row.id },
-        data: { ...CLEARED_EXTRACTION, status: "FETCHING", source, updatedAt: now },
+        data: {
+          ...CLEARED_EXTRACTION,
+          status: "FETCHING",
+          source,
+          attempt: { increment: 1 },
+          updatedAt: now,
+        },
       });
       const groupId = source === "PASTED" ? JOB_FETCH_PASTED_GROUP : jobFetchGroupId(row.url);
-      return {
-        updated,
-        jobId: await enqueue.fetch(sqlExecutor(tx), { jobPostingId: row.id, groupId }),
-      };
+      const job = { jobPostingId: row.id, attempt: updated.attempt, groupId };
+      return { updated, jobId: await enqueue.fetch(sqlExecutor(tx), job) };
     });
   }
 
@@ -422,7 +440,7 @@ export class PrismaJobPostings {
           status: row.status,
           ...(row.failureReason === null ? {} : { failureReason: row.failureReason }),
         },
-        after: { status: updated.status, source: updated.source },
+        after: { status: updated.status, source: updated.source, attempt: updated.attempt },
       });
       return { posting: toSummary(updated, null), jobId };
     });

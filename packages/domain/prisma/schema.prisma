@@ -1195,6 +1195,8 @@ model JobPosting {
   source                  JobPostingSourceKind
   status                  JobPostingStatus
   failureReason           JobPostingFailure?   @map("failure_reason")
+  /// Processing cycle, bumped by every reprocessing and carried by the job payloads (late-job guard).
+  attempt                 Int                  @default(1)
   /// Fetched or pasted text, sanitized, ≤ 20 000 characters; erased from `FAILED` postings after retention.
   pageText                String?              @map("page_text")
   fetchedAt               DateTime?            @map("fetched_at") @db.Timestamptz(3)

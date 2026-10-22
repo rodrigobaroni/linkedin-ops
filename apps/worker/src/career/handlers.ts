@@ -157,13 +157,16 @@ export function createCareerHandlers(deps: CareerHandlerDeps): CareerHandlers {
     }
   };
 
-  const jobFetch: JobHandler<"job.fetch"> = async ({ jobPostingId, correlationId }, context) => {
-    const posting = await deps.jobStore.loadForFetch(jobPostingId);
+  const jobFetch: JobHandler<"job.fetch"> = async (
+    { jobPostingId, attempt, correlationId },
+    context,
+  ) => {
+    const meta = { jobId: context.jobId, correlationId, attempt };
+    const posting = await deps.jobStore.loadForFetch(jobPostingId, meta);
     if (!posting) {
       context.logger.info({ outcome: "skipped" }, "posting not awaiting fetch");
       return;
     }
-    const meta = { jobId: context.jobId, correlationId };
     const markFailed = (reason: CareerFailureReason) =>
       deps.jobStore.markFailed(jobPostingId, reason, meta);
     const { source } = posting;
@@ -200,7 +203,7 @@ export function createCareerHandlers(deps: CareerHandlerDeps): CareerHandlers {
         if (kind === "permanent") return markFailed("fetch");
         return failIfFinal(new RetryableJobError("fetch"), context, markFailed, "fetch");
       }
-      await deps.jobStore.saveFetchedText(jobPostingId, text);
+      await deps.jobStore.saveFetchedText(jobPostingId, text, meta);
     }
 
     try {
@@ -249,13 +252,16 @@ export function createCareerHandlers(deps: CareerHandlerDeps): CareerHandlers {
     }
   };
 
-  const cvTailor: JobHandler<"cv.tailor"> = async ({ jobPostingId, correlationId }, context) => {
-    const input = await deps.jobStore.loadForTailoring(jobPostingId);
+  const cvTailor: JobHandler<"cv.tailor"> = async (
+    { jobPostingId, attempt, correlationId },
+    context,
+  ) => {
+    const meta = { jobId: context.jobId, correlationId, attempt };
+    const input = await deps.jobStore.loadForTailoring(jobPostingId, meta);
     if (!input) {
       context.logger.info({ outcome: "skipped" }, "posting not awaiting tailoring");
       return;
     }
-    const meta = { jobId: context.jobId, correlationId };
     const markFailed = (reason: CareerFailureReason) =>
       deps.jobStore.markFailed(jobPostingId, reason, meta);
     try {

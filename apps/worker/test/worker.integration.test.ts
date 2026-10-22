@@ -174,7 +174,7 @@ describe("worker on pg-boss (ADR-0002)", () => {
   it("runs a cv.tailor job end to end with the simulated LLM", async () => {
     await boss?.send(
       "cv.tailor",
-      { ...envelope, jobPostingId: IDS.posting },
+      { ...envelope, jobPostingId: IDS.posting, attempt: 1 },
       { singletonKey: IDS.posting },
     );
     await expect.poll(() => events, poll).toContain(`tailored:${IDS.posting}:70`);
@@ -184,6 +184,7 @@ describe("worker on pg-boss (ADR-0002)", () => {
     const id = await boss?.send("cv.tailor", {
       ...envelope,
       jobPostingId: IDS.posting,
+      attempt: 1,
       text: "CANARY",
     });
     await expect
@@ -196,12 +197,14 @@ describe("worker on pg-boss (ADR-0002)", () => {
   it("dead-letters a permanent LLM failure at once and marks the posting failed", async () => {
     failTailoring = true;
     const posting = uuid(0xaa);
-    await boss?.send("cv.tailor", { ...envelope, jobPostingId: posting });
+    await boss?.send("cv.tailor", { ...envelope, jobPostingId: posting, attempt: 1 });
     await expect.poll(() => events, poll).toContain(`failed:${posting}:ai`);
     await expect
       .poll(async () => (await boss?.fetch<{ jobPostingId: string }>("cv.tailor.dlq")) ?? [], poll)
       .toEqual([
-        expect.objectContaining({ data: expect.objectContaining({ jobPostingId: posting }) }),
+        expect.objectContaining({
+          data: expect.objectContaining({ jobPostingId: posting, attempt: 1 }),
+        }),
       ]);
     failTailoring = false;
   });
@@ -242,7 +245,7 @@ describe("worker on pg-boss (ADR-0002)", () => {
   it("SIGTERM stops gracefully and cancels the job in flight without failing the posting", async () => {
     hangTailoring = true;
     const posting = uuid(0xcc);
-    await boss?.send("cv.tailor", { ...envelope, jobPostingId: posting });
+    await boss?.send("cv.tailor", { ...envelope, jobPostingId: posting, attempt: 1 });
     await expect.poll(() => hangStarted, poll).toBe(true);
     await lifecycle?.stop("SIGTERM");
     expect(hangAborted).toBe(true);
@@ -253,11 +256,13 @@ describe("worker on pg-boss (ADR-0002)", () => {
     await inspector.start();
     try {
       const jobs = await inspector.findJobs<{ jobPostingId: string }>("cv.tailor", {
-        data: { jobPostingId: posting },
+        data: { jobPostingId: posting, attempt: 1 },
       });
       expect(jobs.map((j) => j.state).sort()).toEqual(["completed", "created"]);
       expect(jobs.find((j) => j.state === "created")?.retryCount).toBe(0);
-      const dead = await inspector.findJobs("cv.tailor.dlq", { data: { jobPostingId: posting } });
+      const dead = await inspector.findJobs("cv.tailor.dlq", {
+        data: { jobPostingId: posting, attempt: 1 },
+      });
       expect(dead).toEqual([]);
     } finally {
       await inspector.stop({ graceful: false });

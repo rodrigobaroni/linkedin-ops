@@ -27,6 +27,11 @@ import {
   type JobFetchEnqueue,
 } from "../../src/career/job-postings.js";
 import { PrismaJobPostingStore } from "../../src/career/prisma-job-posting-store.js";
+import type {
+  CareerFailureReason,
+  JobPostingJobMeta,
+  JobPostingStore,
+} from "../../src/career/ports.js";
 import type { SqlExecutor } from "../../src/career/transaction.js";
 import { newId } from "../../src/ids.js";
 import {
@@ -65,22 +70,34 @@ interface QueuedJob {
   name: string;
   postingId: string;
   groupId: string | null;
+  attempt: number;
 }
 
 async function enqueueInto(db: SqlExecutor, job: QueuedJob): Promise<string> {
   const id = newId();
   await db.executeSql(
-    `INSERT INTO "test_jobs" ("id", "name", "posting_id", "group_id") VALUES ($1::uuid, $2, $3::uuid, $4)`,
-    [id, job.name, job.postingId, job.groupId],
+    `INSERT INTO "test_jobs" ("id", "name", "posting_id", "group_id", "attempt")
+     VALUES ($1::uuid, $2, $3::uuid, $4, $5::int)`,
+    [id, job.name, job.postingId, job.groupId, job.attempt],
   );
   return id;
 }
 
 const enqueueFetch: JobFetchEnqueue = (db, job) =>
-  enqueueInto(db, { name: "job.fetch", postingId: job.jobPostingId, groupId: job.groupId });
+  enqueueInto(db, {
+    name: "job.fetch",
+    postingId: job.jobPostingId,
+    groupId: job.groupId,
+    attempt: job.attempt,
+  });
 
-const enqueueTailor: CvTailorEnqueue = async (db, jobPostingId) => {
-  const id = await enqueueInto(db, { name: "cv.tailor", postingId: jobPostingId, groupId: null });
+const enqueueTailor: CvTailorEnqueue = async (db, job) => {
+  const id = await enqueueInto(db, {
+    name: "cv.tailor",
+    postingId: job.jobPostingId,
+    groupId: null,
+    attempt: job.attempt,
+  });
   // After the insert: the rollback must take the job row away with the extraction.
   if (failTailorEnqueue) throw new Error("queue down after insert");
   return id;
@@ -98,10 +115,8 @@ function failingFetchEnqueue(n: number): JobFetchEnqueue {
 }
 
 async function jobs(postingId?: string): Promise<QueuedJob[]> {
-  const rows = await prisma.$queryRawUnsafe<
-    { name: string; postingId: string; groupId: string | null }[]
-  >(
-    `SELECT "name", "posting_id"::text AS "postingId", "group_id" AS "groupId" FROM "test_jobs"
+  const rows = await prisma.$queryRawUnsafe<QueuedJob[]>(
+    `SELECT "name", "posting_id"::text AS "postingId", "group_id" AS "groupId", "attempt" FROM "test_jobs"
      ${postingId === undefined ? "" : `WHERE "posting_id" = '${postingId}'`} ORDER BY "seq"`,
   );
   return rows;
@@ -111,7 +126,32 @@ function userMeta(userId: string): CareerAuditMeta {
   return { correlationId: `req-${newId()}`, actor: { type: "USER", userId } };
 }
 
-const workerMeta = () => ({ jobId: `job-${newId()}`, correlationId: `corr-${newId()}` });
+/** Meta of a job of the posting's current cycle (`attempt` as stored; 1 for a posting that is gone). */
+async function workerMeta(jobPostingId: string): Promise<JobPostingJobMeta> {
+  const row = await prisma.jobPosting.findUnique({
+    where: { id: jobPostingId },
+    select: { attempt: true },
+  });
+  return { jobId: `job-${newId()}`, correlationId: `corr-${newId()}`, attempt: row?.attempt ?? 1 };
+}
+
+/** The worker port as the job of the posting's current cycle calls it. */
+const current = {
+  loadForFetch: async (id: string) => store.loadForFetch(id, await workerMeta(id)),
+  saveFetchedText: async (id: string, text: string) =>
+    store.saveFetchedText(id, text, await workerMeta(id)),
+  completeExtraction: async (
+    id: string,
+    result: Parameters<JobPostingStore["completeExtraction"]>[1],
+  ) => store.completeExtraction(id, result, await workerMeta(id)),
+  loadForTailoring: async (id: string) => store.loadForTailoring(id, await workerMeta(id)),
+  completeTailoring: async (
+    id: string,
+    result: Parameters<JobPostingStore["completeTailoring"]>[1],
+  ) => store.completeTailoring(id, result, await workerMeta(id)),
+  markFailed: async (id: string, reason: CareerFailureReason) =>
+    store.markFailed(id, reason, await workerMeta(id)),
+};
 
 async function owner(): Promise<string> {
   const id = newId();
@@ -148,37 +188,28 @@ async function ownerWithCv(): Promise<{ userId: string; cvBaseId: string }> {
 
 /** Drives one posting from `FETCHING` to `READY` through the worker port. */
 async function runPipeline(id: string, cvTitle = "Senior Backend Engineer"): Promise<void> {
-  const meta = workerMeta();
-  expect(await store.loadForFetch(id)).not.toBeNull();
-  await store.saveFetchedText(id, POSTING_TEXT);
-  await store.completeExtraction(
-    id,
-    {
-      job: jobPostingExtracted(cvTitle),
-      rawText: POSTING_TEXT,
-      droppedRequirementCount: 0,
-      injectionSuspected: false,
-      injectionEvidence: null,
-      generation: {
-        model: "gpt-test-1",
-        engineVersion: "0.4.0",
-        promptVersions: { "job-extract": "1.0.0" },
-      },
+  expect(await current.loadForFetch(id)).not.toBeNull();
+  await current.saveFetchedText(id, POSTING_TEXT);
+  await current.completeExtraction(id, {
+    job: jobPostingExtracted(cvTitle),
+    rawText: POSTING_TEXT,
+    droppedRequirementCount: 0,
+    injectionSuspected: false,
+    injectionEvidence: null,
+    generation: {
+      model: "gpt-test-1",
+      engineVersion: "0.4.0",
+      promptVersions: { "job-extract": "1.0.0" },
     },
-    meta,
-  );
-  const input = await store.loadForTailoring(id);
+  });
+  const input = await current.loadForTailoring(id);
   expect(input).not.toBeNull();
-  await store.completeTailoring(
-    id,
-    {
-      cvBaseId: input!.cvBaseId,
-      content: tailoredCvContent(),
-      report: matchReport(),
-      generation: GENERATION,
-    },
-    meta,
-  );
+  await current.completeTailoring(id, {
+    cvBaseId: input!.cvBaseId,
+    content: tailoredCvContent(),
+    report: matchReport(),
+    generation: GENERATION,
+  });
 }
 
 async function auditOf(entityId: string) {
@@ -213,7 +244,7 @@ beforeAll(async () => {
   prisma = createPrismaClient({ connectionString: databaseUrl, maxConnections: 4 });
   await prisma.$executeRawUnsafe(
     `CREATE TABLE "test_jobs" ("seq" BIGSERIAL PRIMARY KEY, "id" UUID NOT NULL, "name" TEXT NOT NULL,
-       "posting_id" UUID NOT NULL, "group_id" TEXT)`,
+       "posting_id" UUID NOT NULL, "group_id" TEXT, "attempt" INT NOT NULL)`,
   );
   postings = new PrismaJobPostings(prisma, () => clock);
   store = new PrismaJobPostingStore(prisma, enqueueTailor, () => clock);
@@ -292,13 +323,13 @@ describe("worker store", () => {
       postings: [posting],
     } = await batchOf(userId, ["https://acme.gupy.io/jobs/1"]);
     const id = posting!.id;
-    expect(await store.loadForFetch(id)).toEqual({
+    expect(await current.loadForFetch(id)).toEqual({
       source: { kind: "url", url: "https://acme.gupy.io/jobs/1" },
       fetchedText: null,
     });
-    await store.saveFetchedText(id, POSTING_TEXT);
+    await current.saveFetchedText(id, POSTING_TEXT);
     // A retry of job.fetch reuses the saved text (ADR-0008 §4).
-    expect((await store.loadForFetch(id))?.fetchedText).toBe(POSTING_TEXT);
+    expect((await current.loadForFetch(id))?.fetchedText).toBe(POSTING_TEXT);
     await runPipeline(id);
 
     expect((await jobs(id)).map((j) => j.name)).toEqual(["job.fetch", "cv.tailor"]);
@@ -334,18 +365,14 @@ describe("worker store", () => {
     const id = posting!.id;
     failTailorEnqueue = true;
     await expect(
-      store.completeExtraction(
-        id,
-        {
-          job: jobPostingExtracted(),
-          rawText: POSTING_TEXT,
-          droppedRequirementCount: 0,
-          injectionSuspected: false,
-          injectionEvidence: null,
-          generation: GENERATION,
-        },
-        workerMeta(),
-      ),
+      current.completeExtraction(id, {
+        job: jobPostingExtracted(),
+        rawText: POSTING_TEXT,
+        droppedRequirementCount: 0,
+        injectionSuspected: false,
+        injectionEvidence: null,
+        generation: GENERATION,
+      }),
     ).rejects.toThrow("queue down after insert");
     expect((await prisma.jobPosting.findUniqueOrThrow({ where: { id } })).status).toBe("FETCHING");
     expect((await jobs(id)).map((j) => j.name)).toEqual(["job.fetch"]);
@@ -361,29 +388,88 @@ describe("worker store", () => {
     await runPipeline(id);
     const auditCount = (await auditOf(id)).length;
 
-    expect(await store.loadForFetch(id)).toBeNull();
-    expect(await store.loadForTailoring(id)).toBeNull();
-    await store.saveFetchedText(id, "outro texto");
-    await store.completeExtraction(
-      id,
-      {
-        job: jobPostingExtracted("Outra"),
-        rawText: "outro texto",
-        droppedRequirementCount: 0,
-        injectionSuspected: false,
-        injectionEvidence: null,
-        generation: GENERATION,
-      },
-      workerMeta(),
-    );
-    await store.markFailed(id, "ai", workerMeta());
+    expect(await current.loadForFetch(id)).toBeNull();
+    expect(await current.loadForTailoring(id)).toBeNull();
+    await current.saveFetchedText(id, "outro texto");
+    await current.completeExtraction(id, {
+      job: jobPostingExtracted("Outra"),
+      rawText: "outro texto",
+      droppedRequirementCount: 0,
+      injectionSuspected: false,
+      injectionEvidence: null,
+      generation: GENERATION,
+    });
+    await current.markFailed(id, "ai");
     const row = await prisma.jobPosting.findUniqueOrThrow({ where: { id } });
     expect(row).toMatchObject({ status: "READY", pageText: POSTING_TEXT });
     expect((await jobs(id)).filter((j) => j.name === "cv.tailor")).toHaveLength(1);
     expect(await auditOf(id)).toHaveLength(auditCount);
     // A posting deleted meanwhile: everything exits quietly.
-    expect(await store.loadForFetch(newId())).toBeNull();
-    await expect(store.markFailed(newId(), "fetch", workerMeta())).resolves.toBeUndefined();
+    expect(await current.loadForFetch(newId())).toBeNull();
+    await expect(current.markFailed(newId(), "fetch")).resolves.toBeUndefined();
+  });
+
+  it("ignores a late job of an earlier cycle that finds the posting back in the same status (ABA)", async () => {
+    const { userId } = await ownerWithCv();
+    const { postings: list } = await batchOf(userId, [
+      "https://acme.gupy.io/jobs/aba-1",
+      "https://acme.gupy.io/jobs/aba-2",
+    ]);
+    const [tailoring, fetching] = list.map((p) => p.id) as [string, string];
+    const late = { jobId: "job-late", correlationId: "corr-late", attempt: 1 };
+    const enqueue = { fetch: enqueueFetch, tailor: enqueueTailor };
+
+    // READY (cycle 1) → reprocessed → ANALYZING again (cycle 2); the cv.tailor of cycle 1 arrives late.
+    await runPipeline(tailoring);
+    await postings.retry(userId, tailoring, userMeta(userId), enqueue);
+    expect((await jobs(tailoring)).map((j) => [j.name, j.attempt])).toEqual([
+      ["job.fetch", 1],
+      ["cv.tailor", 1],
+      ["cv.tailor", 2],
+    ]);
+    expect(await store.loadForTailoring(tailoring, late)).toBeNull();
+    await store.completeTailoring(
+      tailoring,
+      {
+        cvBaseId: (await current.loadForTailoring(tailoring))!.cvBaseId,
+        content: tailoredCvContent(),
+        report: matchReport(1),
+        generation: GENERATION,
+      },
+      late,
+    );
+    await store.markFailed(tailoring, "ai", late);
+    expect(await prisma.jobPosting.findUniqueOrThrow({ where: { id: tailoring } })).toMatchObject({
+      status: "ANALYZING",
+      attempt: 2,
+    });
+    expect((await postings.get(userId, tailoring)).baseScore).toBeNull();
+
+    // FETCHING (cycle 1) → failed → reprocessed → FETCHING again (cycle 2); the job.fetch of cycle 1 is late.
+    await current.markFailed(fetching, "fetch");
+    await postings.retry(userId, fetching, userMeta(userId), enqueue);
+    expect(await store.loadForFetch(fetching, late)).toBeNull();
+    await store.saveFetchedText(fetching, POSTING_TEXT, late);
+    await store.completeExtraction(
+      fetching,
+      {
+        job: jobPostingExtracted(),
+        rawText: POSTING_TEXT,
+        droppedRequirementCount: 0,
+        injectionSuspected: false,
+        injectionEvidence: null,
+        generation: GENERATION,
+      },
+      late,
+    );
+    expect(await prisma.jobPosting.findUniqueOrThrow({ where: { id: fetching } })).toMatchObject({
+      status: "FETCHING",
+      attempt: 2,
+      pageText: null,
+      extracted: null,
+    });
+    expect((await jobs(fetching)).filter((j) => j.name === "cv.tailor")).toHaveLength(0);
+    expect(await current.loadForFetch(fetching)).not.toBeNull();
   });
 
   it("marks failures with the stored reason and the worker's cause in the audit", async () => {
@@ -392,8 +478,8 @@ describe("worker store", () => {
       "https://acme.gupy.io/jobs/4",
       "https://acme.gupy.io/jobs/5",
     ]);
-    await store.markFailed(list[0]!.id, "fetch_blocked", workerMeta());
-    await store.markFailed(list[1]!.id, "not_a_job", workerMeta());
+    await current.markFailed(list[0]!.id, "fetch_blocked");
+    await current.markFailed(list[1]!.id, "not_a_job");
     const rows = await prisma.jobPosting.findMany({
       where: { id: { in: list.map((p) => p.id) } },
       orderBy: { id: "asc" },
@@ -430,18 +516,14 @@ describe("worker store", () => {
     const {
       postings: [posting],
     } = await batchOf(userId, ["https://acme.gupy.io/jobs/8"]);
-    await store.completeExtraction(
-      posting!.id,
-      {
-        job: jobPostingExtracted(),
-        rawText: `${"é".repeat(20_010)}\u0000`,
-        droppedRequirementCount: 2,
-        injectionSuspected: true,
-        injectionEvidence: "x".repeat(800),
-        generation: GENERATION,
-      },
-      workerMeta(),
-    );
+    await current.completeExtraction(posting!.id, {
+      job: jobPostingExtracted(),
+      rawText: `${"é".repeat(20_010)}\u0000`,
+      droppedRequirementCount: 2,
+      injectionSuspected: true,
+      injectionEvidence: "x".repeat(800),
+      generation: GENERATION,
+    });
     const row = await prisma.jobPosting.findUniqueOrThrow({ where: { id: posting!.id } });
     expect(Array.from(row.pageText ?? "")).toHaveLength(20_000);
     expect(row.injectionEvidence).toHaveLength(500);
@@ -456,7 +538,7 @@ describe("owner actions", () => {
       postings: [posting],
     } = await batchOf(userId, ["https://www.linkedin.com/jobs/view/202/"]);
     const id = posting!.id;
-    await store.markFailed(id, "fetch", workerMeta());
+    await current.markFailed(id, "fetch");
     const pasted = await postings.pasteText(
       userId,
       id,
@@ -470,12 +552,12 @@ describe("owner actions", () => {
       failureReason: null,
     });
     expect((await jobs(id)).at(-1)).toMatchObject({ name: "job.fetch", groupId: "pasted" });
-    expect(await store.loadForFetch(id)).toEqual({
+    expect(await current.loadForFetch(id)).toEqual({
       source: { kind: "pasted", text: POSTING_TEXT },
       fetchedText: null,
     });
     // saveFetchedText never overwrites a pasted text.
-    await store.saveFetchedText(id, "texto buscado");
+    await current.saveFetchedText(id, "texto buscado");
     expect((await prisma.jobPosting.findUniqueOrThrow({ where: { id } })).pageText).toBe(
       POSTING_TEXT,
     );
@@ -527,17 +609,13 @@ describe("owner actions", () => {
     // While re-tailoring, the previous tailored CV is not served.
     expect((await postings.get(userId, id)).tailoring).toBeNull();
 
-    const input = await store.loadForTailoring(id);
-    await store.completeTailoring(
-      id,
-      {
-        cvBaseId: input!.cvBaseId,
-        content: tailoredCvContent("CANARIO-TAILORED-0001"),
-        report: matchReport(55),
-        generation: { ...GENERATION, model: "gpt-test-2" },
-      },
-      workerMeta(),
-    );
+    const input = await current.loadForTailoring(id);
+    await current.completeTailoring(id, {
+      cvBaseId: input!.cvBaseId,
+      content: tailoredCvContent("CANARIO-TAILORED-0001"),
+      report: matchReport(55),
+      generation: { ...GENERATION, model: "gpt-test-2" },
+    });
     expect(await prisma.tailoredCv.count({ where: { jobPostingId: id } })).toBe(1);
     expect((await postings.get(userId, id)).baseScore).toBe(55);
     const last = (await auditOf(id)).at(-1);
@@ -556,13 +634,13 @@ describe("owner actions", () => {
       "https://www.linkedin.com/jobs/view/303/",
     ]);
     const [withText, withoutText] = list.map((p) => p.id) as [string, string];
-    await store.saveFetchedText(withText, POSTING_TEXT);
-    await store.markFailed(withText, "not_a_job", workerMeta());
-    await store.markFailed(withoutText, "fetch", workerMeta());
+    await current.saveFetchedText(withText, POSTING_TEXT);
+    await current.markFailed(withText, "not_a_job");
+    await current.markFailed(withoutText, "fetch");
     const enqueue = { fetch: enqueueFetch, tailor: enqueueTailor };
 
     await postings.retry(userId, withText, userMeta(userId), enqueue);
-    expect(await store.loadForFetch(withText)).toEqual({
+    expect(await current.loadForFetch(withText)).toEqual({
       source: { kind: "url", url: "https://acme.gupy.io/jobs/11" },
       fetchedText: POSTING_TEXT,
     });
@@ -571,7 +649,7 @@ describe("owner actions", () => {
       name: "job.fetch",
       groupId: "linkedin.com",
     });
-    expect(await store.loadForFetch(withoutText)).toMatchObject({ fetchedText: null });
+    expect(await current.loadForFetch(withoutText)).toMatchObject({ fetchedText: null });
   });
 
   it("deletes a posting with its tailored CV, and the batch with its last posting", async () => {
@@ -592,7 +670,7 @@ describe("owner actions", () => {
       after: { batchDeleted: "true" },
     });
     // A late job for the deleted posting exits quietly.
-    expect(await store.loadForFetch(second)).toBeNull();
+    expect(await current.loadForFetch(second)).toBeNull();
   });
 
   it("concurrent deletions of a batch's last postings still remove the batch", async () => {
@@ -641,18 +719,14 @@ describe("sweep", () => {
       "https://acme.gupy.io/jobs/32",
     ]);
     const [fetching, analyzing, fresh] = list.map((p) => p.id) as [string, string, string];
-    await store.completeExtraction(
-      analyzing,
-      {
-        job: jobPostingExtracted(),
-        rawText: POSTING_TEXT,
-        droppedRequirementCount: 0,
-        injectionSuspected: false,
-        injectionEvidence: null,
-        generation: GENERATION,
-      },
-      workerMeta(),
-    );
+    await current.completeExtraction(analyzing, {
+      job: jobPostingExtracted(),
+      rawText: POSTING_TEXT,
+      droppedRequirementCount: 0,
+      injectionSuspected: false,
+      injectionEvidence: null,
+      generation: GENERATION,
+    });
     const start = clock.getTime();
     clock = new Date(start + JOB_POSTING_STALE_MS.ANALYZING + 1);
     // ANALYZING is past its window, FETCHING (which covers the 24 h quota wait) is not.
@@ -691,8 +765,8 @@ describe("sweep", () => {
     ]);
     const [old, recent] = list.map((p) => p.id) as [string, string];
     for (const id of [old, recent]) {
-      await store.saveFetchedText(id, POSTING_TEXT);
-      await store.markFailed(id, "not_a_job", workerMeta());
+      await current.saveFetchedText(id, POSTING_TEXT);
+      await current.markFailed(id, "not_a_job");
     }
     await prisma.jobPosting.update({
       where: { id: recent },

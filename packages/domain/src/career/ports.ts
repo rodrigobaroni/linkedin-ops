@@ -31,6 +31,15 @@ export interface CareerJobMeta {
   correlationId: string;
 }
 
+/**
+ * The `job.fetch`/`cv.tailor` acting on a posting. `attempt` is the posting's processing cycle carried by the
+ * payload (`job_postings.attempt`): every store call is conditional on it, so a late job of an earlier cycle
+ * (the posting was reprocessed meanwhile, same status again: ABA) reads null and writes nothing.
+ */
+export interface JobPostingJobMeta extends CareerJobMeta {
+  attempt: number;
+}
+
 /** Result of `cv-extract`; the injection flags are shown to the owner before confirming (ADR-0005 §4). */
 export interface CvExtractionResult {
   cv: CvStructured;
@@ -63,9 +72,10 @@ export interface JobPostingStore {
    */
   loadForFetch(
     jobPostingId: string,
+    meta: JobPostingJobMeta,
   ): Promise<{ source: JobPostingSource; fetchedText: string | null } | null>;
   /** Persists the fetched page text (already sanitized and truncated) before any model call. */
-  saveFetchedText(jobPostingId: string, text: string): Promise<void>;
+  saveFetchedText(jobPostingId: string, text: string, meta: JobPostingJobMeta): Promise<void>;
   /** Stores the extraction and enqueues `cv.tailor` atomically. `rawText` is truncated by the store. */
   completeExtraction(
     jobPostingId: string,
@@ -77,10 +87,13 @@ export interface JobPostingStore {
       injectionEvidence: string | null;
       generation: GenerationInfo;
     },
-    meta: CareerJobMeta,
+    meta: JobPostingJobMeta,
   ): Promise<void>;
   /** Posting in status `analyzing` with the active base CV it is tailored against. */
-  loadForTailoring(jobPostingId: string): Promise<{
+  loadForTailoring(
+    jobPostingId: string,
+    meta: JobPostingJobMeta,
+  ): Promise<{
     cvBaseId: string;
     base: CvStructured;
     job: JobPostingExtracted;
@@ -96,9 +109,13 @@ export interface JobPostingStore {
       report: MatchReport;
       generation: GenerationInfo;
     },
-    meta: CareerJobMeta,
+    meta: JobPostingJobMeta,
   ): Promise<void>;
-  markFailed(jobPostingId: string, reason: CareerFailureReason, meta: CareerJobMeta): Promise<void>;
+  markFailed(
+    jobPostingId: string,
+    reason: CareerFailureReason,
+    meta: JobPostingJobMeta,
+  ): Promise<void>;
 }
 
 /**

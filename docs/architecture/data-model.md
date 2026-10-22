@@ -468,6 +468,9 @@ Regras:
   - `source`: {`LINKEDIN`, `OTHER`, `PASTED`};
   - `status`: {`FETCHING`, `ANALYZING`, `READY`, `FAILED`};
   - `failure_reason`: {`FETCH`, `FETCH_BLOCKED`, `NOT_A_JOB`, `AI`, `TIMED_OUT`}, null fora de `FAILED`;
+  - `attempt`: ciclo de processamento, ≥ 1. Cada reprocessamento (texto colado ou retry) soma 1, e o payload de
+    `job.fetch`/`cv.tailor` carrega esse número. Job atrasado de um ciclo anterior não lê nem grava nada, mesmo
+    quando encontra a vaga de volta no mesmo status (ABA);
   - `page_text`: texto buscado ou colado, já sanitizado, 1 a 20 000 caracteres;
   - `fetched_at`;
   - `extracted`: jsonb `JobPostingExtracted`, objeto ≤ 256 KiB;
@@ -483,7 +486,8 @@ Regras:
   - `ANALYZING` ⇒ extração e `page_text`;
   - `READY` ⇒ extração;
   - `FAILED` ⇒ `failure_reason`.
-- **Transições.** São todas condicionais ao status esperado, então um job duplicado ou atrasado não muda nada.
+- **Transições.** São todas condicionais ao status esperado e, no worker, também ao `attempt` do payload. Assim,
+  um job duplicado ou atrasado não muda nada.
   - O worker (`PrismaJobPostingStore`, ator `WORKER`) leva `FETCHING → ANALYZING` gravando a extração e
     enfileirando `cv.tailor` na mesma transação (ADR-0002 §3). Depois leva `ANALYZING → READY`, ou
     `FETCHING|ANALYZING → FAILED`.
@@ -508,6 +512,9 @@ Regras:
 - **Reprocessar.** Substitui a linha, sem histórico no MVP. O audit `job_posting.tailoring_ready` registra a
   `GenerationInfo` anterior (modelo e versões), nunca o conteúdo.
 - **Apagamento.** Em cascata a partir da vaga, do CV base e de `users`.
+- **Dono único.** As FKs compostas `(cv_base_id, user_id)` → `cv_bases(id, user_id)` (em `tailoring_batches` e
+  `tailored_cvs`) e `(batch_id, user_id)` → `tailoring_batches(id, user_id)` impedem que uma linha aponte para o
+  CV ou o lote de outro usuário. Apagar uma vaga trava a linha do lote antes de contar o que resta.
 
 ---
 
