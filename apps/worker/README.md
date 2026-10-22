@@ -3,7 +3,7 @@
 Background worker (pg-boss, ADR-0002): job handlers and adapters over the domain layer. Thin shell: editorial
 logic lives in `@linkedin-ops/editorial-engine` (ADR-0005).
 
-- `src/index.ts`: validates the environment (`validateRuntimeEnv(..., { service: "worker" })`, fails closed),
+- `src/index.ts`: validates the environment (`validateWorkerEnv`, fails closed; it never reads session, cipher or LinkedIn secrets),
   starts pg-boss in the `pgboss` schema, provisions the queues, registers the handlers and keeps a heartbeat.
 - `src/jobs/`: queue provisioning from the contracts catalogue (dead-letter queue first), `createJobRunner`
   (payload validation, `PermanentJobError` → dead letter, logs without payloads).

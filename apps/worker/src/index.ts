@@ -1,7 +1,7 @@
 // @linkedin-ops/worker — entry point. Validates the environment first (fails closed), then starts pg-boss in
 // its own `pgboss` schema, provisions the queues, registers the handlers and keeps a heartbeat for the
 // container healthcheck. SIGTERM/SIGINT stop gracefully.
-import { RuntimeEnvError, validateRuntimeEnv, type RuntimeEnv } from "@linkedin-ops/domain";
+import { RuntimeEnvError, validateWorkerEnv, type WorkerRuntimeEnv } from "@linkedin-ops/domain";
 import { PgBoss } from "pg-boss";
 import { startHeartbeat } from "./health/heartbeat.js";
 import { wireCareer } from "./career/wiring.js";
@@ -12,12 +12,12 @@ import { registerWorkers } from "./worker.js";
 const STOP_TIMEOUT_MS = 30_000;
 
 async function main(): Promise<void> {
-  let env: RuntimeEnv;
+  let env: WorkerRuntimeEnv;
   try {
-    env = validateRuntimeEnv(process.env, { service: "worker" });
+    env = validateWorkerEnv(process.env);
   } catch (error) {
     if (error instanceof RuntimeEnvError) {
-      // Names and reasons only (validateRuntimeEnv never includes values).
+      // Names and reasons only (validateWorkerEnv never includes values).
       process.stderr.write(`${error.message}\n`);
       process.exit(1);
     }

@@ -18,6 +18,7 @@ export {
 } from "./env/guards.js";
 export {
   validateRuntimeEnv,
+  validateWorkerEnv,
   decodeEncryptionKey,
   RuntimeEnvError,
   RUNTIME_ENVIRONMENTS,
@@ -29,13 +30,11 @@ export {
   ENCRYPTION_KEY_BYTES,
   PLACEHOLDER_PATTERN,
   JOB_FETCH_LINKEDIN_MODES,
-  RUNTIME_SERVICES,
   OPENAI_API_KEY_MIN_LENGTH,
   type RuntimeEnv,
-  type RuntimeService,
   type OpenAiConfig,
   type JobFetchLinkedInMode,
-  type ValidateRuntimeEnvOptions,
+  type WorkerRuntimeEnv,
   type RuntimeEnvironment,
   type LogLevel,
   type LinkedInPkceMode,

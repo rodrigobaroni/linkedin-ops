@@ -1,6 +1,6 @@
 /** Builds the Career handlers from the validated environment once the stores exist (PR 2/3 pass them in). */
 import { randomBytes } from "node:crypto";
-import type { RuntimeEnv } from "@linkedin-ops/domain";
+import type { WorkerRuntimeEnv } from "@linkedin-ops/domain";
 import type { LlmClient, Rng } from "@linkedin-ops/editorial-engine";
 import type { Logger } from "pino";
 import { OpenAiLlmClient } from "../llm/openai.js";
@@ -27,10 +27,10 @@ export interface CareerStores {
 
 /**
  * `null` when the stores are not wired yet or OpenAI is not configured (allowed outside production only;
- * `validateRuntimeEnv` makes it mandatory for the worker in production).
+ * `validateWorkerEnv` makes it mandatory for the worker in production).
  */
 export function wireCareer(
-  env: Pick<RuntimeEnv, "openai" | "jobFetchLinkedIn">,
+  env: Pick<WorkerRuntimeEnv, "openai" | "jobFetchLinkedIn">,
   logger: Logger,
   stores: CareerStores | null,
   llmOverride?: LlmClient,

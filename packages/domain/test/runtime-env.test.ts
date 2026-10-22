@@ -1,6 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { decodeEncryptionKey, RuntimeEnvError, validateRuntimeEnv } from "../src/env/runtime.js";
+import {
+  decodeEncryptionKey,
+  RuntimeEnvError,
+  validateRuntimeEnv,
+  validateWorkerEnv,
+} from "../src/env/runtime.js";
 
 const KEY_A = randomBytes(32).toString("base64");
 const KEY_B = randomBytes(32).toString("base64");
@@ -427,13 +432,14 @@ describe("validateRuntimeEnv · TRUSTED_PROXY_CIDRS (T-015)", () => {
   });
 });
 
-describe("validateRuntimeEnv · worker OpenAI and job fetching (Career, ADR-0002, ADR-0008)", () => {
+describe("validateWorkerEnv (Career; ADR-0002, ADR-0008, Sentinela PR #89)", () => {
   const OPENAI_KEY = `sk-test-${randomBytes(24).toString("hex")}`;
-  const WORKER = { service: "worker" } as const;
+  /** Only what the worker gets from Compose: no session, cipher or LinkedIn variables. */
+  const WORKER_PRODUCTION = { NODE_ENV: "production", DATABASE_URL: DB_URL };
 
   function workerIssues(env: Record<string, string | undefined>): string[] {
     try {
-      validateRuntimeEnv(env, WORKER);
+      validateWorkerEnv(env);
     } catch (error) {
       if (error instanceof RuntimeEnvError) return [...error.issues];
       throw error;
@@ -441,57 +447,90 @@ describe("validateRuntimeEnv · worker OpenAI and job fetching (Career, ADR-0002
     return [];
   }
 
-  it("requires OPENAI_API_KEY and OPENAI_MODEL for the worker in production", () => {
-    const issues = workerIssues(PRODUCTION);
-    expect(issues).toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/^OPENAI_API_KEY is required/),
-        expect.stringMatching(/^OPENAI_MODEL is required/),
-      ]),
-    );
+  it("requires OPENAI_API_KEY and OPENAI_MODEL in production", () => {
+    expect(workerIssues(WORKER_PRODUCTION)).toEqual([
+      expect.stringMatching(/^OPENAI_API_KEY is required/),
+      expect.stringMatching(/^OPENAI_MODEL is required/),
+    ]);
   });
 
-  it("accepts a production worker with both and never puts the key in a message", () => {
-    const env = validateRuntimeEnv(
-      { ...PRODUCTION, OPENAI_API_KEY: OPENAI_KEY, OPENAI_MODEL: "gpt-5.1-mini" },
-      WORKER,
-    );
-    expect(env.openai).toEqual({ apiKey: OPENAI_KEY, model: "gpt-5.1-mini" });
-    expect(env.service).toBe("worker");
-    const issues = workerIssues({
+  it("boots without SESSION_SECRET, ENCRYPTION_KEY, APP_BASE_URL or LinkedIn credentials", () => {
+    const env = validateWorkerEnv({
+      ...WORKER_PRODUCTION,
+      OPENAI_API_KEY: OPENAI_KEY,
+      OPENAI_MODEL: "gpt-5.1-mini",
+    });
+    expect(env).toEqual({
+      nodeEnv: "production",
+      logLevel: "info",
+      databaseUrl: DB_URL,
+      openai: { apiKey: OPENAI_KEY, model: "gpt-5.1-mini" },
+      jobFetchLinkedIn: "enabled",
+    });
+  });
+
+  it("never reads API secrets, even when present", () => {
+    const env = validateWorkerEnv({
       ...PRODUCTION,
+      LINKEDIN_CLIENT_SECRET: "canary-linkedin-secret",
+      OPENAI_API_KEY: OPENAI_KEY,
+      OPENAI_MODEL: "gpt-5.1",
+    });
+    expect(JSON.stringify(env)).not.toMatch(/canary-linkedin-secret|SESSION|ENCRYPTION/);
+    expect(Object.keys(env).sort()).toEqual([
+      "databaseUrl",
+      "jobFetchLinkedIn",
+      "logLevel",
+      "nodeEnv",
+      "openai",
+    ]);
+  });
+
+  it("never puts the key in a message", () => {
+    const issues = workerIssues({
+      ...WORKER_PRODUCTION,
       OPENAI_API_KEY: OPENAI_KEY,
       OPENAI_MODEL: "bad model!",
     });
+    expect(issues).toHaveLength(1);
     expect(issues.join("\n")).not.toContain(OPENAI_KEY);
   });
 
-  it("the API never reads OpenAI credentials, even in production", () => {
-    expect(validateRuntimeEnv(PRODUCTION).openai).toBeNull();
-    expect(
-      validateRuntimeEnv({ ...PRODUCTION, OPENAI_API_KEY: OPENAI_KEY, OPENAI_MODEL: "gpt-5.1" })
-        .openai,
-    ).toBeNull();
-  });
-
-  it("outside production the worker may run unconfigured, but not half-configured", () => {
-    expect(validateRuntimeEnv(EXAMPLE, WORKER).openai).toBeNull();
-    expect(workerIssues({ ...EXAMPLE, OPENAI_MODEL: "gpt-5.1" })).toEqual([
+  it("outside production may run unconfigured, but not half-configured", () => {
+    const dev = { NODE_ENV: "development", DATABASE_URL: EXAMPLE.DATABASE_URL };
+    expect(validateWorkerEnv(dev).openai).toBeNull();
+    expect(workerIssues({ ...dev, OPENAI_MODEL: "gpt-5.1" })).toEqual([
       expect.stringMatching(/^OPENAI_API_KEY is required/),
     ]);
   });
 
   it("refuses short, spaced or placeholder keys outside development", () => {
     expect(
-      workerIssues({ ...PRODUCTION, OPENAI_API_KEY: "sk-short", OPENAI_MODEL: "gpt-5.1" }),
+      workerIssues({ ...WORKER_PRODUCTION, OPENAI_API_KEY: "sk-short", OPENAI_MODEL: "gpt-5.1" }),
     ).toEqual([expect.stringMatching(/^OPENAI_API_KEY must be a single token/)]);
     expect(
       workerIssues({
-        ...PRODUCTION,
+        ...WORKER_PRODUCTION,
         OPENAI_API_KEY: "change-me-openai-key-placeholder",
         OPENAI_MODEL: "gpt-5.1",
       }),
     ).toEqual([expect.stringMatching(/placeholder/)]);
+  });
+
+  it("requires NODE_ENV and DATABASE_URL", () => {
+    expect(workerIssues({})).toEqual(["NODE_ENV is not set"]);
+    expect(workerIssues({ NODE_ENV: "test" })).toEqual(["DATABASE_URL is not set"]);
+  });
+});
+
+describe("validateRuntimeEnv · API never takes OpenAI credentials; JOB_FETCH_LINKEDIN", () => {
+  it("the API environment has no OpenAI field", () => {
+    const env = validateRuntimeEnv({
+      ...PRODUCTION,
+      OPENAI_API_KEY: ["sk", "test", "canary", "value", "0123456789"].join("-"),
+    });
+    expect(JSON.stringify(env)).not.toContain("canary");
+    expect("openai" in env).toBe(false);
   });
 
   it("JOB_FETCH_LINKEDIN defaults to enabled and accepts only enabled|disabled", () => {

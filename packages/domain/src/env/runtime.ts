@@ -23,10 +23,6 @@ export type LinkedInPkceMode = (typeof LINKEDIN_PKCE_MODES)[number];
 export const JOB_FETCH_LINKEDIN_MODES = ["enabled", "disabled"] as const;
 export type JobFetchLinkedInMode = (typeof JOB_FETCH_LINKEDIN_MODES)[number];
 
-/** Which process is booting: only the worker holds OpenAI credentials (ADR-0002). */
-export const RUNTIME_SERVICES = ["api", "worker"] as const;
-export type RuntimeService = (typeof RUNTIME_SERVICES)[number];
-
 export const OPENAI_API_KEY_MIN_LENGTH = 20;
 const OPENAI_MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/;
 
@@ -65,7 +61,6 @@ export interface OpenAiConfig {
 
 export interface RuntimeEnv {
   nodeEnv: RuntimeEnvironment;
-  service: RuntimeService;
   /** Origin (`scheme://host[:port]`) the browser uses; `Origin` of every mutation must equal it (ADR-0007 N4). */
   appBaseUrl: string;
   apiHost: string;
@@ -92,18 +87,24 @@ export interface RuntimeEnv {
    * Empty by default: then the socket address is the client IP and forwarded headers are ignored.
    */
   trustedProxyCidrs: readonly string[];
-  /**
-   * Worker only. Mandatory in production; `null` elsewhere when unset (Career jobs then fail closed as
-   * not configured). Always `null` for the API, which never receives the key.
-   */
-  openai: OpenAiConfig | null;
   /** ADR-0008 kill switch: `disabled` sends LinkedIn job URLs straight to paste-text. */
   jobFetchLinkedIn: JobFetchLinkedInMode;
 }
 
-export interface ValidateRuntimeEnvOptions {
-  /** Default `api` (backwards compatible). */
-  service?: RuntimeService;
+/**
+ * Environment of `apps/worker` (`validateWorkerEnv`). Deliberately narrow (ADR-0002, ADR-0008, Sentinela PR #89):
+ * no session secret, no token-encryption key, no LinkedIn credentials ever reach the worker or the job-page
+ * fetcher.
+ */
+export interface WorkerRuntimeEnv {
+  nodeEnv: RuntimeEnvironment;
+  logLevel: LogLevel;
+  /** PostgreSQL connection string (pg-boss). Never log it. */
+  databaseUrl: string;
+  /** Mandatory in production; `null` elsewhere when unset (Career jobs then fail closed as not configured). */
+  openai: OpenAiConfig | null;
+  /** ADR-0008 kill switch: `disabled` sends LinkedIn job URLs straight to paste-text. */
+  jobFetchLinkedIn: JobFetchLinkedInMode;
 }
 
 export class RuntimeEnvError extends Error {
@@ -433,16 +434,14 @@ function parseTrustedProxies(value: string | undefined, issues: string[]): strin
 }
 
 /**
- * `OPENAI_API_KEY` / `OPENAI_MODEL` (worker only). Both or neither outside production; both in production.
+ * `OPENAI_API_KEY` / `OPENAI_MODEL` (worker only; the API never reads them). Both or neither outside production; both in production.
  * Placeholders are refused outside development; messages never contain the values.
  */
 function parseOpenAi(
   env: EnvironmentLike,
   nodeEnv: RuntimeEnvironment,
-  service: RuntimeService,
   issues: string[],
 ): OpenAiConfig | null {
-  if (service !== "worker") return null;
   const apiKey = read(env, "OPENAI_API_KEY");
   const model = read(env, "OPENAI_MODEL");
   if (apiKey === undefined && model === undefined && nodeEnv !== "production") return null;
@@ -469,12 +468,8 @@ function parseOpenAi(
  * Validates and normalizes the runtime environment. Throws `RuntimeEnvError` listing every problem found
  * (names and reasons only). `NODE_ENV` is mandatory: an unset value is refused, never assumed.
  */
-export function validateRuntimeEnv(
-  env: EnvironmentLike,
-  options: ValidateRuntimeEnvOptions = {},
-): RuntimeEnv {
+export function validateRuntimeEnv(env: EnvironmentLike): RuntimeEnv {
   const issues: string[] = [];
-  const service = options.service ?? "api";
 
   const nodeEnvRaw = read(env, "NODE_ENV");
   const nodeEnv = parseEnum("NODE_ENV", nodeEnvRaw, RUNTIME_ENVIRONMENTS, issues);
@@ -512,14 +507,7 @@ export function validateRuntimeEnv(
   }
 
   const linkedin = parseLinkedIn(env, nodeEnv, appBaseUrl, linkedinPkce, issues);
-  const openai = parseOpenAi(env, nodeEnv, service, issues);
-  const jobFetchLinkedIn =
-    parseEnum(
-      "JOB_FETCH_LINKEDIN",
-      read(env, "JOB_FETCH_LINKEDIN"),
-      JOB_FETCH_LINKEDIN_MODES,
-      issues,
-    ) ?? "enabled";
+  const jobFetchLinkedIn = parseJobFetchLinkedIn(env, issues);
 
   if (issues.length > 0 || appBaseUrl === null || databaseUrl === null || sessionSecret === null) {
     throw new RuntimeEnvError(issues);
@@ -527,7 +515,6 @@ export function validateRuntimeEnv(
 
   return {
     nodeEnv,
-    service,
     appBaseUrl,
     apiHost,
     apiPort,
@@ -538,7 +525,37 @@ export function validateRuntimeEnv(
     linkedinPkce,
     linkedin,
     trustedProxyCidrs,
-    openai,
     jobFetchLinkedIn,
   };
+}
+
+function parseJobFetchLinkedIn(env: EnvironmentLike, issues: string[]): JobFetchLinkedInMode {
+  return (
+    parseEnum(
+      "JOB_FETCH_LINKEDIN",
+      read(env, "JOB_FETCH_LINKEDIN"),
+      JOB_FETCH_LINKEDIN_MODES,
+      issues,
+    ) ?? "enabled"
+  );
+}
+
+/**
+ * Validates the worker environment. Same fail-closed rules and messages as `validateRuntimeEnv`, but it reads
+ * only what the worker uses: never `SESSION_SECRET`, `ENCRYPTION_KEY(S)` or `LINKEDIN_*`.
+ */
+export function validateWorkerEnv(env: EnvironmentLike): WorkerRuntimeEnv {
+  const issues: string[] = [];
+  const nodeEnvRaw = read(env, "NODE_ENV");
+  const nodeEnv = parseEnum("NODE_ENV", nodeEnvRaw, RUNTIME_ENVIRONMENTS, issues);
+  if (nodeEnvRaw === undefined) issues.push("NODE_ENV is not set");
+  if (nodeEnv === undefined) throw new RuntimeEnvError(issues);
+
+  const logLevel = parseEnum("LOG_LEVEL", read(env, "LOG_LEVEL"), LOG_LEVELS, issues) ?? "info";
+  const databaseUrl = parseDatabaseUrl(read(env, "DATABASE_URL"), nodeEnv, issues);
+  const openai = parseOpenAi(env, nodeEnv, issues);
+  const jobFetchLinkedIn = parseJobFetchLinkedIn(env, issues);
+
+  if (issues.length > 0 || databaseUrl === null) throw new RuntimeEnvError(issues);
+  return { nodeEnv, logLevel, databaseUrl, openai, jobFetchLinkedIn };
 }
