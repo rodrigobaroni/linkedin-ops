@@ -3,9 +3,16 @@
  * store ports (`CvBaseDraftStore`, `JobPostingStore`) live in `@linkedin-ops/domain`, next to their Prisma
  * implementations.
  */
+import type { Logger } from "pino";
+
 /** Anonymous job-page fetcher (PR 3, ADR-0008). Throws `JobFetchError`. */
 export interface JobPageFetcher {
-  fetchJobText(url: string, signal: AbortSignal): Promise<{ text: string }>;
+  /** `logger` gets domains and outcomes only, never the URL or the page. */
+  fetchJobText(
+    url: string,
+    signal: AbortSignal,
+    logger?: Pick<Logger, "info" | "warn">,
+  ): Promise<{ text: string }>;
 }
 
 export class JobFetchError extends Error {

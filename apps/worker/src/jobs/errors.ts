@@ -33,3 +33,20 @@ export class CancelledJobError extends Error {
     this.name = "CancelledJobError";
   }
 }
+
+/**
+ * Not a failure: the job has to run later. The runner re-enqueues the payload as a fresh job with
+ * `startAfter`, in the same `group`, and completes this one, so no retry is consumed (used by `job.fetch` when
+ * the destination domain asks to wait for its minimum interval; Maestro, 2026-10-22).
+ */
+export class RescheduleJobError extends Error {
+  readonly startAfter: Date;
+  readonly reason: string;
+
+  constructor(startAfter: Date, reason: string) {
+    super(`Job rescheduled: ${reason}`);
+    this.name = "RescheduleJobError";
+    this.startAfter = startAfter;
+    this.reason = reason;
+  }
+}

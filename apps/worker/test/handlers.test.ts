@@ -1,11 +1,17 @@
 import { pino } from "pino";
 import { describe, expect, it } from "vitest";
 import { SimulatedLlmClient, type SimulatedOutput } from "@linkedin-ops/editorial-engine";
-import { CancelledJobError, PermanentJobError, RetryableJobError } from "../src/jobs/errors.js";
+import {
+  CancelledJobError,
+  PermanentJobError,
+  RescheduleJobError,
+  RetryableJobError,
+} from "../src/jobs/errors.js";
 import type { JobContext } from "../src/jobs/runner.js";
 import { createCareerHandlers, isLinkedInUrl } from "../src/career/handlers.js";
 import type { CvBaseDraftStore, JobPostingSource, JobPostingStore } from "@linkedin-ops/domain";
 import {
+  JobFetchDeferredError,
   JobFetchError,
   unavailableJobPageFetcher,
   type JobPageFetcher,
@@ -206,8 +212,37 @@ describe("job.fetch", () => {
       false,
     );
     await h["job.fetch"]({ ...envelope, jobPostingId: IDS.posting }, context());
-    expect(events).toEqual(["job:failed:fetch"]);
+    expect(events).toEqual(["job:failed:fetch_blocked"]);
     expect(fetched).toBe(false);
+    // lnkd.in is LinkedIn too: refused before any request (Maestro D2).
+    const short = handlers(
+      {},
+      fakeStores({ kind: "url", url: "https://lnkd.in/abc123" }),
+      fetcher,
+      false,
+    );
+    await short.h["job.fetch"]({ ...envelope, jobPostingId: IDS.posting }, context());
+    expect(short.events).toEqual(["job:failed:fetch_blocked"]);
+    expect(fetched).toBe(false);
+  });
+
+  it("reschedules a deferred fetch without marking the posting failed", async () => {
+    const at = new Date("2026-10-22T12:00:15.000Z");
+    const deferred: JobPageFetcher = {
+      fetchJobText: () => Promise.reject(new JobFetchDeferredError(at)),
+    };
+    const { h, events } = handlers(
+      {},
+      fakeStores({ kind: "url", url: "https://jobs.example.com/1" }),
+      deferred,
+    );
+    const error = await h["job.fetch"](
+      { ...envelope, jobPostingId: IDS.posting },
+      context({ isLastAttempt: true }),
+    ).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(RescheduleJobError);
+    expect((error as RescheduleJobError).startAfter).toEqual(at);
+    expect(events).toEqual([]);
   });
 
   it("stops on a blocked fetch (no retry) and retries transient fetch errors", async () => {
@@ -302,6 +337,8 @@ describe("job.fetch", () => {
 
   it("recognizes LinkedIn hosts only", () => {
     expect(isLinkedInUrl("https://www.linkedin.com/jobs/view/1")).toBe(true);
+    expect(isLinkedInUrl("https://lnkd.in/abc")).toBe(true);
+    expect(isLinkedInUrl("https://br.linkedin.com/jobs/view/1")).toBe(true);
     expect(isLinkedInUrl("https://linkedin.com.evil.example/jobs")).toBe(false);
     expect(isLinkedInUrl("not a url")).toBe(false);
   });
