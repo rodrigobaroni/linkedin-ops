@@ -24,6 +24,9 @@ const CV_EXTRACT_QUEUE = QUEUES["cv.extract"];
 export const CV_EXTRACTION_STALE_MS =
   (CV_EXTRACT_QUEUE.retryLimit + 1) * CV_EXTRACT_QUEUE.expireInSeconds * 1000 + 10 * 60 * 1000;
 
+/** Drafts settled per sweep; the rest waits for the next tick (every 5 min). */
+export const CV_EXTRACTION_SWEEP_BATCH = 50;
+
 /** Longest injection excerpt kept with a draft (`cv_bases_injection_evidence_check`). */
 export const CV_INJECTION_EVIDENCE_MAX_CHARS = 500;
 
@@ -347,24 +350,28 @@ export class PrismaCvBases<C> {
 
   /**
    * Periodic sweep (Sentinela S-2), independent of reads: every draft still `EXTRACTING` past
-   * `CV_EXTRACTION_STALE_MS` becomes `FAILED`/`TIMED_OUT` and its PDF text is erased. Rows locked by a
-   * concurrent writer are skipped (next sweep). Returns how many drafts were settled.
+   * `CV_EXTRACTION_STALE_MS` becomes `FAILED`/`TIMED_OUT` and its PDF text is erased. No long interactive
+   * transaction (QA #101): candidates are read without a lock and each draft is settled in its own short
+   * transaction (conditional, so a draft that moved on meanwhile is left alone; a row locked by a concurrent
+   * writer is skipped until the next sweep). Returns how many drafts were settled.
    */
-  async settleStaleExtractions(batchSize = 100): Promise<number> {
+  async settleStaleExtractions(batchSize = CV_EXTRACTION_SWEEP_BATCH): Promise<number> {
     const cutoff = new Date(this.now().getTime() - CV_EXTRACTION_STALE_MS);
-    return this.prisma.$transaction(async (tx) => {
-      // The cutoff is bound from the application clock (never SQL `now()`).
-      const stale = await tx.$queryRaw<StaleDraft[]>`
-        SELECT "id", "user_id" AS "userId", "version" FROM "cv_bases"
-        WHERE "status" = 'EXTRACTING' AND "updated_at" < ${cutoff}
-        ORDER BY "updated_at" LIMIT ${batchSize}
-        FOR UPDATE SKIP LOCKED`;
-      let settled = 0;
-      for (const draft of stale) {
-        if (await this.settleOne(tx, draft, cutoff)) settled += 1;
-      }
-      return settled;
-    });
+    // The cutoff is bound from the application clock (never SQL `now()`).
+    const stale = await this.prisma.$queryRaw<StaleDraft[]>`
+      SELECT "id", "user_id" AS "userId", "version" FROM "cv_bases"
+      WHERE "status" = 'EXTRACTING' AND "updated_at" < ${cutoff}
+      ORDER BY "updated_at" LIMIT ${batchSize}`;
+    let settled = 0;
+    for (const draft of stale) {
+      const done = await this.prisma.$transaction(async (tx) => {
+        const locked = await tx.$queryRaw<{ id: string }[]>`
+          SELECT "id" FROM "cv_bases" WHERE "id" = ${draft.id}::uuid FOR UPDATE SKIP LOCKED`;
+        return locked.length > 0 && this.settleOne(tx, draft, cutoff);
+      });
+      if (done) settled += 1;
+    }
+    return settled;
   }
 
   private async settleStale(row: CvBaseRow): Promise<CvBaseRow> {

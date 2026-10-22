@@ -30,6 +30,7 @@ import {
 import {
   createPrismaClient,
   CV_EXTRACTION_STALE_MS,
+  CV_EXTRACTION_SWEEP_BATCH,
   deriveCsrfToken,
   hashSessionSecret,
   newId,
@@ -603,6 +604,61 @@ describe("CvExtractionSweeper (Sentinela S-2)", () => {
     ).toBe(2);
     // Nothing left to settle on the next pass (the fresh draft is not stale).
     expect(await app.get(CvExtractionSweeper).sweep()).toBe(0);
+  });
+
+  it("settles a backlog larger than one pass in bounded passes, skipping a draft a writer holds", async () => {
+    const stale = new Date(Date.now() - CV_EXTRACTION_STALE_MS - 1000);
+    const ids: string[] = [];
+    // One stale draft per owner (at most one draft per user), older than any other test's drafts.
+    for (let i = 0; i < CV_EXTRACTION_SWEEP_BATCH + 10; i += 1) {
+      const { userId } = await newActor();
+      const id = newId();
+      await prisma.cvBase.create({
+        data: {
+          id,
+          userId,
+          version: 1,
+          status: "EXTRACTING",
+          extractedText: "texto do CV",
+          createdAt: stale,
+          updatedAt: new Date(stale.getTime() - (CV_EXTRACTION_SWEEP_BATCH + 10 - i) * 1000),
+        },
+      });
+      ids.push(id);
+    }
+    // A concurrent writer holds the oldest draft: the sweep skips it instead of waiting.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let locked!: () => void;
+    const lockTaken = new Promise<void>((resolve) => (locked = resolve));
+    const writer = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "cv_bases" WHERE "id" = ${ids[0]}::uuid FOR UPDATE`;
+        locked();
+        await held;
+      },
+      { timeout: 30_000 },
+    );
+    await lockTaken;
+
+    const sweeper = app.get(CvExtractionSweeper);
+    expect(await sweeper.sweep()).toBe(CV_EXTRACTION_SWEEP_BATCH - 1);
+    expect((await prisma.cvBase.findUniqueOrThrow({ where: { id: ids[0]! } })).status).toBe(
+      "EXTRACTING",
+    );
+    release();
+    await writer;
+    await sweeper.sweep();
+    expect(
+      await prisma.cvBase.count({
+        where: {
+          id: { in: ids },
+          status: "FAILED",
+          failureReason: "TIMED_OUT",
+          extractedText: null,
+        },
+      }),
+    ).toBe(ids.length);
   });
 });
 
