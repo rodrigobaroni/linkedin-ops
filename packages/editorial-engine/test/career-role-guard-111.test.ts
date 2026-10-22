@@ -18,11 +18,15 @@ import { baseCv, job, tailoringOutput } from "./fixtures/career.js";
 const PT = ["Engenheiro de Dados Sênior"];
 const EN = ["Senior Software Engineer"];
 
-describe("label guard: the postposed modifier is a closed list (issue #111, item 1)", () => {
+describe("label guard: the postposed modifier is a closed list or a lexicon term (issue #111, item 1; Pena §6.13)", () => {
   it.each([
     ["Developer tooling at scale is my focus.", EN],
     ["Manager dashboards on Looker were rebuilt.", EN],
     ["Engineer onboarding at scale was redesigned.", EN],
+    // QA of #121.
+    ["Lead scoring with dbt and Looker.", EN],
+    ["Lead generation for payments platforms.", EN],
+    ["Product analytics leading to pricing changes.", EN],
   ])("positive: '%s'", (text, titles) => {
     expect(inventedRoleLabels(text, titles)).toEqual([]);
   });
@@ -34,6 +38,26 @@ describe("label guard: the postposed modifier is a closed list (issue #111, item
     ["Engenheiro backend com 8 anos em pagamentos.", PT, "engenheiro backend"],
     ["Mobile developer, iOS engineer for fintechs.", EN, "mobile developer"],
     ["Analista BI com foco em varejo.", PT, "analista bi"],
+    // Pena §6.13: a lexicon term as the modifier, `embedded`, seniority after the modifier.
+    ["Desenvolvedor Python com 8 anos em pagamentos.", PT, "desenvolvedor python"],
+    ["Desenvolvedora Java com foco em pagamentos.", PT, "desenvolvedora java"],
+    ["Engenheiro Go com foco em sistemas distribuídos.", PT, "engenheiro go"],
+    ["Engenheiro SAP com foco em finanças.", PT, "engenheiro sap"],
+    ["Engineer Kotlin with 8 years in payments.", EN, "engineer kotlin"],
+    ["Engenheira embedded com foco em IoT.", PT, "engenheira embedded"],
+    ["Desenvolvedor PHP sênior com 8 anos em e-commerce.", PT, "desenvolvedor php senior"],
+    // QA of #121: an acronym as the modifier, participles, `|`, `/` and `·` as pauses.
+    ["Product manager B2B focused on payments.", EN, "product manager b2b"],
+    ["Data scientist NLP focused on churn.", EN, "data scientist nlp"],
+    ["Staff engineer Kotlin focused on payments.", EN, "staff engineer kotlin"],
+    ["Data engineer AWS with 8 years in payments.", EN, "data engineer aws"],
+    ["Data engineer specialized in payments.", EN, "data engineer"],
+    ["Data engineer responsible for the billing pipelines.", EN, "data engineer"],
+    ["Engenheira de dados especializada em pagamentos.", PT, "engenheira de dados"],
+    ["Engenheira de dados voltada a pagamentos.", PT, "engenheira de dados"],
+    ["Principal Engineer | Pagamentos e crédito.", PT, "principal engineer"],
+    ["Principal Engineer / Pagamentos e crédito.", PT, "principal engineer"],
+    ["Principal Engineer · Pagamentos e crédito.", PT, "principal engineer"],
   ])("negative: '%s' names '%s'", (text, titles, label) => {
     expect(inventedRoleLabels(text, titles)).toContain(label);
   });
@@ -64,6 +88,10 @@ describe("coversRole: seniority may stand apart from the title (issue #111, item
     ["Senior engineer with 8 years in payments.", EN],
     ["Engenheiro sênior com 8 anos em pagamentos.", PT],
     ["Senior software engineer with 8 years in payments.", EN],
+    // "Sr"/"Jr" are "senior"/"junior" (QA of #121).
+    ["Senior engineer with 8 years in payments.", ["Sr Software Engineer"]],
+    ["Sr software engineer with 8 years in payments.", EN],
+    ["Jr data engineer with 2 years in payments.", ["Junior Data Engineer"]],
   ])("label positive: '%s' with %j", (text, titles) => {
     expect(inventedRoleLabels(text, titles)).toEqual([]);
   });
@@ -83,6 +111,10 @@ describe("coversRole: seniority may stand apart from the title (issue #111, item
     ["Senior data engineer with 8 years in payments.", PT, "senior data engineer"],
   ])("label negative: '%s' with %j names '%s'", (text, titles, label) => {
     expect(inventedRoleLabels(text, titles)).toContain(label);
+  });
+
+  it("label positive: the base title followed by a participle", () => {
+    expect(inventedRoleLabels("Engenheiro de dados especializado em pagamentos.", PT)).toEqual([]);
   });
 
   it("title positive: 'Atuei como engenheiro sênior' with 'Engenheiro de Dados Sênior'", () => {
@@ -183,11 +215,12 @@ describe("label excerpt as written (issue #111, item 6)", () => {
 
 describe("entity guard: a self-describing adjective opening a sentence (issue #111, item 2)", () => {
   const guard = createEntityGuard(baseCv, job);
+  // Before a comma, a conjunction, another adjective or a role word (Pena §6.13).
   it.each([
     "Curious, pragmatic and hands-on with data contracts.",
     "Highly experienced in payment systems.",
-    "Pragmatic about payment systems.",
-    "Results-driven work on payment systems.",
+    "Pragmatic engineer for payment systems.",
+    "Results-driven and curious about payment systems.",
     "Curiosa e pragmática com qualidade de dados.",
     "Altamente focada em sistemas de pagamento.",
   ])("positive: '%s'", (text) => {
@@ -195,6 +228,9 @@ describe("entity guard: a self-describing adjective opening a sentence (issue #1
   });
 
   it.each([
+    // Elsewhere the word may be a name: fails closed.
+    ["Pragmatic shipped the payment systems.", "pragmatic"],
+    ["Pragmatic about payment systems.", "pragmatic"],
     ["Globex shipped the payment systems.", "globex"],
     ["Built the pipelines. Curious Labs funded the migration.", "labs"],
     ["Built pipelines with Pragmatic for payments.", "pragmatic"],
