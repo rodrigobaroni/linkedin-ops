@@ -33,6 +33,9 @@ x-app-env: &app-env
   APP_TIMEZONE: ${APP_TIMEZONE:-America/Sao_Paulo}
   LOG_LEVEL: ${LOG_LEVEL:-info}
   DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+
+# Object storage credentials: api only for now (the worker gets them when it renders media, not before).
+x-s3-env: &s3-env
   S3_ENDPOINT: ${S3_ENDPOINT:?set S3_ENDPOINT in .env}
   S3_REGION: ${S3_REGION:?set S3_REGION in .env}
   S3_BUCKET: ${S3_BUCKET:?set S3_BUCKET in .env}
@@ -69,7 +72,7 @@ services:
       dockerfile: apps/api/Dockerfile
     image: linkedin-ops/api:${IMAGE_TAG:-dev}
     environment:
-      <<: *app-env
+      <<: [*app-env, *s3-env]
       APP_BASE_URL: ${APP_BASE_URL:?set APP_BASE_URL in .env}
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
       # Token encryption (ADR-0004): ENCRYPTION_KEY, or the ENCRYPTION_KEYS ring with its active version.

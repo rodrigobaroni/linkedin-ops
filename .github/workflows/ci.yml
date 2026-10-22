@@ -382,35 +382,52 @@ jobs:
           docker compose build api web worker
           # The worker joins the stack (Career PR 1): healthy = pg-boss started on PostgreSQL and heartbeating.
           docker compose up -d --wait web api caddy worker
+          docker compose ps
 
-      - name: Each service receives only its own secrets (effective environment, names only)
+      - name: Each service receives exactly its own variables (effective environment, names only)
         run: |
           set -euo pipefail
-          # Sentinela, PR #89: no shared env_file. Compare variable NAMES inside the running containers; values
-          # are never printed.
-          names() { docker compose exec -T "$1" sh -c 'env | cut -d= -f1' | sort; }
-          api_env="$(names api)"; worker_env="$(names worker)"; web_env="$(names web)"
+          # Sentinela, PR #89: an exact allowlist per service. The variables Compose injects are the container's
+          # names minus the image's own ENV names; any extra or missing name fails. Values are never printed.
+          injected() { # <service>: names set by Compose for the running container, sorted
+            local cid image
+            cid="$(docker compose ps -q "$1")"
+            image="$(docker inspect -f '{{.Image}}' "$cid")"
+            comm -23 \
+              <(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$cid" | cut -d= -f1 | sed '/^$/d' | sort -u) \
+              <(docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$image" | cut -d= -f1 | sed '/^$/d' | sort -u)
+          }
+          image_names() { # <service>: the image's own ENV names (allowed to be overridden by Compose)
+            docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' \
+              "$(docker inspect -f '{{.Image}}' "$(docker compose ps -q "$1")")" | cut -d= -f1 | sed '/^$/d' | sort -u
+          }
           status=0
-          forbid() { # <service> <names> <var...>
-            local service=$1 list=$2; shift 2
-            for var in "$@"; do
-              if printf '%s\n' "$list" | grep -qx "$var"; then echo "::error::$service must not receive $var"; status=1; fi
-            done
+          check() { # <service> <allowed names...>
+            local service=$1; shift
+            local allowed actual extra missing
+            allowed="$(printf '%s\n' "$@" | sort -u)"
+            actual="$(injected "$service")"
+            extra="$(comm -23 <(printf '%s\n' "$actual" | sed '/^$/d') <(printf '%s\n' "$allowed"))"
+            # An allowed name may come from the image ENV (e.g. NODE_ENV); only names Compose must add count as missing.
+            missing="$(comm -23 <(printf '%s\n' "$allowed") <(printf '%s\n' "$actual" "$(image_names "$service")" | sed '/^$/d' | sort -u))"
+            if [ -n "$extra" ]; then echo "::error::$service receives unexpected variables: $(tr '\n' ' ' <<<"$extra")"; status=1; fi
+            if [ -n "$missing" ]; then echo "::error::$service is missing variables: $(tr '\n' ' ' <<<"$missing")"; status=1; fi
           }
-          require() { # <service> <names> <var...>
-            local service=$1 list=$2; shift 2
-            for var in "$@"; do
-              if ! printf '%s\n' "$list" | grep -qx "$var"; then echo "::error::$service is missing $var"; status=1; fi
-            done
-          }
-          forbid api "$api_env" OPENAI_API_KEY OPENAI_MODEL TELEGRAM_BOT_TOKEN POSTGRES_PASSWORD
-          forbid worker "$worker_env" SESSION_SECRET ENCRYPTION_KEY ENCRYPTION_KEYS ENCRYPTION_ACTIVE_KEY_VERSION \
-            LINKEDIN_CLIENT_ID LINKEDIN_CLIENT_SECRET LINKEDIN_REDIRECT_URI LINKEDIN_PKCE APP_BASE_URL POSTGRES_PASSWORD
-          forbid web "$web_env" DATABASE_URL SESSION_SECRET ENCRYPTION_KEY OPENAI_API_KEY LINKEDIN_CLIENT_SECRET S3_SECRET_ACCESS_KEY
-          require api "$api_env" DATABASE_URL SESSION_SECRET ENCRYPTION_KEY LINKEDIN_CLIENT_SECRET APP_BASE_URL
-          require worker "$worker_env" DATABASE_URL OPENAI_API_KEY OPENAI_MODEL JOB_FETCH_LINKEDIN
+          check api NODE_ENV APP_TIMEZONE LOG_LEVEL DATABASE_URL \
+            S3_ENDPOINT S3_REGION S3_BUCKET S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY S3_FORCE_PATH_STYLE \
+            APP_BASE_URL SESSION_SECRET ENCRYPTION_KEY ENCRYPTION_KEYS ENCRYPTION_ACTIVE_KEY_VERSION \
+            LINKEDIN_CLIENT_ID LINKEDIN_CLIENT_SECRET LINKEDIN_REDIRECT_URI LINKEDIN_PKCE \
+            TRUSTED_PROXY_CIDRS JOB_FETCH_LINKEDIN API_PORT API_HOST
+          check worker NODE_ENV APP_TIMEZONE LOG_LEVEL DATABASE_URL OPENAI_API_KEY OPENAI_MODEL JOB_FETCH_LINKEDIN
+          check web NODE_ENV PORT HOSTNAME NEXT_TELEMETRY_DISABLED
+          # Explicit denials on top of the allowlists (defence in depth).
+          worker_env="$(injected worker)"
+          for var in S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY SESSION_SECRET ENCRYPTION_KEY ENCRYPTION_KEYS \
+            LINKEDIN_CLIENT_SECRET APP_BASE_URL; do
+            if printf '%s\n' "$worker_env" | grep -qx "$var"; then echo "::error::worker must not receive $var"; status=1; fi
+          done
+          if injected api | grep -qx OPENAI_API_KEY; then echo "::error::api must not receive OPENAI_API_KEY"; status=1; fi
           exit "$status"
-          docker compose ps
 
       - name: Caddy serves web and api on one TLS host with the security headers
         run: |

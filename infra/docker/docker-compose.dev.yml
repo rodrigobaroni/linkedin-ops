@@ -14,7 +14,6 @@ x-dev-app-env: &dev-app-env
   NODE_ENV: development
   # In-network addresses override the host-oriented values of .env.
   DATABASE_URL: postgresql://${POSTGRES_USER:?set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB in .env}
-  S3_ENDPOINT: http://s3:9000
 
 services:
   postgres:
@@ -92,6 +91,7 @@ services:
         exec node --watch apps/api/dist/index.js
     environment:
       <<: *dev-app-env
+      S3_ENDPOINT: http://s3:9000
     volumes:
       - ../../apps/api/src:/app/apps/api/src
       - ../../packages/contracts/src:/app/packages/contracts/src
