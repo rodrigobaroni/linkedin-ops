@@ -138,21 +138,21 @@ describe("HttpJobPageFetcher", () => {
       const h = harness({
         "https://acme.gupy.io/jobs/1": { error: new SafeHttpError("http_status", status) },
       });
-      expect(await rejection(h.fetch("https://acme.gupy.io/jobs/1"))).toEqual(
-        new JobFetchError("blocked"),
-      );
+      expect(await rejection(h.fetch("https://acme.gupy.io/jobs/1"))).toMatchObject({
+        kind: "blocked",
+      });
       expect(h.tripped).toEqual([`gupy.io:http_${status}`]);
       h.advance(60_000);
-      expect(await rejection(h.fetch("https://other.gupy.io/jobs/2"))).toEqual(
-        new JobFetchError("blocked"),
-      );
+      expect(await rejection(h.fetch("https://other.gupy.io/jobs/2"))).toMatchObject({
+        kind: "blocked",
+      });
       expect(h.sent).toEqual(["https://acme.gupy.io/jobs/1"]);
     },
   );
 
   it("a login wall page is blocked and opens the breaker", async () => {
     const h = harness({ [JOB]: { body: page("login-wall") } });
-    expect(await rejection(h.fetch(JOB))).toEqual(new JobFetchError("blocked"));
+    expect(await rejection(h.fetch(JOB))).toMatchObject({ kind: "blocked" });
     expect(h.tripped).toEqual(["linkedin.com:login_wall"]);
   });
 
@@ -169,7 +169,7 @@ describe("HttpJobPageFetcher", () => {
 
   it("www.linkedin.com/jobs/view → /authwall: blocked, the LinkedIn breaker opens", async () => {
     const h = harness({ [JOB]: { redirect: "/authwall?trk=x" } });
-    expect(await rejection(h.fetch(JOB))).toEqual(new JobFetchError("blocked"));
+    expect(await rejection(h.fetch(JOB))).toMatchObject({ kind: "blocked" });
     expect(h.tripped).toEqual(["linkedin.com:login_redirect"]);
   });
 

@@ -23,6 +23,8 @@ const ALLOWED_DOMAIN_NAMES = new Set([
   "JOB_FETCH_LINKEDIN_DOMAIN",
   "fetchDomainPolicy",
   "jobFetchGroupId",
+  // A plain type: what blocked a fetch and when to retry (issue #112).
+  "JobPostingBlockedDetail",
 ]);
 
 interface ImportRecord {

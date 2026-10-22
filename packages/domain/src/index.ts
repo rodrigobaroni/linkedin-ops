@@ -135,6 +135,7 @@ export type {
   CareerFailureReason,
   CareerJobMeta,
   JobPostingJobMeta,
+  JobPostingBlockedDetail,
   CvBaseDraftStore,
   CvExtractionResult,
   FetchDomainGuard,

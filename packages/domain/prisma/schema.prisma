@@ -307,6 +307,15 @@ enum JobPostingFailure {
   @@map("job_posting_failure")
 }
 
+/// Why a FETCH_BLOCKED posting was blocked (issue #112).
+enum JobPostingBlockedKind {
+  DISABLED
+  QUOTA
+  BREAKER
+
+  @@map("job_posting_blocked_kind")
+}
+
 enum JobPostingSourceKind {
   LINKEDIN
   OTHER
@@ -1185,31 +1194,34 @@ model TailoringBatch {
 
 /// A job posting of a batch, one per distinct normalized link. Posting text is untrusted data (spec §8).
 model JobPosting {
-  id                      String               @id @db.Uuid
-  userId                  String               @map("user_id") @db.Uuid
-  batchId                 String               @map("batch_id") @db.Uuid
+  id                      String                 @id @db.Uuid
+  userId                  String                 @map("user_id") @db.Uuid
+  batchId                 String                 @map("batch_id") @db.Uuid
   /// Normalized link (no fragment, no tracking parameters). Never logged.
   url                     String
   /// sha256 (hex) of `url`: duplicates inside a batch are merged on it.
-  urlHash                 String               @map("url_hash")
+  urlHash                 String                 @map("url_hash")
   source                  JobPostingSourceKind
   status                  JobPostingStatus
-  failureReason           JobPostingFailure?   @map("failure_reason")
+  failureReason           JobPostingFailure?     @map("failure_reason")
+  /// Set only on FAILED/FETCH_BLOCKED: what blocked the fetch and, unless DISABLED, when to try again. No URL.
+  blockedKind             JobPostingBlockedKind? @map("blocked_kind")
+  blockedRetryAt          DateTime?              @map("blocked_retry_at") @db.Timestamptz(3)
   /// Processing cycle, bumped by every reprocessing and carried by the job payloads (late-job guard).
-  attempt                 Int                  @default(1)
+  attempt                 Int                    @default(1)
   /// Fetched or pasted text, sanitized, ≤ 20 000 characters; erased from `FAILED` postings after retention.
-  pageText                String?              @map("page_text")
-  fetchedAt               DateTime?            @map("fetched_at") @db.Timestamptz(3)
+  pageText                String?                @map("page_text")
+  fetchedAt               DateTime?              @map("fetched_at") @db.Timestamptz(3)
   /// `JobPostingExtracted` (contracts schema, validated on write and read).
   extracted               Json?
-  droppedRequirementCount Int?                 @map("dropped_requirement_count")
-  injectionSuspected      Boolean              @default(false) @map("injection_suspected")
+  droppedRequirementCount Int?                   @map("dropped_requirement_count")
+  injectionSuspected      Boolean                @default(false) @map("injection_suspected")
   /// Offending excerpt of the posting (≤ 500 characters); never logged nor audited.
-  injectionEvidence       String?              @map("injection_evidence")
+  injectionEvidence       String?                @map("injection_evidence")
   /// Model, prompt and engine versions of `job-extract` (ADR-0005 §3).
   generation              Json?
-  createdAt               DateTime             @map("created_at") @db.Timestamptz(3)
-  updatedAt               DateTime             @map("updated_at") @db.Timestamptz(3)
+  createdAt               DateTime               @map("created_at") @db.Timestamptz(3)
+  updatedAt               DateTime               @map("updated_at") @db.Timestamptz(3)
 
   user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   batch      TailoringBatch @relation(fields: [batchId, userId], references: [id, userId], onDelete: Cascade)

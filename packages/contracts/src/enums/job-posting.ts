@@ -28,3 +28,14 @@ export const JobPostingSourceKindSchema = z
   .meta({ id: "JobPostingSourceKind" });
 export const JobPostingSourceKind = JobPostingSourceKindSchema.enum;
 export type JobPostingSourceKind = z.infer<typeof JobPostingSourceKindSchema>;
+
+/**
+ * Why a `FETCH_BLOCKED` posting was blocked (issue #112): the LinkedIn fetch is switched off (`DISABLED`), the
+ * domain's daily quota is used up (`QUOTA`) or the domain's circuit breaker is open after a stop signal
+ * (`BREAKER`). The web says which, and when to try again.
+ */
+export const JobPostingBlockedKindSchema = z
+  .enum(["DISABLED", "QUOTA", "BREAKER"])
+  .meta({ id: "JobPostingBlockedKind" });
+export const JobPostingBlockedKind = JobPostingBlockedKindSchema.enum;
+export type JobPostingBlockedKind = z.infer<typeof JobPostingBlockedKindSchema>;

@@ -13,6 +13,7 @@ import type {
   MatchReport,
   ParseWarning,
   TailoredCvContent,
+  JobPostingBlockedKind,
 } from "@linkedin-ops/contracts";
 
 /** Failure reasons shown to Rodrigo (spec §9); `fetch_blocked` per ADR-0008 §4. */
@@ -111,11 +112,23 @@ export interface JobPostingStore {
     },
     meta: JobPostingJobMeta,
   ): Promise<void>;
+  /** `blocked` goes with `fetch_blocked` only: what blocked the fetch and when to retry (issue #112). */
   markFailed(
     jobPostingId: string,
     reason: CareerFailureReason,
     meta: JobPostingJobMeta,
+    blocked?: JobPostingBlockedDetail,
   ): Promise<void>;
+}
+
+/**
+ * Why a fetch was blocked (issue #112): the LinkedIn fetch switched off (`DISABLED`, no retry time), the domain's
+ * daily quota used up (`QUOTA`, until the oldest request leaves the 24 h window) or its breaker open after a stop
+ * signal (`BREAKER`, until it closes). Never a URL.
+ */
+export interface JobPostingBlockedDetail {
+  kind: JobPostingBlockedKind;
+  retryAt: Date | null;
 }
 
 /**

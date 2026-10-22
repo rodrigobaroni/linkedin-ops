@@ -7,6 +7,11 @@ versioning: internal SemVer (see `README.md`).
 
 ### Added
 
+- `JobPostingDetail.blockedDetail` (optional, nullable; issue #112): `{ kind: JobPostingBlockedKind, retryAt: ISO | null }`
+  on a posting `FAILED` with `FETCH_BLOCKED`: `DISABLED` (the LinkedIn fetch is switched off; `retryAt` null),
+  `QUOTA` (the domain's daily quota; when it frees up) or `BREAKER` (a stop signal opened the domain's breaker; when it
+  closes). New mirrored enum `JobPostingBlockedKind`. No URL.
+
 - Career module (spec `2026-10-22-cv-tailoring-design.md`, prompts `docs/editorial/career-prompts.md` v1.0.0):
   `career/schemas.ts` with content schemas `CvStructured`, `JobPostingExtracted`, `TailoredCvContent` (segments with
   `provenance: original | rewritten | added`, `sourceCvItemIds` for base content, `targetRequirementIds` +

@@ -3,6 +3,7 @@
  * store ports (`CvBaseDraftStore`, `JobPostingStore`) live in `@linkedin-ops/domain`, next to their Prisma
  * implementations.
  */
+import type { JobPostingBlockedDetail } from "@linkedin-ops/domain";
 import type { Logger } from "pino";
 
 /** Anonymous job-page fetcher (PR 3, ADR-0008). Throws `JobFetchError`. */
@@ -18,11 +19,14 @@ export interface JobPageFetcher {
 export class JobFetchError extends Error {
   /** `blocked` = stop signal (429/999/403/login wall): never retried. `transient` = network/5xx. */
   readonly kind: "blocked" | "transient" | "permanent";
+  /** For `blocked`: what blocked the fetch and when to retry, stored with the posting (issue #112). */
+  readonly blocked: JobPostingBlockedDetail | undefined;
 
-  constructor(kind: "blocked" | "transient" | "permanent") {
+  constructor(kind: "blocked" | "transient" | "permanent", blocked?: JobPostingBlockedDetail) {
     super(`Job page fetch failed: ${kind}`);
     this.name = "JobFetchError";
     this.kind = kind;
+    this.blocked = blocked;
   }
 }
 

@@ -21,7 +21,7 @@ import {
   jobPostingUrlHash,
   normalizeJobPostingUrl,
 } from "./job-posting-url.js";
-import type { GenerationInfo } from "./ports.js";
+import type { GenerationInfo, JobPostingBlockedDetail } from "./ports.js";
 import { lockOwner, sqlExecutor, type SqlExecutor, type Transaction } from "./transaction.js";
 
 const JOB_FETCH_QUEUE = QUEUES["job.fetch"];
@@ -120,6 +120,8 @@ export interface JobPostingRecord extends JobPostingSummaryRecord {
   /** Posting text quoted by the model: shown to the owner only, never logged nor audited. */
   injectionEvidence: string | null;
   fetchedAt: Date | null;
+  /** What blocked a `FETCH_BLOCKED` posting and when to retry (issue #112); null otherwise. */
+  blocked: JobPostingBlockedDetail | null;
   /** Only when `READY`. */
   tailoring: TailoringRecord | null;
 }
@@ -192,6 +194,8 @@ const SETTLED: JobPostingStatus[] = ["FAILED", "READY"];
 /** Reset of everything a previous pass produced (the tailored CV row stays until it is replaced). */
 const CLEARED_EXTRACTION = {
   failureReason: null,
+  blockedKind: null,
+  blockedRetryAt: null,
   extracted: Prisma.DbNull,
   droppedRequirementCount: null,
   injectionSuspected: false,
@@ -379,6 +383,8 @@ export class PrismaJobPostings {
           data: {
             status: "ANALYZING",
             failureReason: null,
+            blockedKind: null,
+            blockedRetryAt: null,
             attempt: { increment: 1 },
             updatedAt: now,
           },
@@ -615,6 +621,8 @@ function toRecord(
     injectionSuspected: row.injectionSuspected,
     injectionEvidence: row.injectionEvidence,
     fetchedAt: row.fetchedAt,
+    blocked:
+      row.blockedKind === null ? null : { kind: row.blockedKind, retryAt: row.blockedRetryAt },
     tailoring,
   };
 }
