@@ -382,6 +382,34 @@ jobs:
           docker compose build api web worker
           # The worker joins the stack (Career PR 1): healthy = pg-boss started on PostgreSQL and heartbeating.
           docker compose up -d --wait web api caddy worker
+
+      - name: Each service receives only its own secrets (effective environment, names only)
+        run: |
+          set -euo pipefail
+          # Sentinela, PR #89: no shared env_file. Compare variable NAMES inside the running containers; values
+          # are never printed.
+          names() { docker compose exec -T "$1" sh -c 'env | cut -d= -f1' | sort; }
+          api_env="$(names api)"; worker_env="$(names worker)"; web_env="$(names web)"
+          status=0
+          forbid() { # <service> <names> <var...>
+            local service=$1 list=$2; shift 2
+            for var in "$@"; do
+              if printf '%s\n' "$list" | grep -qx "$var"; then echo "::error::$service must not receive $var"; status=1; fi
+            done
+          }
+          require() { # <service> <names> <var...>
+            local service=$1 list=$2; shift 2
+            for var in "$@"; do
+              if ! printf '%s\n' "$list" | grep -qx "$var"; then echo "::error::$service is missing $var"; status=1; fi
+            done
+          }
+          forbid api "$api_env" OPENAI_API_KEY OPENAI_MODEL TELEGRAM_BOT_TOKEN POSTGRES_PASSWORD
+          forbid worker "$worker_env" SESSION_SECRET ENCRYPTION_KEY ENCRYPTION_KEYS ENCRYPTION_ACTIVE_KEY_VERSION \
+            LINKEDIN_CLIENT_ID LINKEDIN_CLIENT_SECRET LINKEDIN_REDIRECT_URI LINKEDIN_PKCE APP_BASE_URL POSTGRES_PASSWORD
+          forbid web "$web_env" DATABASE_URL SESSION_SECRET ENCRYPTION_KEY OPENAI_API_KEY LINKEDIN_CLIENT_SECRET S3_SECRET_ACCESS_KEY
+          require api "$api_env" DATABASE_URL SESSION_SECRET ENCRYPTION_KEY LINKEDIN_CLIENT_SECRET APP_BASE_URL
+          require worker "$worker_env" DATABASE_URL OPENAI_API_KEY OPENAI_MODEL JOB_FETCH_LINKEDIN
+          exit "$status"
           docker compose ps
 
       - name: Caddy serves web and api on one TLS host with the security headers

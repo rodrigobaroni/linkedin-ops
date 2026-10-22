@@ -56,7 +56,12 @@ Obrigatórias (`${VAR:?}`): `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`,
 `S3_FORCE_PATH_STYLE`, `APP_TIMEZONE`, `LOG_LEVEL`, `IMAGE_TAG`, `CADDY_SITE_ADDRESS`, `CADDY_TLS`,
 `CADDY_BIND_ADDRESS`, `CADDY_HSTS_MAX_AGE`, `POSTGRES_PORT` e `S3_PORT` (portas só no override de dev).
 O override de dev sobrescreve `DATABASE_URL` (host `postgres`) e `S3_ENDPOINT` (`http://s3:9000`) para
-`api` e `worker`; `web` não recebe `env_file` nem segredos (ADR-0001).
+`api` e `worker`.
+
+Nenhum serviço usa `env_file` compartilhado (Sentinela, PR #89): `api` e `worker` têm cada um a **sua** lista
+de variáveis em `environment:`, interpoladas do `.env`. A `api` nunca recebe `OPENAI_*`; o `worker` nunca
+recebe `SESSION_SECRET`, `ENCRYPTION_KEY(S)` nem `LINKEDIN_*`; `web` não recebe segredos (ADR-0001). O
+`compose-smoke` confere o ambiente efetivo de cada contêiner (só nomes).
 
 ## Object storage: RustFS em dev/CI
 
