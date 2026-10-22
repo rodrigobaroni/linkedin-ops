@@ -160,6 +160,17 @@ describe("the humanizer never turns a credential into a title (Sentinela S-1, PR
     expect(result.ok && result.value.revertedSegmentIds).toEqual(["seg-2"]);
   });
 
+  it("canary: a role introducer before the base credential is reverted", () => {
+    const cv = beforeWith("Atuei com pipelines de cobrança.");
+    const result = parseCvHumanizeResponse(
+      output(cv, {
+        "seg-2": "Atuei como Google Professional Data Engineer nos pipelines de cobrança.",
+      }),
+      { before: cv, base },
+    );
+    expect(result.ok && result.value.revertedSegmentIds).toEqual(["seg-2"]);
+  });
+
   it("a clean rewrite with the same base still applies", () => {
     const cv = beforeWith("Atuei com pipelines de cobrança.");
     const result = parseCvHumanizeResponse(

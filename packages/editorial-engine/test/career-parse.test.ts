@@ -478,12 +478,12 @@ describe("credentials in rewritten and changed original segments (Sentinela, PR 
   });
 
   it("positive: a rewritten segment keeping the certification already in its source passes", () => {
-    const base = baseWith("Trabalhei como AWS Certified Solutions Architect em pagamentos.");
+    const base = baseWith("Obtive a AWS Certified Solutions Architect em pagamentos.");
     expect(
-      run(base, { bullet: "Atuei como AWS Certified Solutions Architect em pagamentos." }).ok,
+      run(base, { bullet: "Concluí a AWS Certified Solutions Architect em pagamentos." }).ok,
     ).toBe(true);
     // Shortening it is still the same credential.
-    expect(run(base, { bullet: "Atuei como AWS Certified em pagamentos." }).ok).toBe(true);
+    expect(run(base, { bullet: "Obtive a AWS Certified em pagamentos." }).ok).toBe(true);
   });
 
   it("an unchanged original segment holding a credential passes", () => {
@@ -552,6 +552,52 @@ describe("a credential never becomes an invented title (Sentinela S-1, PR #91)",
     expect(issues(run(base, { added: "Atuei como Data Engineer com Kafka." }))).toContain(
       "seg-3: hard limit, title from a credential",
     );
+  });
+
+  it.each([
+    [
+      "Obtive a AWS Certified Solutions Architect.",
+      "Atuei como AWS Certified Solutions Architect.",
+    ],
+    [
+      "Obtive a AWS Certified Solutions Architect.",
+      "Worked as an AWS Certified Solutions Architect.",
+    ],
+    [
+      "Obtive a Google Professional Data Engineer.",
+      "No papel de Google Professional Data Engineer, conduzi pipelines.",
+    ],
+  ])(
+    "negative: a role introducer turns the credential into a title: source %s, rewritten %s",
+    (source, text) => {
+      expect(issues(run(baseWith(source), { bullet: text }))).toContain(ROLE);
+    },
+  );
+
+  it("positive: a role introducer before a credential whose title the base CV already has", () => {
+    const base = baseWith("Obtive a AWS Certified Solutions Architect.", {
+      title: "Solutions Architect",
+    });
+    expect(issues(run(base, { bullet: "Atuei como AWS Certified Solutions Architect." }))).toEqual(
+      [],
+    );
+    const pt = baseWith("Obtive a Google Professional Data Engineer.", {
+      title: "Engenheiro de Dados",
+    });
+    expect(issues(run(pt, { bullet: "Atuei como Engenheiro de Dados." }))).toEqual([]);
+  });
+
+  it("positive: naming the credential without a role introducer passes", () => {
+    const heading = "Certificação AWS Certified Solutions Architect.";
+    expect(
+      issues(
+        run(baseWith(heading), {
+          bullet: "Certificação AWS Certified Solutions Architect em pagamentos.",
+        }),
+      ),
+    ).toEqual([]);
+    const source = "Obtive a AWS Certified Solutions Architect.";
+    expect(issues(run(baseWith(source), { bullet: source }))).toEqual([]);
   });
 
   it("positive: keeping the whole credential passes", () => {

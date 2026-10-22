@@ -384,6 +384,39 @@ const ROLE_NOUNS = new Set(
     .filter(Boolean),
 );
 
+/**
+ * Words that present what follows as a role (Sentinela PR #91): "Atuei como …", "No papel de …", "Worked as an …",
+ * "In the role of …". Folded token sequences, compared right before a credential phrase (an article in between
+ * is skipped). `como` and `as` alone count: "Certificado como …" or "Certified as …" is not how a credential is
+ * named, so failing closed costs only a regeneration.
+ */
+const ROLE_INTRODUCERS = [
+  "como",
+  "papel de",
+  "papel do",
+  "papel da",
+  "cargo de",
+  "cargo do",
+  "funcao de",
+  "posicao de",
+  "as",
+  "role of",
+  "position of",
+  "capacity of",
+].map((phrase) => phrase.split(" "));
+const ARTICLES = new Set(["a", "an", "the", "o", "um", "uma"]);
+
+/** Whether a role introducer stands right before position `start` of `words`. */
+function introducedAsRole(words: readonly string[], start: number): boolean {
+  let end = start;
+  if (end > 0 && ARTICLES.has(words[end - 1] ?? "")) end -= 1;
+  return ROLE_INTRODUCERS.some(
+    (phrase) =>
+      end - phrase.length >= 0 &&
+      phrase.every((word, offset) => words[end - phrase.length + offset] === word),
+  );
+}
+
 interface CredentialPhrase {
   words: string[];
   /** Position of the first word among the text's tokens. */
@@ -509,11 +542,12 @@ export function titlesFromCredentials(
   const raw = tokens(text);
   const words = raw.map(fold);
   const titleWords = titles.map((title) => tokens(title).map(fold));
-  // Words inside a credential the text names with its marker ("AWS Certified Solutions Architect") are that
-  // credential, not a title; whether the credential itself may be there is `newCredentials`'s call.
+  // Words inside a credential the text names with its marker ("Obtive a AWS Certified Solutions Architect") are
+  // that credential, not a title; whether the credential itself may be there is `newCredentials`'s call. Not when
+  // a role introducer presents it as a role ("Atuei como AWS Certified Solutions Architect"; Sentinela PR #91).
   const inCredential = new Set<number>();
   for (const phrase of credentialPhrases(text)) {
-    if (!phrase.marker.includes(true)) continue;
+    if (!phrase.marker.includes(true) || introducedAsRole(words, phrase.start)) continue;
     phrase.words.forEach((_word, index) => inCredential.add(phrase.start + index));
   }
   const found = new Set<string>();

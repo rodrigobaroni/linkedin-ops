@@ -73,7 +73,8 @@ Nunca entra, nem como alias (`denyTerms`, com teste de interseção vazia):
   humanizador que acrescenta uma credencial tem o trecho revertido. Uma credencial também nunca vira **cargo**
   (Sentinela S-1): as palavras de uma credencial do CV base até um substantivo de cargo ("Solutions Architect",
   "Data Engineer", "Kubernetes Administrator") reprovam em qualquer trecho, salvo dentro da própria credencial
-  com marcador ou quando o CV base já tem esse cargo como título de experiência; o substantivo de cargo sozinho
+  com marcador (e não precedida de introdutor de função como "Atuei como", "No papel de" ou "Worked as")
+  ou quando o CV base já tem esse cargo como título de experiência; o substantivo de cargo sozinho
   só reprova com maiúscula ("Architect", nunca "backend engineer"). O humanizador recebe o CV base e
   segue as mesmas regras: o trecho que ganha credencial ou cargo vindo de credencial é revertido;
 - formas curtas ambíguas (`Next`, `Neon`, `Delta`, `Stone`, `Rede`, `Spring`, `Express`, `Kong`, `XP`, `LeSS`):
