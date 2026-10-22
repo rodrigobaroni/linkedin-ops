@@ -7,18 +7,15 @@ versioning: internal SemVer (see `README.md`).
 
 ### Added
 
-- Career module (spec `2026-10-22-cv-tailoring-design.md`): `career/schemas.ts` with content schemas
-  `CvStructured`, `JobPostingExtracted`, `TailoredCvContent` (per-segment `provenance`: `original | rewritten | added`)
-  and `MatchReport` (`baseScore` 0–100 computed by the engine from base-CV coverage, before additions), plus model
-  outputs `CvExtractionOutput`, `JobExtractionOutput`, `CvTailoringOutput` and `CvHumanizationOutput` registered in
-  `STRUCTURED_OUTPUTS`. `PromptId` gains `cv-extract`, `job-extract`, `cv-tailor`, `cv-humanize`. All career objects
-  are `strictObject`.
+- Career module (spec `2026-10-22-cv-tailoring-design.md`, prompts `docs/editorial/career-prompts.md` v1.0.0):
+  `career/schemas.ts` with content schemas `CvStructured`, `JobPostingExtracted`, `TailoredCvContent` (segments with
+  `provenance: original | rewritten | added`, `sourceCvItemIds` for base content, `targetRequirementIds` +
+  `additionNote` for added content) and `MatchReport` (`baseScore` 0–100 computed by the engine from the base-CV
+  `matchAssessment`, before additions), plus model outputs `CvExtractionOutput`, `JobExtractionOutput`,
+  `CvTailoringOutput` and `CvHumanizationOutput` (Pena's field names) registered in `STRUCTURED_OUTPUTS`.
+  `PromptId` gains `cv-extract`, `job-extract`, `cv-tailor`, `cv-humanize`. All career objects are `strictObject`.
 - Queues `cv.extract` (`{ cvBaseId }`, retry 2 with backoff), `job.fetch` (`{ jobPostingId }`, retry 1 after 60 s,
   ADR-0008 §4) and `cv.tailor` (`{ jobPostingId }`, retry 2 with backoff). Payloads carry ids only.
-- `ProvenancedText.sourceRefs` (1–5 ids) replaces `sourceRef`: base CV item ids for `original`/`rewritten`, job
-  requirement ids for `added` (`career-editorial-exception.md` §4). `AddedContent` gains `requirementIds`; added
-  content is limited to headline, summary, experience bullets and skills (languages are never `added`).
-
 - `openapi/document.ts` (`buildOpenApiDocument`, `serializeOpenApiDocument`): OpenAPI 3.0.3 generated from `routes/v1.ts`
   with `z.toJSONSchema` only; committed as `openapi/v1.json` with a drift test (`pnpm openapi:generate` refreshes it).
   Components are named after `.meta({ id })`; `IdParams`, `DraftVersionParams` and `<Item>Page` gained ids (T-008).

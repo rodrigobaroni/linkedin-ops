@@ -100,14 +100,12 @@ describe("Structured Outputs JSON Schema (OpenAI strict mode)", () => {
   });
 });
 
-describe("Career outputs (spec 2026-10-22 §5)", () => {
-  it("cv-tailor never asks the model for a score; coverage is per requirement", () => {
-    const properties = structuredOutputJsonSchema("cvTailoring").schema.properties as Record<
-      string,
-      unknown
-    >;
-    expect(Object.keys(properties)).not.toContain("baseScore");
-    expect(Object.keys(properties)).toContain("coverage");
+describe("Career outputs (docs/editorial/career-prompts.md v1.0.0)", () => {
+  it("cv-tailor never asks the model for a score; the assessment is per requirement", () => {
+    const schema = structuredOutputJsonSchema("cvTailoring").schema;
+    expect(JSON.stringify(schema)).not.toMatch(/score/i);
+    const properties = schema.properties as Record<string, unknown>;
+    expect(Object.keys(properties)).toContain("matchAssessment");
   });
 
   it("provenance enum is original | rewritten | added", () => {
@@ -116,6 +114,12 @@ describe("Career outputs (spec 2026-10-22 §5)", () => {
       Record<string, unknown>
     >;
     expect(defs.Provenance?.enum).toEqual(["original", "rewritten", "added"]);
+  });
+
+  it("cv-humanize output has no provenance field", () => {
+    expect(JSON.stringify(structuredOutputJsonSchema("cvHumanization").schema)).not.toContain(
+      "provenance",
+    );
   });
 });
 
