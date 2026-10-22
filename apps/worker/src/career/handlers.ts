@@ -39,6 +39,8 @@ import {
 export const HUMANIZE_MAX_ATTEMPTS = 3;
 /** Spec §9: invalid `job-extract` output gets up to 2 new attempts inside the handler. */
 export const JOB_EXTRACT_MAX_REGENERATIONS = 2;
+/** Spec §9: invalid `cv-tailor` output (schema, provenance, D4 hard limits) gets up to 2 new attempts. */
+export const CV_TAILOR_MAX_REGENERATIONS = 2;
 
 export interface CareerHandlerDeps {
   llm: LlmClient;
@@ -216,16 +218,19 @@ export function createCareerHandlers(deps: CareerHandlerDeps): CareerHandlers {
       deps.jobStore.markFailed(jobPostingId, reason);
     try {
       const target = resolveTargetLanguage(input.job.language);
-      const tailorBuilt = buildCvTailorRequest(
-        { base: input.base, job: input.job, target },
-        options,
-      );
-      const tailored = await runLlmStep(
+      const tailored = await runLlmStepWithRegenerations(
         deps.llm,
-        tailorBuilt,
+        () => buildCvTailorRequest({ base: input.base, job: input.job, target }, options),
         (raw) => parseCvTailorResponse(raw, { base: input.base, job: input.job, target }),
         context.signal,
+        CV_TAILOR_MAX_REGENERATIONS,
+        (attempt, reason) =>
+          context.logger.warn(
+            { tailorAttempt: attempt, errorClass: reason },
+            "tailor output invalid",
+          ),
       );
+      const tailorBuilt = tailored.built;
 
       let cv = tailored.value.cv;
       let lint = lintTailoredCv(cv, { language: cv.language, jobText: input.rawText });

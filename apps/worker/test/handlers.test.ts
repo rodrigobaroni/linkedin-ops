@@ -336,15 +336,30 @@ describe("cv.tailor", () => {
     expect(report.humanizer).toMatchObject({ passed: true, regenerations: 1 });
   });
 
-  it("rejects an added number (D4 hard limit) as invalid output and fails `ai` on the last attempt", async () => {
+  it("rejects an added number (D4 hard limit), regenerates twice, then fails `ai`", async () => {
     const output = tailoringOutput();
     const added = output.tailoredCv.experiences[0]?.bullets.segments[1];
     if (added) added.text = "Cut Kafka lag by 35%.";
-    const { h, events } = handlers({ "cv-tailor": output });
+    const { h, events, llm } = handlers({ "cv-tailor": output });
+    // 1 call + 2 regenerations inside the handler, then a permanent `ai` failure (no queue retry).
     await expect(
-      h["cv.tailor"]({ ...envelope, jobPostingId: IDS.posting }, context({ isLastAttempt: true })),
-    ).rejects.toBeInstanceOf(RetryableJobError);
+      h["cv.tailor"]({ ...envelope, jobPostingId: IDS.posting }, context()),
+    ).rejects.toBeInstanceOf(PermanentJobError);
+    expect(llm.calls.filter((c) => c.promptId === "cv-tailor")).toHaveLength(3);
     expect(events).toEqual(["job:failed:ai"]);
+  });
+
+  it("regenerates when an invented entity is rejected, then delivers the clean output", async () => {
+    const invented = tailoringOutput();
+    const added = invented.tailoredCv.experiences[0]?.bullets.segments[1];
+    if (added) added.text = "Delivered Project Apollo for Nubank using Kafka.";
+    const { h, events, llm } = handlers({
+      "cv-tailor": (_request, call) => (call === 0 ? invented : tailoringOutput()),
+      "cv-humanize": humanizeOutput({}, segmentTexts),
+    });
+    await h["cv.tailor"]({ ...envelope, jobPostingId: IDS.posting }, context());
+    expect(llm.calls.filter((c) => c.promptId === "cv-tailor")).toHaveLength(2);
+    expect(events).toEqual(["job:tailored"]);
   });
 
   it("treats auth/refusal LLM errors as permanent", async () => {
