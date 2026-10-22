@@ -29,6 +29,7 @@
     "fastify": "catalog:",
     "jose": "catalog:",
     "nestjs-pino": "catalog:",
+    "pg-boss": "catalog:",
     "pino": "catalog:",
     "pino-http": "catalog:",
     "reflect-metadata": "catalog:",
