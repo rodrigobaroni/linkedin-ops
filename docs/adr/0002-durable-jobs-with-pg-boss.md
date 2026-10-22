@@ -23,6 +23,9 @@ be observable. The approved stack names pg-boss; this ADR fixes how it is used.
    if the transaction commits. If this integration proves unreliable (criterion: any lost or phantom job in
    integration tests, or pg-boss removing the executor hook), fall back to a transactional outbox table
    (`outbox_jobs`) drained by a worker relay — the service code does not change, only the `JobQueue` port.
+   Canonical form (cv.extract, PR #92): the domain repository hands its `tx` to the producer as a
+   `SqlExecutor` (`packages/domain`, bound to `tx.$queryRawUnsafe`, which returns the inserted id) and the
+   producer calls `boss.send(name, payload, { db })`; the producer is started outside any transaction.
 4. **Worker process**: `apps/worker` boots a NestJS application context (no HTTP server), registers one
    handler per queue, validates payloads with Zod before executing, and reports results through
    `packages/domain` services (never by calling the API). Concurrency per queue is configured

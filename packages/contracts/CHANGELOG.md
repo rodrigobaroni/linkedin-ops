@@ -19,8 +19,8 @@ versioning: internal SemVer (see `README.md`).
   `CvDraft`, `CvBase`, `CvBaseState`, `CvUploadAccepted`, `CvConfirmInput` and `CV_UPLOAD_LIMITS`; enums
   `CvDraftStatus` (`EXTRACTING | READY | FAILED`) and `CvExtractionFailure` (`EXTRACTION_FAILED | TIMED_OUT`);
   `ErrorCode` gains `CV_PDF_UNREADABLE` (422) and `CV_DRAFT_NOT_READY` (409) (contracts.md §2.13, §4).
-- `cv.extract` wiring: `CvDraft` gains optional `parseWarnings`, `injectionSuspected` and `injectionEvidence`
-  (≤ 500 characters); `CvConfirmInput` gains optional `acknowledgeInjection`, required to confirm a draft flagged
+- `cv.extract` wiring: `CvDraft` gains required `parseWarnings` (`[]` until `READY`) and `injectionSuspected`, and
+  optional `injectionEvidence` (≤ 500 characters); `CvConfirmInput` gains optional `acknowledgeInjection`, required to confirm a draft flagged
   `injectionSuspected` (ADR-0005 §4, fail closed); `ErrorCode` gains `CV_INJECTION_UNACKNOWLEDGED` (409).
 - Queues `cv.extract` (`{ cvBaseId }`, retry 2 with backoff), `job.fetch` (`{ jobPostingId }`, retry 1 after 60 s,
   ADR-0008 §4) and `cv.tailor` (`{ jobPostingId }`, retry 2 with backoff). Payloads carry ids only.

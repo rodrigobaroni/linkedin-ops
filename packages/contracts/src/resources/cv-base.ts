@@ -30,11 +30,11 @@ export const CvDraftSchema = z
     parseWarnings: z
       .array(ParseWarningSchema)
       .max(50)
-      .optional()
-      .describe("What the extraction could not read unambiguously; shown on review"),
+      .describe(
+        "What the extraction could not read unambiguously; shown on review (empty until READY)",
+      ),
     injectionSuspected: z
       .boolean()
-      .optional()
       .describe(
         "The extraction found text that tries to instruct the model; confirming needs `acknowledgeInjection`",
       ),
