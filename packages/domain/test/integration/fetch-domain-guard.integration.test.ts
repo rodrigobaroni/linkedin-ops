@@ -6,8 +6,8 @@
  * - the kill switch writes nothing; the CHECKs reject a URL as key, an unknown signal and a 41st window entry;
  * - with TZ and the database default at America/Sao_Paulo, stored instants match the application clock.
  *
- * Without Docker, point `INTEGRATION_DATABASE_URL` at an EMPTY database the test may `ALTER` (e.g. a throwaway
- * local cluster); the container is then skipped.
+ * Without Docker, point `INTEGRATION_DATABASE_URL` at a server the user may create databases on; this file creates
+ * its own database there (so the migration always runs on an empty one) and drops it afterwards.
  */
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -29,6 +29,8 @@ const T0 = new Date("2026-10-22T12:00:00.000Z");
 const at = (ms: number) => new Date(T0.getTime() + ms);
 
 let container: StartedPostgreSqlContainer | undefined;
+/** Server and name of the database this file created on `INTEGRATION_DATABASE_URL` (dropped afterwards). */
+let created: { adminUrl: string; name: string } | undefined;
 let databaseUrl: string;
 let prisma: PrismaClient;
 const originalTz = process.env["TZ"];
@@ -47,8 +49,23 @@ const outcomes = (slots: FetchSlot[]) => slots.map((slot) => slot.outcome).sort(
 beforeAll(async () => {
   process.env["TZ"] = "America/Sao_Paulo";
   const external = process.env["INTEGRATION_DATABASE_URL"];
-  if (!external) container = await new PostgreSqlContainer(POSTGRES_IMAGE).start();
-  databaseUrl = external ?? container!.getConnectionUri();
+  if (external) {
+    const name = `fetch_domain_guard_${Date.now()}`;
+    const admin = new Client({ connectionString: external });
+    await admin.connect();
+    try {
+      await admin.query(`CREATE DATABASE "${name}"`);
+    } finally {
+      await admin.end();
+    }
+    created = { adminUrl: external, name };
+    const url = new URL(external);
+    url.pathname = `/${name}`;
+    databaseUrl = url.toString();
+  } else {
+    container = await new PostgreSqlContainer(POSTGRES_IMAGE).start();
+    databaseUrl = container.getConnectionUri();
+  }
   // New connections default to São Paulo unless the client overrides the session time zone.
   const admin = new Client({ connectionString: databaseUrl });
   await admin.connect();
@@ -68,6 +85,15 @@ beforeAll(async () => {
 afterAll(async () => {
   await prisma?.$disconnect();
   await container?.stop();
+  if (created) {
+    const admin = new Client({ connectionString: created.adminUrl });
+    await admin.connect();
+    try {
+      await admin.query(`DROP DATABASE IF EXISTS "${created.name}" WITH (FORCE)`);
+    } finally {
+      await admin.end();
+    }
+  }
   if (originalTz === undefined) delete process.env["TZ"];
   else process.env["TZ"] = originalTz;
 });
