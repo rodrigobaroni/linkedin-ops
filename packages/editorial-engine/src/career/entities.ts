@@ -695,7 +695,8 @@ const ROLE_STOP_WORDS = new Set(
 /**
  * What an introducer may present that is not a role ("Atuei como parte do time", "as part of", "Served as the point
  * of contact", "I was a key contributor", "I am a strong believer", "como principal responsável"; QA on PR #98).
- * Opening the phrase (after `ROLE_MODIFIERS`), one ends the search: "Trabalhei como ponte entre o PO e o time".
+ * Opening the phrase (after `ROLE_MODIFIERS`), one ends that item's search ("Trabalhei como ponte entre o PO e o
+ * time" never reaches "po"); the list goes on after the next conjunction or comma ("como referência e tech lead").
  */
 const NOT_ROLES = new Set(
   `parte part ponte bridge referencia reference ponto point contact contato elo apoio suporte support membro member
@@ -813,6 +814,16 @@ function introducedRoles(text: string, vocabulary: ReadonlySet<string>): RolePhr
   const covered = lexiconCoverage(words.map((role) => role.word));
   const word = (at: number) => words[at]?.word ?? "";
   const phrases: RolePhrase[] = [];
+  // An aside between commas does not end a list ("e, mais tarde, tech lead", ", and later, tech lead"; QA on PR
+  // #98): after a separator, up to `ROLE_ASIDE_WORDS` words without a role title word, closed by a comma.
+  const afterAside = (next: number, separated: boolean) => {
+    if (!separated) return next;
+    for (let at = next; at < Math.min(words.length, next + ROLE_ASIDE_WORDS); at += 1) {
+      if (ROLE_TITLE_WORDS.has(word(at)) || words[at]?.pause === "stop") break;
+      if (words[at]?.pause === "comma") return at + 1;
+    }
+    return next;
+  };
   // Past the last introducer, so "as" inside "worked as" does not count twice.
   let introduced = 0;
   for (let index = 0; index < words.length; index += 1) {
@@ -849,12 +860,12 @@ function introducedRoles(text: string, vocabulary: ReadonlySet<string>): RolePhr
       }
       let opener = start;
       while (ROLE_MODIFIERS.has(word(opener)) && !words[opener]?.pause) opener += 1;
-      if (!named && NOT_ROLES.has(word(opener))) break;
+      const notRole = !named && NOT_ROLES.has(word(opener));
       let head = -1;
       // "Promovido de analista a analista sênior": the source role ends at `a`.
       const stop = (at: number) =>
         ROLE_STOP_WORDS.has(word(at)) || (from && ROLE_FROM_TO.has(word(at)));
-      for (let at = start; at < Math.min(words.length, start + window); at += 1) {
+      for (let at = start; !notRole && at < Math.min(words.length, start + window); at += 1) {
         if (stop(at)) break;
         // "às 2 PM" is a time, not a product manager.
         const time = word(at) === "pm" && /^\d/u.test(word(at - 1));
@@ -862,12 +873,13 @@ function introducedRoles(text: string, vocabulary: ReadonlySet<string>): RolePhr
         if (words[at]?.pause) break;
       }
       const candidate =
+        !notRole &&
         copula &&
         !COPULA_NOT_ROLES.has(word(opener)) &&
         !vocabulary.has(word(opener)) &&
         covered[opener] === undefined &&
         (article || (word(opener).length >= 5 && AGENTIVE.test(word(opener))));
-      if (head < 0 && (strong || candidate)) {
+      if (head < 0 && !notRole && (strong || candidate)) {
         for (let at = opener; at < Math.min(words.length, opener + ROLE_STRONG_WINDOW); at += 1) {
           if (stop(at) || ROLE_COMPLEMENT.has(word(at))) break;
           head = at;
@@ -875,7 +887,33 @@ function introducedRoles(text: string, vocabulary: ReadonlySet<string>): RolePhr
         }
         if (head >= 0 && !named && NOT_ROLES.has(word(head))) head = -1;
       }
-      if (head < 0) break;
+      if (head < 0) {
+        // A non-role item ("como referência", "como principal") ends only its own phrase (re-QA on PR #98): the
+        // list goes on after the next conjunction or comma of the clause ("como referência e tech lead").
+        if (!notRole && opener === start) break;
+        let next = -1;
+        let separated = false;
+        for (let at = opener; at < words.length; at += 1) {
+          if (ROLE_CONJUNCTIONS.has(word(at))) {
+            next = at + 1;
+            separated = words[at]?.pause === "comma";
+            break;
+          }
+          if (words[at]?.pause === "comma") {
+            next = at + 1;
+            separated = true;
+            break;
+          }
+          if (words[at]?.pause) break;
+        }
+        if (next < 0) break;
+        start = afterAside(next, separated);
+        strong = false;
+        named = false;
+        copula = false;
+        window = words.length;
+        continue;
+      }
       let end = head + 1;
       const open = () => end < words.length && !words[end - 1]?.pause;
       const seniority = () => {
@@ -931,20 +969,9 @@ function introducedRoles(text: string, vocabulary: ReadonlySet<string>): RolePhr
       }
       const conjunction = ROLE_CONJUNCTIONS.has(word(end));
       const separated = pause === "comma" || (conjunction && words[end]?.pause === "comma");
-      if (conjunction) start = end + 1;
-      else if (pause === "comma") start = end;
+      if (conjunction) start = afterAside(end + 1, separated);
+      else if (pause === "comma") start = afterAside(end, separated);
       else break;
-      // An aside between commas does not end the list ("e, mais tarde, tech lead", ", and later, tech lead"; QA on
-      // PR #98): up to `ROLE_ASIDE_WORDS` words without a role title word, closed by a comma.
-      if (separated) {
-        for (let at = start; at < Math.min(words.length, start + ROLE_ASIDE_WORDS); at += 1) {
-          if (ROLE_TITLE_WORDS.has(word(at)) || words[at]?.pause === "stop") break;
-          if (words[at]?.pause === "comma") {
-            start = at + 1;
-            break;
-          }
-        }
-      }
       strong = false;
       named = false;
       copula = false;

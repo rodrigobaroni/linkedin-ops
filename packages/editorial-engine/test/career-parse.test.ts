@@ -979,3 +979,40 @@ describe("Re-QA on PR #98 (847efbc): principal and staff are modifiers", () => {
     ).toEqual([]);
   });
 });
+
+describe("Re-QA on PR #98 (ce7e566): a non-role item does not end the list", () => {
+  const titles = ["Engenheira de software"];
+  const has = (found: string[], role: string) => found.some((name) => name.includes(role));
+
+  it.each([
+    ["Atuei como principal e tech lead.", "tech lead"],
+    ["Atuei como referência e tech lead do time.", "tech lead"],
+    ["Atuei como ponto focal e tech lead.", "tech lead"],
+    ["Fui a principal responsável e tech lead do time.", "tech lead"],
+    ["Atuei como principal responsável e, depois, tech lead.", "tech lead"],
+    ["Atuei como responsável pelo time e tech lead.", "tech lead"],
+    ["Atuei como principal referência e gerente de produto.", "gerente de produto"],
+    ["Worked as the principal point of contact and product manager.", "product manager"],
+  ])("canary: '%s' is rejected", (text, role) => {
+    expect(has(inventedRoleTitles(text, titles, "", ""), role)).toBe(true);
+  });
+
+  it.each([
+    "Atuei como ponto focal entre áreas.",
+    "Atuei como parte do squad de pagamentos.",
+    "Atuei como principal responsável pela migração.",
+    "Served as the point of contact for payments.",
+    "Atuei como responsável técnico.",
+  ])("positive: '%s' presents no role", (text) => {
+    expect(inventedRoleTitles(text, titles, "", "")).toEqual([]);
+  });
+
+  it("'No papel de responsável técnico' stays rejected", () => {
+    expect(
+      has(
+        inventedRoleTitles("No papel de responsável técnico, conduzi a migração.", titles),
+        "responsavel",
+      ),
+    ).toBe(true);
+  });
+});
