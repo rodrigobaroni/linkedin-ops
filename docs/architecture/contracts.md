@@ -439,8 +439,14 @@ nomes de Pena nos Structured Outputs e de `contracts` nos DTOs, ADR-0005 §9; `<
 | `cv.extract`             | `{ cvBaseId }`                    | `cvBaseId`       | 2, backoff                  | api → worker                    |
 | `job.fetch`              | `{ jobPostingId }`                | `jobPostingId`   | 1, após 60 s (ADR-0008)     | api → worker                    |
 | `cv.tailor`              | `{ jobPostingId }`                | `jobPostingId`   | 2, backoff                  | worker → worker                 |
+| `retention.purge`        | `{}`                              | —                | 1, backoff                  | cron diário 04:00 (America/Sao_Paulo) → worker |
 
 Todos os payloads carregam `schemaVersion`, `correlationId` e `requestedBy` (`{ type: USER\|SYSTEM, id }`).
+
+`retention.purge` (T-063) apaga só as categorias com prazo definido em ADR, spec ou código
+(`docs/security/data-inventory.md` §2, PR #117): sessões vencidas, revogadas ou além do absoluto de 30 dias, `oauth_states`
+vencidos ou usados e `idempotency_keys` vencidas. Roda em `dry-run` (só conta) até o operador definir
+`RETENTION_PURGE=enabled`; uma execução real que apaga algo grava `retention.purged` no audit, só com contagens.
 
 ---
 
