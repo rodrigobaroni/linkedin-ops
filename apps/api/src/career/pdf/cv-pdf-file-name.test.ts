@@ -12,6 +12,12 @@ describe("cvPdfFileName", () => {
     ).toBe("CV-Ana-Exemplo-da-Conceicao-Empresa-Ficticia-S-A-Engenheira-de-Software-Senior.pdf");
   });
 
+  it("transliterates Latin letters that have no ASCII decomposition", () => {
+    expect(
+      cvPdfFileName({ name: "Søren Łukasz Groß", company: "Æon Œuvre", title: "Þór Đorđe" }),
+    ).toBe("CV-Soren-Lukasz-Gross-AEon-OEuvre-Thor-Dorde.pdf");
+  });
+
   it("strips path separators, dots and control characters", () => {
     const name = cvPdfFileName({
       name: "../../etc/passwd",
