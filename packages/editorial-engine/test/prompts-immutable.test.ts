@@ -13,6 +13,7 @@ const PINNED: Record<string, string> = {
   "cv-extract@1.0.0": "373feaa03d456afbe89210fd7bded7b3a30ec7da14edd7e0d02ee0d7d98e67f0",
   "job-extract@1.0.0": "82912917fc1668adbb94caabc9a594e2a9f1ae510917ef99ba14a6e17f5bcdf9",
   "cv-tailor@1.0.0": "013b0988c871d1ae431f5cfd2302e30d8a408a137380382fdb06249f33a9b92f",
+  "cv-tailor@1.1.0": "60895cab62479fe21988e9210975f0ee28b0e838e2ef7ae1bd39bb27f3a5e9da",
   "cv-humanize@1.0.0": "5afbe845217835e23bfb4968a6c3d53c6b481d336b09302f34c88dc96bbcbe40",
 };
 

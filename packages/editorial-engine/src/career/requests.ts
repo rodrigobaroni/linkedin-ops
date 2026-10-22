@@ -11,7 +11,7 @@ import {
 import type { LlmRequest } from "../llm/port.js";
 import { CV_EXTRACT_V1_0_0 } from "../prompts/cv-extract/v1.0.0.js";
 import { CV_HUMANIZE_V1_0_0 } from "../prompts/cv-humanize/v1.0.0.js";
-import { CV_TAILOR_V1_0_0 } from "../prompts/cv-tailor/v1.0.0.js";
+import { CV_TAILOR_V1_1_0 } from "../prompts/cv-tailor/v1.1.0.js";
 import { JOB_EXTRACT_V1_0_0 } from "../prompts/job-extract/v1.0.0.js";
 import type { PromptDefinition } from "../prompts/common.js";
 import type { Rng } from "../runtime.js";
@@ -34,7 +34,7 @@ const FIELD_MAX_CHARS = 5_000;
 export const CAREER_PROMPTS = {
   "cv-extract": CV_EXTRACT_V1_0_0,
   "job-extract": JOB_EXTRACT_V1_0_0,
-  "cv-tailor": CV_TAILOR_V1_0_0,
+  "cv-tailor": CV_TAILOR_V1_1_0,
   "cv-humanize": CV_HUMANIZE_V1_0_0,
 } as const satisfies Record<string, PromptDefinition>;
 
@@ -125,7 +125,7 @@ export function buildCvTailorRequest(
     dataBlock("job_extracted_json", JSON.stringify(job), nonce),
   ].join("\n\n");
   return {
-    request: request(CV_TAILOR_V1_0_0, "cvTailoring", options.model, body),
+    request: request(CV_TAILOR_V1_1_0, "cvTailoring", options.model, body),
     truncated: false,
     preflightInjectionFlags: flags,
   };

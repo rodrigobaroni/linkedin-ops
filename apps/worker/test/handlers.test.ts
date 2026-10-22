@@ -364,7 +364,7 @@ describe("cv.tailor", () => {
     expect(saved.tailored).toMatchObject({
       generation: {
         promptVersions: {
-          "cv-tailor": "1.0.0",
+          "cv-tailor": "1.1.0",
           "cv-humanize": "1.0.0",
           "cv-competency-lexicon": "1.0.1",
         },
