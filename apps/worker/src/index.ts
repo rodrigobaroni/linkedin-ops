@@ -6,11 +6,13 @@ import {
   createPrismaClient,
   PrismaCvBaseDraftStore,
   PrismaCvBases,
+  PrismaFetchDomainGuard,
   RuntimeEnvError,
   validateWorkerEnv,
   type WorkerRuntimeEnv,
 } from "@linkedin-ops/domain";
 import { PgBoss } from "pg-boss";
+import { HttpJobPageFetcher } from "./career/http-job-page-fetcher.js";
 import { wireCareer } from "./career/wiring.js";
 import { createLogger } from "./logger.js";
 import { PGBOSS_SCHEMA_NAME } from "./jobs/queues.js";
@@ -42,7 +44,14 @@ async function main(): Promise<void> {
   const cvStore = new PrismaCvBaseDraftStore(
     new PrismaCvBases(prisma, (value) => CvStructuredSchema.parse(value)),
   );
-  const career = wireCareer(env, logger, { cvStore });
+  // Anonymous job-page fetcher (ADR-0008): the per-domain limiter, breaker and kill switch live in Postgres, so
+  // they survive restarts and are shared by every worker process. Consumed once the postings store is wired.
+  const fetcher = new HttpJobPageFetcher({
+    guard: new PrismaFetchDomainGuard(prisma, () => new Date(), {
+      linkedInFetch: env.jobFetchLinkedIn,
+    }),
+  });
+  const career = wireCareer(env, logger, { cvStore, fetcher });
 
   await startWorkerLifecycle({ boss, logger, career, onStopped: () => prisma.$disconnect() });
   logger.info({ nodeEnv: env.nodeEnv, openai: env.openai !== null }, "worker started");

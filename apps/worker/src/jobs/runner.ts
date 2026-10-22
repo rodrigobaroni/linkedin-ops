@@ -2,16 +2,24 @@
  * Wraps a typed handler into a pg-boss `perJobResults` handler (ADR-0002 §4, §7, §9):
  * - the payload is validated with the catalogue's Zod schema before anything runs (invalid → dead letter);
  * - `PermanentJobError` → dead letter at once; other errors → retried up to `retryLimit`, then dead letter;
+ * - `RescheduleJobError` → the payload is re-enqueued as a fresh job with its `startAfter` and this one completes
+ *   (no retry consumed; falls back to a retry if the re-enqueue fails);
  * - `CancelledJobError` caused by the worker's own shutdown (`shutdown` signal, raised before pg-boss stops) → the
  *   payload is re-enqueued as a fresh job and this one completes, so a shutdown never consumes a retry nor
  *   reaches the dead letter (falls back to a retry if the re-enqueue fails). A cancellation that pg-boss itself
  *   raised (job expired) follows pg-boss's retry; in both cases the item is never marked failed;
+ * - a re-enqueued job keeps the `group` (id and tier) of the original, so `groupConcurrency` still applies;
  * - each outcome is logged with queue, job id, attempt, duration and error class, never the payload.
  */
 import { QUEUES, type QueueName, type QueuePayload } from "@linkedin-ops/contracts";
-import type { Job, JobResult } from "pg-boss";
+import type { GroupOptions, Job, JobResult } from "pg-boss";
 import type { Logger } from "pino";
-import { CancelledJobError, PermanentJobError, RetryableJobError } from "./errors.js";
+import {
+  CancelledJobError,
+  PermanentJobError,
+  RescheduleJobError,
+  RetryableJobError,
+} from "./errors.js";
 
 export interface JobContext {
   jobId: string;
@@ -31,7 +39,24 @@ export type JobHandler<N extends QueueName> = (
 /** Delay before a cancelled job runs again (lets a restarting worker come back first). */
 export const CANCELLED_REQUEUE_DELAY_SECONDS = 30;
 
-export type Requeue<N extends QueueName> = (payload: QueuePayload<N>) => Promise<unknown>;
+export interface RequeueOptions {
+  /** Seconds from now, or an instant. */
+  startAfter: number | Date;
+  group?: GroupOptions;
+}
+
+/** Sends the payload as a new job of the same queue; rejects when nothing was enqueued. */
+export type Requeue<N extends QueueName> = (
+  payload: QueuePayload<N>,
+  options: RequeueOptions,
+) => Promise<unknown>;
+
+function groupOf(job: Job<unknown>): GroupOptions | undefined {
+  if (typeof job.groupId !== "string") return undefined;
+  return typeof job.groupTier === "string"
+    ? { id: job.groupId, tier: job.groupTier }
+    : { id: job.groupId };
+}
 
 export function createJobRunner<N extends QueueName>(
   queue: N,
@@ -69,10 +94,31 @@ export function createJobRunner<N extends QueueName>(
         jobLogger.info({ outcome: "completed", durationMs: now() - started }, "job completed");
         results.push({ id: job.id, status: "completed" });
       } catch (error) {
+        if (error instanceof RescheduleJobError && requeue !== null) {
+          try {
+            await requeue(payload, { startAfter: error.startAfter, group: groupOf(job) });
+            jobLogger.info(
+              {
+                outcome: "rescheduled",
+                durationMs: now() - started,
+                errorClass: `RESCHEDULED:${error.reason}`,
+                startAfter: error.startAfter.toISOString(),
+              },
+              "job rescheduled",
+            );
+            results.push({ id: job.id, status: "completed", output: { rescheduled: true } });
+            continue;
+          } catch {
+            jobLogger.warn({ errorClass: "RESCHEDULED:REQUEUE_FAILED" }, "re-enqueue failed");
+          }
+        }
         const byShutdown = shutdown?.aborted === true && !job.signal.aborted;
         if (error instanceof CancelledJobError && byShutdown && requeue !== null) {
           try {
-            await requeue(payload);
+            await requeue(payload, {
+              startAfter: CANCELLED_REQUEUE_DELAY_SECONDS,
+              group: groupOf(job),
+            });
             jobLogger.info(
               { outcome: "requeued", durationMs: now() - started, errorClass: "CANCELLED" },
               "job cancelled and re-enqueued",

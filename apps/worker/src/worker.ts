@@ -5,7 +5,7 @@
 import type { PgBoss } from "pg-boss";
 import type { Logger } from "pino";
 import type { WiredCareerHandlers } from "./career/handlers.js";
-import { CANCELLED_REQUEUE_DELAY_SECONDS, createJobRunner } from "./jobs/runner.js";
+import { createJobRunner, type RequeueOptions } from "./jobs/runner.js";
 import { WORK_OPTIONS, WORKER_QUEUES, provisionQueues } from "./jobs/queues.js";
 
 export interface WorkerDeps {
@@ -35,8 +35,12 @@ export async function registerWorkers({
   }
   const ids: string[] = [];
   for (const queue of wired) {
-    const requeue = (payload: object) =>
-      boss.send(queue, payload, { startAfter: CANCELLED_REQUEUE_DELAY_SECONDS });
+    // Same group as the original job (the runner passes it), so `groupConcurrency` keeps serializing it.
+    const requeue = async (payload: object, options: RequeueOptions) => {
+      const id = await boss.send(queue, payload, options);
+      if (id === null) throw new Error("re-enqueue was not accepted");
+      return id;
+    };
     const runner = createJobRunner(
       queue,
       career?.[queue] as never,

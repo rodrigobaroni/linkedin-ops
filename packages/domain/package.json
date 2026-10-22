@@ -38,6 +38,7 @@
     "@prisma/client": "catalog:",
     "argon2": "catalog:",
     "pg": "catalog:",
+    "tldts": "catalog:",
     "uuid": "catalog:",
     "zod": "catalog:"
   },

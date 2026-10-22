@@ -69,6 +69,9 @@ catalogs:
     nestjs-pino:
       specifier: ^5.3.1
       version: 5.3.1
+    parse5:
+      specifier: 8.0.1
+      version: 8.0.1
     pg:
       specifier: ^8.23.1
       version: 8.23.1
@@ -105,6 +108,9 @@ catalogs:
     swagger-ui-dist:
       specifier: ^5.34.0
       version: 5.34.0
+    tldts:
+      specifier: 7.4.18
+      version: 7.4.18
     tsx:
       specifier: ^4.21.0
       version: 4.23.15
@@ -350,6 +356,9 @@ importers:
       '@linkedin-ops/editorial-engine':
         specifier: workspace:*
         version: link:../../packages/editorial-engine
+      parse5:
+        specifier: 'catalog:'
+        version: 8.0.1
       pg-boss:
         specifier: 'catalog:'
         version: 12.37.0(@opentelemetry/api@1.9.1)
@@ -461,6 +470,9 @@ importers:
       pg:
         specifier: 'catalog:'
         version: 8.23.1
+      tldts:
+        specifier: 'catalog:'
+        version: 7.4.18
       uuid:
         specifier: 'catalog:'
         version: 14.0.3

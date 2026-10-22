@@ -25,11 +25,22 @@ import {
   type LlmClient,
   type Rng,
 } from "@linkedin-ops/editorial-engine";
-import type { CareerFailureReason, CvBaseDraftStore, JobPostingStore } from "@linkedin-ops/domain";
-import { CancelledJobError, PermanentJobError, RetryableJobError } from "../jobs/errors.js";
+import {
+  JOB_FETCH_LINKEDIN_DOMAIN,
+  jobFetchGroupId,
+  type CareerFailureReason,
+  type CvBaseDraftStore,
+  type JobPostingStore,
+} from "@linkedin-ops/domain";
+import {
+  CancelledJobError,
+  PermanentJobError,
+  RescheduleJobError,
+  RetryableJobError,
+} from "../jobs/errors.js";
 import type { JobContext, JobHandler } from "../jobs/runner.js";
 import { runLlmStep, runLlmStepWithRegenerations } from "./llm-step.js";
-import { JobFetchError, type JobPageFetcher } from "./ports.js";
+import { JobFetchDeferredError, JobFetchError, type JobPageFetcher } from "./ports.js";
 
 /** Spec §5 step 5: the humanizer runs once and regenerates at most twice. */
 export const HUMANIZE_MAX_ATTEMPTS = 3;
@@ -73,10 +84,10 @@ async function failIfFinal(
   throw error;
 }
 
+/** True when `url` lands on LinkedIn's rules (its registrable domain, `lnkd.in` included). */
 export function isLinkedInUrl(url: string): boolean {
   try {
-    const host = new URL(url).hostname.toLowerCase();
-    return host === "linkedin.com" || host.endsWith(".linkedin.com");
+    return jobFetchGroupId(url) === JOB_FETCH_LINKEDIN_DOMAIN;
   } catch {
     return false;
   }
@@ -164,17 +175,24 @@ export function createCareerHandlers(deps: CareerHandlerDeps): CareerHandlers {
       text = posting.fetchedText;
       context.logger.info({ fetchOutcome: "reused" }, "job page text reused");
     } else if (isLinkedInUrl(source.url) && !deps.linkedInFetchEnabled) {
+      // Same reason as a redirect to LinkedIn refused by the guard (Maestro D2), without touching the network.
       context.logger.info(
         { outcome: "paste-text", reason: "kill-switch" },
         "linkedin fetch disabled",
       );
-      await markFailed("fetch");
+      await markFailed("fetch_blocked");
       return;
     } else {
       try {
-        const fetched = (await deps.fetcher.fetchJobText(source.url, context.signal)).text;
+        const fetched = (
+          await deps.fetcher.fetchJobText(source.url, context.signal, context.logger)
+        ).text;
         text = sanitizeUntrustedText(fetched, JOB_TEXT_MAX_CHARS).text;
       } catch (error) {
+        if (error instanceof JobFetchDeferredError && !context.signal.aborted) {
+          context.logger.info({ fetchOutcome: "deferred" }, "job page fetch deferred");
+          throw new RescheduleJobError(error.retryAt, "fetch:wait");
+        }
         const kind = error instanceof JobFetchError ? error.kind : "transient";
         context.logger.info({ fetchOutcome: kind }, "job page fetch failed");
         if (kind === "blocked") return markFailed("fetch_blocked");

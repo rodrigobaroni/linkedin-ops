@@ -2,7 +2,12 @@ import { Writable } from "node:stream";
 import { pino } from "pino";
 import { describe, expect, it } from "vitest";
 import type { Job } from "pg-boss";
-import { CancelledJobError, PermanentJobError, RetryableJobError } from "../src/jobs/errors.js";
+import {
+  CancelledJobError,
+  PermanentJobError,
+  RescheduleJobError,
+  RetryableJobError,
+} from "../src/jobs/errors.js";
 import { createJobRunner } from "../src/jobs/runner.js";
 import { REDACTED_PATHS } from "../src/logger.js";
 
@@ -100,13 +105,17 @@ describe("createJobRunner (ADR-0002 §7)", () => {
         return Promise.reject(new CancelledJobError());
       },
       logger,
-      (payload) => (requeued.push(payload), Promise.resolve()),
+      (payload, options) => (requeued.push(payload, options), Promise.resolve()),
       shutdown.signal,
     );
-    await expect(run([job(PAYLOAD, 2)])).resolves.toEqual([
-      { id: "job-1", status: "completed", output: { cancelled: true } },
+    await expect(
+      run([{ ...job(PAYLOAD, 2), groupId: "linkedin.com", groupTier: "standard" }]),
+    ).resolves.toEqual([{ id: "job-1", status: "completed", output: { cancelled: true } }]);
+    // The re-enqueued job keeps its group, so groupConcurrency still serializes it per domain.
+    expect(requeued).toEqual([
+      PAYLOAD,
+      { startAfter: 30, group: { id: "linkedin.com", tier: "standard" } },
     ]);
-    expect(requeued).toEqual([PAYLOAD]);
   });
 
   it("a cancellation raised by pg-boss (job expired) follows pg-boss's retry, without re-enqueue", async () => {
@@ -144,5 +153,33 @@ describe("createJobRunner (ADR-0002 §7)", () => {
       logger,
     );
     await expect(none([job(PAYLOAD)])).resolves.toEqual([{ id: "job-1", status: "failed" }]);
+  });
+
+  it("reschedules with startAfter in the same group, completing the job without consuming a retry", async () => {
+    const { logger, lines } = capture();
+    const requeued: unknown[] = [];
+    const at = new Date("2026-10-22T12:00:15.000Z");
+    const run = createJobRunner(
+      "cv.extract",
+      () => Promise.reject(new RescheduleJobError(at, "fetch:wait")),
+      logger,
+      (payload, options) => (requeued.push(payload, options), Promise.resolve()),
+    );
+    await expect(run([{ ...job(PAYLOAD, 1), groupId: "gupy.io" }])).resolves.toEqual([
+      { id: "job-1", status: "completed", output: { rescheduled: true } },
+    ]);
+    expect(requeued).toEqual([PAYLOAD, { startAfter: at, group: { id: "gupy.io" } }]);
+    expect(lines.join()).toContain('"outcome":"rescheduled"');
+  });
+
+  it("a reschedule falls back to a retry when the re-enqueue fails", async () => {
+    const { logger } = capture();
+    const run = createJobRunner(
+      "cv.extract",
+      () => Promise.reject(new RescheduleJobError(new Date(), "fetch:wait")),
+      logger,
+      () => Promise.reject(new Error("db down")),
+    );
+    await expect(run([job(PAYLOAD)])).resolves.toEqual([{ id: "job-1", status: "failed" }]);
   });
 });

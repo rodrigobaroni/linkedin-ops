@@ -56,6 +56,12 @@ catalog:
   # extraction in pure JS (pdf.js serverless build, no native binary; `@napi-rs/canvas` peer stays absent).
   "@fastify/multipart": 10.1.2
   unpdf: 1.8.1
+  # Registrable domain (eTLD+1, Public Suffix List) for the per-domain job.fetch limiter (ADR-0008 §4);
+  # 7.4.18 of 2026-10-07, already in the lockfile through tough-cookie.
+  tldts: 7.4.18
+  # HTML parsing only (no DOM, no scripts) for the job page main text (ADR-0008 §2); 8.0.1, already in the
+  # lockfile through jsdom.
+  parse5: 8.0.1
 
 # pnpm 10 blocks install scripts by default. Only these packages may run them (T-005): the Prisma CLI and
 # its schema engine download, argon2's native binding, and esbuild (used by tsx and Vitest).

@@ -129,3 +129,76 @@ Facts this decision must not hide:
 - **SSRF:** user-supplied URLs pass the shared `SafeHttpClient` controls (TM-08, TM-25).
 - **Prompt injection:** job text is untrusted data, delimited and covered by adversarial tests (TM-09, TM-28).
 - **Gate:** G-07 must pass before the fetcher runs in production.
+
+## Implementation notes (Career PR 3a, 2026-10-22)
+
+Where each decision lives in `apps/worker` and what was decided while implementing it. The status stays
+`proposed` until Sentinela's review; G-07 stays closed until then.
+
+- **§5 SSRF**: `src/http/safe-http-client.ts` and `src/http/address-policy.ts`, on `node:http`/`node:https` and
+  `zlib` (no new dependency). Each hop resolves the host once and refuses it if *any* address is non-public; the
+  socket's `lookup` returns the validated address, so nothing re-resolves before connecting, and TLS still
+  verifies the certificate against the hostname. Besides IP literals, the hostnames `localhost`, single-label
+  names (search domains of the container) and `.localhost`, `.local`, `.internal`, `.home.arpa` and `.lan` are
+  refused before resolution. IPv6 must be global unicast (`2000::/3`), minus Teredo, 6to4 and documentation
+  ranges. Extra Docker/VM CIDRs are an `AddressPolicy` option, empty by default: the default Docker networks
+  are already private ranges. The 2 MB limit applies both to the bytes on the wire and to the decompressed
+  body (gzip, deflate, br). `application/xhtml+xml` is accepted along with `text/html` and `text/plain`.
+  Extra codes: `redirect_limit`, `network`, `aborted`.
+- **§1, §4 per-hop policy**: `src/career/job-fetch-policy.ts`. Every hop, the redirect targets included, is
+  judged by its destination's `jobFetchGroupId` in this order: LinkedIn path, login redirect, then
+  `FetchDomainGuard.acquire`. `lnkd.in` belongs to `linkedin.com` (guard alias). It is accepted only as a hop:
+  if it answers 200 (an interstitial page), the fetch is `permanent`. The accepted LinkedIn path is strictly
+  `/jobs/view/<digits>`: a `/jobs/view/<slug>-<id>` form is refused, so Rodrigo pastes the text.
+- **Guard outcomes** (Maestro, 2026-10-22): `quota_exhausted`, `breaker_open` and `disabled` →
+  `fetch_blocked`.
+  - `wait` on the first hop reschedules the job: `RescheduleJobError` → `startAfter = retryAt`, same `group`,
+    no retry consumed.
+  - `wait` on a redirect hop no longer than the domain's interval (≤ 15 s) sleeps once in the chain and
+    acquires again. Without this, `lnkd.in` → `www.linkedin.com` would loop forever, because the second hop
+    always meets the first one's interval. A second `wait` reschedules.
+  - One attempt sends at most 4 requests (each counts against the quota when reserved). An `lnkd.in` link costs
+    2 of the 40 daily LinkedIn requests.
+  - Wall-clock ceiling of one attempt: 90 s (`JOB_FETCH_CEILING_MS`) = 15 s of network + at most 3 in-chain
+    waits + margin. That is well under the 300 s `expireInSeconds` of `job.fetch`.
+- **Kill switch**: `disabled` gives `fetch_blocked` both in the handler's pre-check (by `jobFetchGroupId`, so
+  `lnkd.in` is covered without touching the network) and in the guard, on any hop that lands on LinkedIn.
+- **Stop signals**:
+  - 429, 999 and 403 trip the breaker of the domain that answered;
+  - a redirect to `/login`, `/authwall`, `/checkpoint` or `/uas/` trips the breaker only when it comes from the
+    same domain (counting `lnkd.in` as LinkedIn). A third party redirecting to LinkedIn's login fails as
+    `permanent` (paste-text) and leaves LinkedIn's breaker closed: LinkedIn was never contacted, and opening the
+    breaker would let any third-party page block every LinkedIn fetch for 24 h (QA #104, decision of the
+    Maestro);
+  - a login wall or CAPTCHA page trips the breaker of the domain that served it.
+- **Retries**: network errors, the timeout and `5xx` (not 999) are `transient`. Anything else is `permanent`
+  (paste-text).
+- **Hostile markup** (QA #104): parse5's cost grows quadratically with nesting depth (512 KB of `<div>` took
+  52 s), and synchronous code would block the whole worker (pg-boss heartbeats, other queues, SIGTERM), which
+  `expireInSeconds` cannot interrupt. The extraction therefore runs in a worker thread
+  (`job-page-text-runner.ts`):
+  - with a hard timeout of 5 s and memory and stack limits;
+  - behind a linear pre-scan that refuses more than 100 000 elements or a depth over 256. The pre-scan
+    over-estimates depth: unmatched end tags close nothing, `<div/>` opens, and implicitly closed elements do
+    not count;
+  - with iterative tree walks capped at depth 1 024, and a `mainText` that measures only the outermost
+    candidates, so it stays linear;
+  - any failure (limit, timeout, crash) is `unreadable` → `permanent`, so no new fetch spends quota on the same
+    page.
+
+  A redirect or error response is destroyed, never drained, and `lnkd.in.` (trailing dot) counts as the
+  shortener.
+- **§6 main text**: `src/career/job-page-text.ts`, with `parse5` as a parser only. The `JobPosting` JSON-LD
+  description is preferred (decoded as HTML, never interpreted), then `main`, `article` and
+  `[class*=description]`, then the body. Hidden elements, scripts and forms are dropped. A password field on a
+  short page, or a reCAPTCHA, hCaptcha or Cloudflare marker, is a login wall.
+- **§2 anonymity**: `src/career/http-job-page-fetcher.ts` receives only the HTTP client and the guard.
+  - `test/fetcher-architecture.test.ts` walks its import graph. Allowed: Node, `parse5`, Pino and an
+    allow-list of domain names. Never `process.env`, the vault, sessions, Prisma or the LinkedIn API.
+  - A canary test over the real client proves that no cookie, token or secret is sent.
+  - User agent: `LinkedInOpsJobFetcher/1.0.0 (self-hosted; single user)`.
+- **Persistence**: `PrismaFetchDomainGuard` (Alicerce, `job_fetch_domain_state`) is wired in
+  `src/index.ts`. The fetcher stays inert until the postings store is wired in Career PR 3b.
+- **Re-enqueues keep the group**: both the shutdown cancellation and the reschedule re-enqueue with the
+  original job's `group` id and tier. Before 3a the cancellation re-enqueue dropped it, so the job escaped
+  `groupConcurrency: 1`.

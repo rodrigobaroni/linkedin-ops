@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { pino } from "pino";
 import { describe, expect, it } from "vitest";
 import { STOP_TIMEOUT_MS, startWorkerLifecycle } from "../src/lifecycle.js";
+import { RescheduleJobError } from "../src/jobs/errors.js";
 import { registerWorkers } from "../src/worker.js";
 
 function fakeBoss() {
@@ -96,5 +97,47 @@ describe("registerWorkers", () => {
     fake.release();
     await stopping;
     expect(fake.calls).toEqual(["start", "stop", "onStopped"]);
+  });
+
+  it("re-enqueues a rescheduled job.fetch through boss.send with its group and startAfter", async () => {
+    const fake = fakeBoss();
+    const sent: unknown[] = [];
+    let runner: ((jobs: unknown[]) => Promise<unknown>) | null = null;
+    const at = new Date("2026-10-22T12:00:15.000Z");
+    const boss = {
+      ...fake.boss,
+      work: (_queue: string, _options: unknown, handler: typeof runner) => (
+        (runner = handler),
+        Promise.resolve("w")
+      ),
+      send: (...args: unknown[]) => (sent.push(args), Promise.resolve("new-job")),
+    };
+    await registerWorkers({
+      boss: boss as never,
+      logger: pino({ level: "silent" }),
+      career: { "job.fetch": () => Promise.reject(new RescheduleJobError(at, "fetch:wait")) },
+    });
+    const payload = {
+      schemaVersion: 1,
+      correlationId: "req_01JABCDEF",
+      requestedBy: { type: "USER", id: "018f6b1e-7c2a-7b3c-9d4e-000000000001" },
+      jobPostingId: "018f6b1e-7c2a-7b3c-9d4e-000000000020",
+    };
+    const results = await (runner as unknown as (jobs: unknown[]) => Promise<unknown>)([
+      {
+        id: "j1",
+        name: "job.fetch",
+        data: payload,
+        retryCount: 0,
+        expireInSeconds: 300,
+        heartbeatSeconds: null,
+        signal: new AbortController().signal,
+        groupId: "linkedin.com",
+      },
+    ]);
+    expect(results).toEqual([{ id: "j1", status: "completed", output: { rescheduled: true } }]);
+    expect(sent).toEqual([
+      ["job.fetch", payload, { startAfter: at, group: { id: "linkedin.com" } }],
+    ]);
   });
 });

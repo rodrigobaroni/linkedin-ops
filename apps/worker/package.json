@@ -2,7 +2,7 @@
   "name": "@linkedin-ops/worker",
   "version": "0.0.0",
   "private": true,
-  "description": "Background worker (pg-boss) \u2014 job handlers and external-service adapters over the domain layer",
+  "description": "Background worker (pg-boss) — job handlers and external-service adapters over the domain layer",
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -17,6 +17,7 @@
     "@linkedin-ops/contracts": "workspace:*",
     "@linkedin-ops/domain": "workspace:*",
     "@linkedin-ops/editorial-engine": "workspace:*",
+    "parse5": "catalog:",
     "pg-boss": "catalog:",
     "pino": "catalog:",
     "zod": "catalog:"

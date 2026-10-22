@@ -376,6 +376,24 @@ model LoginThrottle {
   @@map("login_throttles")
 }
 
+/// Per-domain state of `job.fetch` (ADR-0008 §4): limiter (last request, rolling 24 h quota window) and
+/// circuit breaker, keyed by `jobFetchGroupId` (ICANN eTLD+1, `lnkd.in` → `linkedin.com`). Persisted so a
+/// restart never resets a quota or an open breaker. Belongs to the egress IP, not to a user: no `user_id`,
+/// no URL, no page content.
+model JobFetchDomainState {
+  domain           String     @id
+  lastRequestAt    DateTime?  @map("last_request_at") @db.Timestamptz(3)
+  /// Granted requests inside the rolling 24 h window; only for domains with a quota (at most 40).
+  recentRequests   DateTime[] @default([]) @map("recent_requests") @db.Timestamptz(3)
+  breakerOpenUntil DateTime?  @map("breaker_open_until") @db.Timestamptz(3)
+  /// `FetchStopSignal` (CHECK in the migration).
+  breakerSignal    String?    @map("breaker_signal")
+  breakerOpenedAt  DateTime?  @map("breaker_opened_at") @db.Timestamptz(3)
+  updatedAt        DateTime   @map("updated_at") @db.Timestamptz(3)
+
+  @@map("job_fetch_domain_state")
+}
+
 /// Transient OAuth `state` (ADR-0007 N1, oauth-and-tokens.md §2.1). Only hashes are stored; the row is
 /// claimed atomically (`used_at`) before any call to LinkedIn and purged after expiry.
 model OAuthState {
