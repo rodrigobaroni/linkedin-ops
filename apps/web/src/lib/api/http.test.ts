@@ -9,7 +9,7 @@ import {
 } from "@linkedin-ops/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { CsrfTokenStore } from "./csrf-token-store";
-import { buildPath, createApiClient } from "./http";
+import { buildPath, createApiClient, filenameFromDisposition } from "./http";
 import { ApiNetworkError, ApiProblem, parseRetryAfter } from "./problem";
 
 const ME = {
@@ -111,6 +111,36 @@ describe("createApiClient", () => {
     expect(headers.get("X-Requested-With")).toBe("linkedin-ops");
     await expect(client.request(routes.upload)).rejects.toThrow(/multipart/);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("binary route: Accept PDF or Problem, body as a Blob, file name from Content-Disposition", async () => {
+    const pdf = new Response(new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": 'attachment; filename="CV-Ana-Empresa-Cargo.pdf"',
+      },
+    });
+    const { client, fetchMock } = setup([pdf]);
+    const id = "0199a3f2-0000-7000-8000-000000000009";
+    const result = await client.request(routesV1["career.jobs.pdf"], { params: { id } });
+    const { url, init, headers } = requestOf(fetchMock);
+    expect(url).toBe(`http://localhost:3000/api/v1/career/jobs/${id}/pdf`);
+    expect(init.method).toBe("GET");
+    expect(init.credentials).toBe("include");
+    expect(headers.get("Accept")).toBe(`application/pdf, ${PROBLEM_CONTENT_TYPE}`);
+    expect(result.filename).toBe("CV-Ana-Empresa-Cargo.pdf");
+    expect(new Uint8Array(await result.blob.arrayBuffer())).toEqual(
+      new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]),
+    );
+  });
+
+  it("binary route: errors are still Problem Details, with Retry-After", async () => {
+    const { client } = setup([problem("RATE_LIMITED", { "Retry-After": "120" })]);
+    const failure = client.request(routesV1["career.jobs.pdf"], {
+      params: { id: "0199a3f2-0000-7000-8000-000000000009" },
+    });
+    await expect(failure).rejects.toMatchObject({ code: "RATE_LIMITED", retryAfterSeconds: 120 });
   });
 
   it("adds X-CSRF-Token on elevated routes and when asked explicitly", async () => {
@@ -233,6 +263,19 @@ describe("parseRetryAfter", () => {
     const now = Date.parse("2026-10-21T12:00:00Z");
     expect(parseRetryAfter("Wed, 21 Oct 2026 12:05:00 GMT", now)).toBe(300);
     expect(parseRetryAfter("soon")).toBeUndefined();
+  });
+});
+
+describe("filenameFromDisposition", () => {
+  it("keeps only a plain ASCII file name", () => {
+    expect(filenameFromDisposition('attachment; filename="CV-Ana-Empresa.pdf"')).toBe(
+      "CV-Ana-Empresa.pdf",
+    );
+    expect(filenameFromDisposition(null)).toBeNull();
+    expect(filenameFromDisposition("attachment")).toBeNull();
+    expect(filenameFromDisposition('attachment; filename="../etc/passwd"')).toBeNull();
+    expect(filenameFromDisposition('attachment; filename=".hidden.pdf"')).toBeNull();
+    expect(filenameFromDisposition('attachment; filename="CV Ana.pdf"')).toBeNull();
   });
 });
 

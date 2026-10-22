@@ -433,6 +433,20 @@ export const messages = {
           behavioral: "Competências comportamentais",
           empty: "Nenhum conteúdo nesta seção.",
         },
+        /** "Baixar PDF" (Aurora §3; PR 3c route by Pêndulo). Error texts beyond Aurora's: Maestro, Aurora reviews. */
+        pdf: {
+          download: "Baixar PDF",
+          preparing: "Preparando PDF…",
+          error: "Não foi possível gerar o PDF. Tente novamente.",
+          stale:
+            "Seu CV base mudou e este CV adaptado precisa ser refeito. Reprocesse a vaga para baixar o PDF.",
+          rateLimited: (minutes: number) =>
+            minutes <= 1
+              ? "Muitos downloads em pouco tempo. Tente de novo em 1 minuto."
+              : `Muitos downloads em pouco tempo. Tente de novo em ${minutes} minutos.`,
+          sessionExpired: "Sua sessão expirou. Entre de novo para baixar o PDF.",
+          notFound: "Esta vaga não existe mais.",
+        },
         provenance: {
           original: "Original",
           rewritten: "Reescrito",

@@ -65,8 +65,9 @@ In `dev:mock` the PDF's file name picks a failure: `ilegivel` (`422 CV_PDF_UNREA
 poll meanwhile. Repeated links are merged; a LinkedIn link that is not `/jobs/view/<id>` is created
 `FAILED`/`FETCH_BLOCKED`. A word in the link picks the outcome: `bloqueado` (`FETCH_BLOCKED`), `site-fora`
 (`FETCH`), `nao-vaga` (`NOT_A_JOB`), `ia-fora` (`AI`), `parado` (`TIMED_OUT`), `cv-antigo` (ready, generated
-with the previous CV), `injecao` (ready, posting flagged as prompt injection) or `longo` (the whole batch
-refused with `422 JOB_POSTING_URL_REJECTED`).
+with the previous CV), `injecao` (ready, posting flagged as prompt injection), `cv-mudou` ("Baixar PDF" refused
+with `409 TAILORED_CV_STALE`) or `longo` (the whole batch refused with `422 JOB_POSTING_URL_REJECTED`). A ready
+posting downloads a tiny fictitious PDF.
 
 ## Layout
 
@@ -78,7 +79,7 @@ src/components/auth/        LoginForm/LoginScreen, RequireSession, LogoutButton,
 src/components/shell/       Skip link, sidebar (desktop/tablet), bottom nav + "Mais" drawer (mobile), page header, route focus
 src/components/publish/     /publicar: LinkedIn connection card, composer (counter, escaped preview, confirm + 🔐), recent publications
 src/components/career/      /carreira/cv: PDF upload, extraction polling, section-by-section review, confirm, replace, delete (🔐);
-                            /carreira/vagas and /carreira/vagas/[id]: batch of links, status polling, paste text, reprocess, delete, match report
+                            /carreira/vagas and /carreira/vagas/[id]: batch of links, status polling, paste text, reprocess, delete, match report, "Baixar PDF"
 src/components/placeholder-screen.tsx   Header + empty/loading/error state; `?estado=vazio|carregando|erro` previews (dev only)
 src/config/navigation.ts    Navigation map (docs/product/design/navigation-map.md)
 src/config/screens.ts       Per-screen copy (docs/product/design/screen-states.md)

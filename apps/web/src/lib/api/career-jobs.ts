@@ -8,7 +8,7 @@ import {
   type TailoringBatchAccepted,
   routesV1,
 } from "@linkedin-ops/contracts";
-import type { ApiClient } from "./http";
+import type { ApiClient, BinaryBody } from "./http";
 
 export type {
   JobPostingAccepted,
@@ -29,7 +29,32 @@ const routes = {
   pasteText: routesV1["career.jobs.pasteText"],
   retry: routesV1["career.jobs.retry"],
   remove: routesV1["career.jobs.delete"],
+  pdf: routesV1["career.jobs.pdf"],
 };
+
+/** Name used when the API sends no usable `Content-Disposition` file name. */
+export const TAILORED_CV_FALLBACK_FILENAME = "CV-adaptado.pdf";
+
+/**
+ * Hands a downloaded file to the browser: an object URL clicked through a temporary `<a download>`, revoked
+ * right after. Nothing is stored; the PDF holds personal data.
+ */
+export function saveFile(blob: Blob, filename: string): void {
+  const href = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = href;
+  anchor.download = filename;
+  anchor.rel = "noopener";
+  anchor.style.display = "none";
+  document.body.append(anchor);
+  try {
+    anchor.click();
+  } finally {
+    anchor.remove();
+    // Some browsers read the URL after the click returns: revoke on the next task.
+    setTimeout(() => URL.revokeObjectURL(href), 0);
+  }
+}
 
 export const CAREER_JOBS_QUERY_KEY = ["career", "jobs"] as const;
 
@@ -100,6 +125,8 @@ export function createCareerJobsApi(client: ApiClient) {
       client.request(routes.retry, { params: { id } }),
     /** `DELETE /career/jobs/{id}`: the posting and its tailored CV. */
     remove: (id: string): Promise<void> => client.request(routes.remove, { params: { id } }),
+    /** `GET /career/jobs/{id}/pdf`: the tailored CV as a PDF (READY only), without provenance marks. */
+    pdf: (id: string): Promise<BinaryBody> => client.request(routes.pdf, { params: { id } }),
   };
 }
 export type CareerJobsApi = ReturnType<typeof createCareerJobsApi>;

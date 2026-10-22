@@ -2,6 +2,7 @@ import {
   API_V1_BASE_PATH,
   CSRF_TOKEN_HEADER,
   IDEMPOTENCY_KEY_HEADER,
+  PROBLEM_CONTENT_TYPE,
   REQUESTED_WITH_HEADER,
   type RouteDefinition,
 } from "@linkedin-ops/contracts";
@@ -45,13 +46,22 @@ export type RequestOptions<Route extends RouteDefinition> = {
   signal?: AbortSignal;
 };
 
-type SuccessBody<Route extends RouteDefinition> = Route["responses"][200] extends z.ZodType
-  ? z.output<Route["responses"][200]>
-  : Route["responses"][201] extends z.ZodType
-    ? z.output<Route["responses"][201]>
-    : Route["responses"][202] extends z.ZodType
-      ? z.output<Route["responses"][202]>
-      : undefined;
+/**
+ * Success of a binary route (`responseContentType: "application/pdf"`): the body as a `Blob` and the file
+ * name from `Content-Disposition` (`null` when absent or not a safe ASCII name).
+ */
+export type BinaryBody = { blob: Blob; filename: string | null };
+
+type SuccessBody<Route extends RouteDefinition> =
+  Route["responseContentType"] extends "application/pdf"
+    ? BinaryBody
+    : Route["responses"][200] extends z.ZodType
+      ? z.output<Route["responses"][200]>
+      : Route["responses"][201] extends z.ZodType
+        ? z.output<Route["responses"][201]>
+        : Route["responses"][202] extends z.ZodType
+          ? z.output<Route["responses"][202]>
+          : undefined;
 
 export type ApiClient = {
   request: <Route extends RouteDefinition>(
@@ -77,6 +87,17 @@ function buildQuery(query: RequestOptions<RouteDefinition>["query"]): string {
   }
   const encoded = search.toString();
   return encoded ? `?${encoded}` : "";
+}
+
+/**
+ * `attachment; filename="CV-Nome-Empresa-Cargo.pdf"` → the name, kept only when it is plain ASCII letters,
+ * digits, dot, underscore and hyphen (the API emits exactly that); anything else yields `null` and the caller
+ * picks its own name. `filename*` (RFC 5987) is not used by the API.
+ */
+export function filenameFromDisposition(value: string | null): string | null {
+  const match = value ? /filename="([^"]*)"/i.exec(value) : null;
+  const name = match?.[1];
+  return name && /^[A-Za-z0-9._-]{1,200}$/.test(name) && !name.startsWith(".") ? name : null;
 }
 
 /** Same-origin absolute URL: `fetch` in Node (Vitest/MSW) does not resolve relative paths by itself. */
@@ -108,7 +129,13 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     if (isMultipart && !(requestOptions.formData instanceof FormData)) {
       throw new Error(`${route.method} ${route.path} is multipart: pass \`formData\``);
     }
-    const headers = new Headers({ Accept: JSON_CONTENT_TYPE });
+    const isBinary = route.responseContentType === "application/pdf";
+    // A binary route still answers errors as Problem Details.
+    const headers = new Headers({
+      Accept: isBinary
+        ? `${route.responseContentType}, ${PROBLEM_CONTENT_TYPE}`
+        : JSON_CONTENT_TYPE,
+    });
     if (isMutation) {
       if (!isMultipart) headers.set("Content-Type", JSON_CONTENT_TYPE);
       headers.set(REQUESTED_WITH_HEADER.name, REQUESTED_WITH_HEADER.value);
@@ -150,6 +177,17 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         return send(route, requestOptions, attempt + 1);
       }
       throw problem;
+    }
+
+    if (isBinary) {
+      let blob: Blob;
+      try {
+        blob = await response.blob();
+      } catch (cause) {
+        throw new ApiNetworkError(cause);
+      }
+      const filename = filenameFromDisposition(response.headers.get("Content-Disposition"));
+      return { blob, filename } as SuccessBody<Route>;
     }
 
     const schema = route.responses[response.status as 200 | 201 | 202];

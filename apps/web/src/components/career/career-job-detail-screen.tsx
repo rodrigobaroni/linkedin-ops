@@ -21,6 +21,7 @@ import { messages } from "@/i18n/pt-br";
 import { type JobPostingDetail, isApiProblem, isProcessing, jobDomain } from "@/lib/api";
 import { type JobNotice, JobActions, actionErrorText } from "./job-actions";
 import { JobReport } from "./job-report";
+import { PdfDownload } from "./pdf-download";
 import { JobStatusBadge, failureReasonText, jobName } from "./job-status";
 import { useCareerCv } from "./use-career-cv";
 import { useCareerJob, useCareerJobsApi, useInvalidateJobs } from "./use-career-jobs";
@@ -35,7 +36,7 @@ export type CareerJobDetailScreenProps = {
 };
 
 /**
- * `/carreira/vagas/{id}` (career PR 3b, Aurora spec §3, without the PDF of PR 3c): the posting's status while
+ * `/carreira/vagas/{id}` (career PR 3b, Aurora spec §3; "Baixar PDF" over the PR 3c route): the posting's status while
  * it is processed (polled), the safe reason and the actions when it failed, and, when ready, the match report
  * and the tailored CV with provenance (review only, D4). Focus goes to the `h1` once the posting is loaded.
  */
@@ -109,12 +110,17 @@ export function CareerJobDetailScreen({ id, pollInitialMs }: CareerJobDetailScre
       <>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <JobStatusBadge status={posting.status} />
-          <JobActions
-            posting={posting}
-            layout="detail"
-            onNotice={showNotice}
-            onRemoved={() => router.push("/carreira/vagas")}
-          />
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start">
+            {posting.status === "READY" && posting.tailoring ? (
+              <PdfDownload postingId={posting.id} onNotice={showNotice} />
+            ) : null}
+            <JobActions
+              posting={posting}
+              layout="detail"
+              onNotice={showNotice}
+              onRemoved={() => router.push("/carreira/vagas")}
+            />
+          </div>
         </div>
         <div ref={noticeRef} tabIndex={-1} className="outline-none empty:hidden">
           {notice ? (

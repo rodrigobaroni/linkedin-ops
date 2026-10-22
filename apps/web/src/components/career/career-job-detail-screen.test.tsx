@@ -1,12 +1,14 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { messages } from "@/i18n/pt-br";
 import { mockActiveCv, resetMockCareer } from "@/mocks/career-handlers";
 import {
   MOCK_JOB_INJECTION_EVIDENCE,
   MOCK_JOB_TITLE,
+  MOCK_PDF_FILENAME,
   advanceMockJobs,
+  failNextMockPdf,
   mockJob,
   mockJobsState,
 } from "@/mocks/career-jobs-handlers";
@@ -18,6 +20,7 @@ import { CareerJobDetailScreen } from "./career-job-detail-screen";
 vi.mock("next/navigation", async () => (await import("@/test/next-navigation")).navigationMock);
 
 const jobsCopy = messages.career.jobs;
+
 const copy = jobsCopy.detail;
 const POLL_MS = 20;
 
@@ -43,7 +46,7 @@ describe("CareerJobDetailScreen", () => {
     resetMockCareer({ active: mockActiveCv() });
   });
 
-  it("ready: h1 with the role takes focus; score, requirements, additions and provenance; no PDF button", async () => {
+  it("ready: h1 with the role takes focus; score, requirements, additions, provenance and 'Baixar PDF'", async () => {
     const job = mockJob("https://empresa.com/vaga");
     await renderDetail(job.id);
     const title = await screen.findByRole("heading", { level: 1, name: MOCK_JOB_TITLE });
@@ -85,7 +88,7 @@ describe("CareerJobDetailScreen", () => {
     expect(within(tailored).getAllByText(copy.provenance.rewritten).length).toBeGreaterThan(0);
     expect(within(tailored).getByText(copy.provenance.added)).toBeInTheDocument();
 
-    expect(screen.queryByRole("button", { name: /PDF/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: copy.pdf.download })).toBeInTheDocument();
     expect(screen.queryByText(copy.previousCv.title)).not.toBeInTheDocument();
     await expectAccessible();
   });
@@ -200,6 +203,72 @@ describe("CareerJobDetailScreen", () => {
     await user.click(within(dialog).getByRole("button", { name: jobsCopy.remove.confirm }));
     await waitFor(() => expect(routerMock.push).toHaveBeenCalledWith("/carreira/vagas"));
     expect(mockJobsState().jobs).toHaveLength(0);
+  });
+
+  describe("Baixar PDF", () => {
+    let saved: { name: string; blob: Blob | null }[];
+    beforeEach(() => {
+      saved = [];
+      // jsdom has no object URLs; the anchor's click is where the browser would save the file.
+      const blobs = new Map<string, Blob>();
+      vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => {
+        const href = `blob:mock/${blobs.size}`;
+        blobs.set(href, blob as Blob);
+        return href;
+      });
+      vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+      vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+        this: HTMLAnchorElement,
+      ) {
+        saved.push({ name: this.download, blob: blobs.get(this.href) ?? null });
+      });
+    });
+    afterEach(() => vi.restoreAllMocks());
+
+    it("downloads the PDF with the API's file name; no link to the file stays in the page", async () => {
+      const job = mockJob("https://empresa.com/vaga");
+      const user = await renderDetail(job.id);
+      await user.click(await screen.findByRole("button", { name: copy.pdf.download }));
+      await waitFor(() => expect(saved).toHaveLength(1));
+      expect(saved[0]!.name).toBe(MOCK_PDF_FILENAME);
+      expect(saved[0]!.blob?.size).toBeGreaterThan(0);
+      expect(mockJobsState().pdfDownloads).toBe(1);
+      expect(document.querySelector("a[download]")).toBeNull();
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: copy.pdf.download })).toBeEnabled(),
+      );
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it("409 TAILORED_CV_STALE: alert and 'Reprocessar'", async () => {
+      const job = mockJob("https://empresa.com/vaga-cv-mudou");
+      const user = await renderDetail(job.id);
+      await user.click(await screen.findByRole("button", { name: copy.pdf.download }));
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent(copy.pdf.stale);
+      expect(saved).toHaveLength(0);
+      await user.click(within(alert).getByRole("button", { name: jobsCopy.actions.retry }));
+      expect(await screen.findByText(jobsCopy.actions.retried)).toBeInTheDocument();
+      expect(await screen.findByText(copy.processing.FETCHING)).toBeInTheDocument();
+      // Not READY any more: no PDF button.
+      expect(screen.queryByRole("button", { name: copy.pdf.download })).not.toBeInTheDocument();
+    });
+
+    it("429: says when to try again (Retry-After)", async () => {
+      const job = mockJob("https://empresa.com/vaga");
+      failNextMockPdf("RATE_LIMITED");
+      const user = await renderDetail(job.id);
+      await user.click(await screen.findByRole("button", { name: copy.pdf.download }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(copy.pdf.rateLimited(5));
+      expect(saved).toHaveLength(0);
+    });
+
+    it("no button while processing or failed", async () => {
+      const processing = mockJob("https://empresa.com/a", "ANALYZING");
+      await renderDetail(processing.id);
+      expect(await screen.findByText(copy.processing.ANALYZING)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: copy.pdf.download })).not.toBeInTheDocument();
+    });
   });
 
   it("unknown posting: 'Vaga não encontrada'", async () => {
