@@ -157,14 +157,15 @@ export function createCareerHandlers(deps: CareerHandlerDeps): CareerHandlers {
     }
   };
 
-  const jobFetch: JobHandler<"job.fetch"> = async ({ jobPostingId }, context) => {
+  const jobFetch: JobHandler<"job.fetch"> = async ({ jobPostingId, correlationId }, context) => {
     const posting = await deps.jobStore.loadForFetch(jobPostingId);
     if (!posting) {
       context.logger.info({ outcome: "skipped" }, "posting not awaiting fetch");
       return;
     }
+    const meta = { jobId: context.jobId, correlationId };
     const markFailed = (reason: CareerFailureReason) =>
-      deps.jobStore.markFailed(jobPostingId, reason);
+      deps.jobStore.markFailed(jobPostingId, reason, meta);
     const { source } = posting;
 
     let text: string;
@@ -231,27 +232,32 @@ export function createCareerHandlers(deps: CareerHandlerDeps): CareerHandlers {
         },
         "job extracted",
       );
-      await deps.jobStore.completeExtraction(jobPostingId, {
-        job: value.job,
-        rawText: sanitizeUntrustedText(text, JOB_TEXT_MAX_CHARS).text,
-        droppedRequirementCount: value.droppedRequirementCount,
-        injectionSuspected: value.injectionSuspected || built.preflightInjectionFlags.length > 0,
-        injectionEvidence: value.injectionEvidence,
-        generation: generation(model, ["job-extract"]),
-      });
+      await deps.jobStore.completeExtraction(
+        jobPostingId,
+        {
+          job: value.job,
+          rawText: sanitizeUntrustedText(text, JOB_TEXT_MAX_CHARS).text,
+          droppedRequirementCount: value.droppedRequirementCount,
+          injectionSuspected: value.injectionSuspected || built.preflightInjectionFlags.length > 0,
+          injectionEvidence: value.injectionEvidence,
+          generation: generation(model, ["job-extract"]),
+        },
+        meta,
+      );
     } catch (error) {
       await failIfFinal(error, context, markFailed, "ai");
     }
   };
 
-  const cvTailor: JobHandler<"cv.tailor"> = async ({ jobPostingId }, context) => {
+  const cvTailor: JobHandler<"cv.tailor"> = async ({ jobPostingId, correlationId }, context) => {
     const input = await deps.jobStore.loadForTailoring(jobPostingId);
     if (!input) {
       context.logger.info({ outcome: "skipped" }, "posting not awaiting tailoring");
       return;
     }
+    const meta = { jobId: context.jobId, correlationId };
     const markFailed = (reason: CareerFailureReason) =>
-      deps.jobStore.markFailed(jobPostingId, reason);
+      deps.jobStore.markFailed(jobPostingId, reason, meta);
     try {
       const target = resolveTargetLanguage(input.job.language);
       const tailored = await runLlmStepWithRegenerations(
@@ -335,16 +341,20 @@ export function createCareerHandlers(deps: CareerHandlerDeps): CareerHandlers {
         },
         "cv tailored",
       );
-      await deps.jobStore.completeTailoring(jobPostingId, {
-        cvBaseId: input.cvBaseId,
-        content: cv,
-        report,
-        generation: generation(
-          tailored.model,
-          ["cv-tailor", "cv-humanize"],
-          [CV_COMPETENCY_LEXICON],
-        ),
-      });
+      await deps.jobStore.completeTailoring(
+        jobPostingId,
+        {
+          cvBaseId: input.cvBaseId,
+          content: cv,
+          report,
+          generation: generation(
+            tailored.model,
+            ["cv-tailor", "cv-humanize"],
+            [CV_COMPETENCY_LEXICON],
+          ),
+        },
+        meta,
+      );
     } catch (error) {
       await failIfFinal(error, context, markFailed, "ai");
     }

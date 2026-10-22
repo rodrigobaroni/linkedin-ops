@@ -1,7 +1,7 @@
 /**
  * Ports the Career job handlers depend on (worker, ADR-0002). The domain owns them, as it owns
- * `SessionService`: `PrismaCvBaseDraftStore` implements `CvBaseDraftStore`; `JobPostingStore` is bound in
- * career PR 3.
+ * `SessionService`: `PrismaCvBaseDraftStore` implements `CvBaseDraftStore` and `PrismaJobPostingStore`
+ * implements `JobPostingStore`.
  *
  * Every `load*` returns `null` when the item is gone or no longer in the state that step expects, so a
  * duplicated or late job exits quietly (ADR-0002 §8). Implementations of `complete*` change state and, where a
@@ -77,6 +77,7 @@ export interface JobPostingStore {
       injectionEvidence: string | null;
       generation: GenerationInfo;
     },
+    meta: CareerJobMeta,
   ): Promise<void>;
   /** Posting in status `analyzing` with the active base CV it is tailored against. */
   loadForTailoring(jobPostingId: string): Promise<{
@@ -95,8 +96,9 @@ export interface JobPostingStore {
       report: MatchReport;
       generation: GenerationInfo;
     },
+    meta: CareerJobMeta,
   ): Promise<void>;
-  markFailed(jobPostingId: string, reason: CareerFailureReason): Promise<void>;
+  markFailed(jobPostingId: string, reason: CareerFailureReason, meta: CareerJobMeta): Promise<void>;
 }
 
 /**
