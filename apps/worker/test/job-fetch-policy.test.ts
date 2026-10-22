@@ -8,6 +8,7 @@ import { SafeHttpError } from "../src/http/safe-http-client.js";
 import {
   JobFetchHops,
   classifyFetchFailure,
+  isLinkedInShortener,
   isLoginPath,
   normalizeLinkedInUrl,
   type HopEvent,
@@ -90,6 +91,14 @@ describe("LinkedIn path validation", () => {
     expect(normalizeLinkedInUrl(new URL(input))).toBeNull();
   });
 
+  it("lnkd.in with a trailing dot is the shortener too (QA #104)", () => {
+    expect(normalizeLinkedInUrl(new URL("https://lnkd.in./abc"))?.href).toBe(
+      "https://lnkd.in./abc",
+    );
+    expect(isLinkedInShortener(new URL("https://LNKD.IN../abc"))).toBe(true);
+    expect(isLinkedInShortener(new URL("https://lnkd.in.evil.example/abc"))).toBe(false);
+  });
+
   it("recognizes login paths", () => {
     for (const path of ["/login", "/authwall", "/checkpoint/challenge", "/uas/login", "/LOGIN"]) {
       expect(isLoginPath(path)).toBe(true);
@@ -124,16 +133,28 @@ describe("JobFetchHops: per-hop policy by destination domain", () => {
     expect(h.granted).toEqual(["linkedin.com"]);
   });
 
-  it("third party → linkedin.com/authwall is blocked and opens the LinkedIn breaker", async () => {
+  it("third party → linkedin.com/authwall is permanent and does NOT open the LinkedIn breaker", async () => {
     const h = harness();
     const error = await rejection(
       chain(h.hops(), ["https://jobs.acme.example/r/1", "https://www.linkedin.com/authwall?trk=x"]),
     );
-    expect(error).toEqual(new JobFetchError("blocked"));
-    expect(h.tripped).toEqual(["linkedin.com:login_redirect"]);
-    // Queued fetches for LinkedIn now fail without touching the site.
-    expect(await rejection(chain(h.hops(), [JOB]))).toEqual(new JobFetchError("blocked"));
-    expect(h.granted).toEqual(["acme.example"]);
+    expect(error).toEqual(new JobFetchError("permanent"));
+    expect(h.tripped).toEqual([]);
+    expect(h.events.map((e) => e.outcome)).toContain("foreign_login_redirect");
+    // LinkedIn was never contacted and stays available.
+    expect(await chain(h.hops(), [JOB])).toEqual([JOB]);
+    expect(h.granted).toEqual(["acme.example", "linkedin.com"]);
+  });
+
+  it.each([
+    ["https://lnkd.in/abc", "https://www.linkedin.com/authwall?trk=x"],
+    [JOB, "https://www.linkedin.com/login?session_redirect=x"],
+    ["https://acme.gupy.io/jobs/1", "https://acme.gupy.io/login"],
+  ])("%s → its own login (%s) is blocked and opens that domain's breaker", async (first, login) => {
+    const h = harness();
+    expect(await rejection(chain(h.hops(), [first, login]))).toEqual(new JobFetchError("blocked"));
+    const domain = first.includes("gupy") ? "gupy.io" : "linkedin.com";
+    expect(h.tripped).toEqual([`${domain}:login_redirect`]);
   });
 
   it("third party → LinkedIn applies the LinkedIn interval, not the third party's", async () => {

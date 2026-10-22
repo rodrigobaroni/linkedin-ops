@@ -201,12 +201,13 @@ export class SafeHttpClient {
         (res) => {
           const status = res.statusCode ?? 0;
           if (REDIRECT_STATUSES.has(status) && typeof res.headers.location === "string") {
-            res.resume();
+            // Never drain a body we will not read (a slow or endless one would hold the socket).
+            res.destroy();
             resolve({ kind: "redirect", location: res.headers.location });
             return;
           }
           if (status < 200 || status >= 300) {
-            res.resume();
+            res.destroy();
             reject(new SafeHttpError("http_status", status));
             return;
           }

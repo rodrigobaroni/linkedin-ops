@@ -27,6 +27,11 @@ const LOGIN_PATH = /^\/(?:login|authwall|checkpoint|uas)(?:\/|$)/i;
 const LINKEDIN_JOB_PATH = /^\/jobs\/view\/(\d{1,20})\/?$/;
 const LINKEDIN_SHORTENER = "lnkd.in";
 
+/** `lnkd.in`, with or without the trailing dot of a fully qualified name. */
+export function isLinkedInShortener(url: URL): boolean {
+  return url.hostname.toLowerCase().replace(/\.+$/, "") === LINKEDIN_SHORTENER;
+}
+
 export function isLoginPath(pathname: string): boolean {
   return LOGIN_PATH.test(pathname);
 }
@@ -36,7 +41,7 @@ export function isLoginPath(pathname: string): boolean {
  * https, no query, no fragment); `null` for any other LinkedIn path. `lnkd.in` is kept as is: it is a redirect.
  */
 export function normalizeLinkedInUrl(url: URL): URL | null {
-  if (url.hostname.toLowerCase() === LINKEDIN_SHORTENER) return url;
+  if (isLinkedInShortener(url)) return url;
   const id = LINKEDIN_JOB_PATH.exec(url.pathname)?.[1];
   return id === undefined ? null : new URL(`https://www.linkedin.com/jobs/view/${id}`);
 }
@@ -44,7 +49,12 @@ export function normalizeLinkedInUrl(url: URL): URL | null {
 export interface HopEvent {
   hop: number;
   domain: string;
-  outcome: FetchSlot["outcome"] | "login_redirect" | "not_a_job_path" | "waited";
+  outcome:
+    | FetchSlot["outcome"]
+    | "login_redirect"
+    | "foreign_login_redirect"
+    | "not_a_job_path"
+    | "waited";
 }
 
 export interface JobFetchPolicyDeps {
@@ -79,8 +89,15 @@ export class JobFetchHops {
   readonly beforeHop = async (url: URL, hop: number): Promise<URL | undefined> => {
     const domain = jobFetchGroupId(url.href);
     if (hop > 0 && isLoginPath(url.pathname)) {
-      this.deps.onEvent?.({ hop, domain, outcome: "login_redirect" });
-      return this.stop(domain, "login_redirect");
+      // Only the domain itself sending us to its login is its refusal. A third party redirecting to LinkedIn's
+      // login says nothing about LinkedIn (which was never contacted) and must not open LinkedIn's breaker for
+      // 24 h (QA #104): that page is just not a posting.
+      if (this.sentDomain === domain) {
+        this.deps.onEvent?.({ hop, domain, outcome: "login_redirect" });
+        return this.stop(domain, "login_redirect");
+      }
+      this.deps.onEvent?.({ hop, domain, outcome: "foreign_login_redirect" });
+      throw new JobFetchError("permanent");
     }
     let target = url;
     if (domain === JOB_FETCH_LINKEDIN_DOMAIN) {

@@ -368,6 +368,29 @@ describe("SafeHttpClient: limits", () => {
     expect(error.code).toBe("not_html");
   });
 
+  it("closes the socket of a redirect or error response instead of draining its body", async () => {
+    const closed: string[] = [];
+    await serve((req, res) => {
+      res.on("close", () => closed.push(req.url ?? ""));
+      if (req.url === "/job") {
+        html("ok")(req, res);
+        return;
+      }
+      // An endless body: draining it would hold the socket forever.
+      res.writeHead(req.url === "/redirect" ? 302 : 503, {
+        location: "/job",
+        "content-type": "text/html",
+      });
+      const tick = setInterval(() => res.write("x".repeat(1024)), 5);
+      res.on("close", () => clearInterval(tick));
+    });
+    const http = client({}, local("jobs.example.test"));
+    await http.get(site("/redirect"), { signal: signal() });
+    await failure(http.get(site("/error"), { signal: signal() }));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(closed).toEqual(expect.arrayContaining(["/redirect", "/error"]));
+  });
+
   it("reports a non-2xx status without the body", async () => {
     await serve((_req, res) => {
       res.writeHead(429, { "content-type": "text/html" });
