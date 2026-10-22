@@ -50,9 +50,9 @@ import { configureApp, createFastifyAdapter } from "../src/app.factory.js";
 import { CAREER_RATE_LIMITS, DEFAULT_CAREER_RATE_LIMITS } from "../src/career/cv-base.service.js";
 import {
   CV_EXTRACT_QUEUE,
-  PgBossCvExtractQueue,
+  PgBossCareerQueue,
   type CvExtractQueue,
-} from "../src/career/cv-extract.queue.js";
+} from "../src/career/career.queue.js";
 import { CvExtractionSweeper } from "../src/career/cv-extraction.sweeper.js";
 import { REQUESTED_WITH_VALUE } from "../src/common/route-access.guard.js";
 import { createLogger } from "../src/logging/logger.js";
@@ -74,8 +74,8 @@ const UPLOAD_LIMIT = 4;
  * whose database cannot be reached: `useUnreachable` routes the upload to it (its start fails).
  */
 class FailableQueue implements CvExtractQueue {
-  real: PgBossCvExtractQueue | undefined;
-  unreachable: PgBossCvExtractQueue | undefined;
+  real: PgBossCareerQueue | undefined;
+  unreachable: PgBossCareerQueue | undefined;
   failAfterInsertNext = false;
   useUnreachable = false;
   enqueueCalls = 0;
@@ -252,12 +252,12 @@ beforeAll(async () => {
     new PrismaCvBases(prisma, (value) => CvStructuredSchema.parse(value)),
   );
   const logger = createLogger({ level: "info", pretty: false, stream: logs.stream });
-  queue.real = new PgBossCvExtractQueue(databaseUrl, logger);
+  queue.real = new PgBossCareerQueue(databaseUrl, logger);
   // Started at bootstrap, as in the app (outside any upload transaction).
   await queue.real.onApplicationBootstrap();
   expect(queue.real.ready).toBe(true);
   // Port 1: connection refused at once.
-  queue.unreachable = new PgBossCvExtractQueue(
+  queue.unreachable = new PgBossCareerQueue(
     "postgresql://api:api-test-password@127.0.0.1:1/api_test",
     logger,
     { startTimeoutMs: 2_000, retry: { initialMs: 50, maxMs: 200 } },
@@ -399,8 +399,7 @@ describe("POST /career/cv (upload)", () => {
     await expect
       .poll(
         () =>
-          logs.text.split("cv.extract producer start failed; retrying in the background").length -
-          1,
+          logs.text.split("career producer start failed; retrying in the background").length - 1,
         { timeout: 10_000, interval: 50 },
       )
       .toBeGreaterThanOrEqual(3);

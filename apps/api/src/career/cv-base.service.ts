@@ -20,7 +20,7 @@ import { ProblemError } from "../common/problem.error.js";
 import { FixedWindowLimiter } from "../linkedin/fixed-window-limiter.js";
 import { API_LOGGER } from "../logging/logger.js";
 import type { AuthenticatedSession } from "../session/session.service.js";
-import { CV_EXTRACT_QUEUE, type CvExtractQueue } from "./cv-extract.queue.js";
+import { CV_EXTRACT_QUEUE, type CvExtractQueue } from "./career.queue.js";
 import { CvPdfBusyError, CvPdfError, type CvPdfRejection } from "./cv-pdf.js";
 import { CV_PDF_EXTRACTOR, type CvPdfExtractor } from "./cv-pdf.extractor.js";
 

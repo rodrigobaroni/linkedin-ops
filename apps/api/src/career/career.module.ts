@@ -18,7 +18,7 @@ import {
   CvBaseService,
   DEFAULT_CAREER_RATE_LIMITS,
 } from "./cv-base.service.js";
-import { CV_EXTRACT_QUEUE, JOB_POSTING_QUEUE, PgBossCvExtractQueue } from "./cv-extract.queue.js";
+import { CV_EXTRACT_QUEUE, JOB_POSTING_QUEUE, PgBossCareerQueue } from "./career.queue.js";
 import { CV_PDF_EXTRACTOR, CvPdfExtractor } from "./cv-pdf.extractor.js";
 import {
   CV_SWEEP_OPTIONS,
@@ -49,7 +49,7 @@ export class CareerModule {
         {
           provide: CV_EXTRACT_QUEUE,
           inject: [RUNTIME_ENV],
-          useFactory: (env: RuntimeEnv) => new PgBossCvExtractQueue(env.databaseUrl, logger),
+          useFactory: (env: RuntimeEnv) => new PgBossCareerQueue(env.databaseUrl, logger),
         },
         // One pg-boss producer for every career queue.
         { provide: JOB_POSTING_QUEUE, useExisting: CV_EXTRACT_QUEUE },

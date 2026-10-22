@@ -27,11 +27,7 @@ import { FixedWindowLimiter } from "../linkedin/fixed-window-limiter.js";
 import { API_LOGGER } from "../logging/logger.js";
 import type { AuthenticatedSession } from "../session/session.service.js";
 import { CAREER_RATE_LIMITS, type CareerRateLimits } from "./cv-base.service.js";
-import {
-  CareerJobAlreadyQueuedError,
-  JOB_POSTING_QUEUE,
-  type JobPostingQueue,
-} from "./cv-extract.queue.js";
+import { JOB_POSTING_QUEUE, type JobPostingQueue } from "./career.queue.js";
 
 export const JOB_POSTINGS = Symbol("JOB_POSTINGS");
 
@@ -216,9 +212,6 @@ export class JobPostingService {
   /** An enqueue failure rolled the whole change back; anything else passes through untouched. */
   private mapEnqueueError(error: unknown, queue: string, correlationId: string): unknown {
     if (!(error instanceof CareerEnqueueError)) return error;
-    if (error.cause instanceof CareerJobAlreadyQueuedError) {
-      return new ProblemError("JOB_POSTING_INVALID_TRANSITION", { detail: BUSY });
-    }
     // Class only: pg-boss and driver errors may quote the statement's parameters.
     this.logger.error(
       { queue, errorClass: error.causeClass, correlationId },

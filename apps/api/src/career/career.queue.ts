@@ -52,31 +52,24 @@ export interface JobPostingQueue {
   enqueueTailor(payload: CvTailorPayload, db: SqlExecutor): Promise<{ jobId: string }>;
 }
 
-/** A job of the same singleton (posting) is still pending: pg-boss created nothing. */
-export class CareerJobAlreadyQueuedError extends Error {
-  constructor(readonly queue: string) {
-    super(`${queue} job already pending for this item`);
-    this.name = "CareerJobAlreadyQueuedError";
-  }
-}
-
 const CV_EXTRACT = QUEUES["cv.extract"];
 const JOB_FETCH = QUEUES["job.fetch"];
 const CV_TAILOR = QUEUES["cv.tailor"];
+const CAREER_QUEUE_NAMES = [CV_EXTRACT.name, JOB_FETCH.name, CV_TAILOR.name];
 
-export const CV_EXTRACT_QUEUE_START_TIMEOUT_MS = 10_000;
+export const CAREER_QUEUE_START_TIMEOUT_MS = 10_000;
 
 /** Background start retries: 1 s, 2 s, 4 s … capped at 60 s, until the worker has created the schema. */
-export const CV_EXTRACT_QUEUE_RETRY = { initialMs: 1_000, maxMs: 60_000 } as const;
+export const CAREER_QUEUE_RETRY = { initialMs: 1_000, maxMs: 60_000 } as const;
 
-export class CvExtractQueueUnavailableError extends Error {
+export class CareerQueueUnavailableError extends Error {
   constructor(reason: "start_failed" | "start_timeout" | "not_started") {
-    super(`cv.extract producer unavailable: ${reason}`);
-    this.name = "CvExtractQueueUnavailableError";
+    super(`career producer unavailable: ${reason}`);
+    this.name = "CareerQueueUnavailableError";
   }
 }
 
-export interface PgBossCvExtractQueueOptions {
+export interface PgBossCareerQueueOptions {
   startTimeoutMs?: number;
   retry?: { initialMs: number; maxMs: number };
 }
@@ -89,7 +82,7 @@ export interface PgBossCvExtractQueueOptions {
  * the API still boots, retries in the background with backoff, and uploads answer 503 before any
  * transaction until the producer is ready. `enqueue` never starts pg-boss.
  */
-export class PgBossCvExtractQueue
+export class PgBossCareerQueue
   implements CvExtractQueue, JobPostingQueue, OnApplicationBootstrap, OnApplicationShutdown
 {
   readonly #boss: PgBoss;
@@ -103,10 +96,10 @@ export class PgBossCvExtractQueue
   #starting: Promise<void> | undefined;
   #retryTimer: NodeJS.Timeout | undefined;
 
-  constructor(databaseUrl: string, logger: Logger, options: PgBossCvExtractQueueOptions = {}) {
+  constructor(databaseUrl: string, logger: Logger, options: PgBossCareerQueueOptions = {}) {
     this.#logger = logger;
-    this.#startTimeoutMs = options.startTimeoutMs ?? CV_EXTRACT_QUEUE_START_TIMEOUT_MS;
-    this.#retry = options.retry ?? CV_EXTRACT_QUEUE_RETRY;
+    this.#startTimeoutMs = options.startTimeoutMs ?? CAREER_QUEUE_START_TIMEOUT_MS;
+    this.#retry = options.retry ?? CAREER_QUEUE_RETRY;
     this.#boss = new PgBoss({
       connectionString: databaseUrl,
       schema: PGBOSS_SCHEMA_NAME,
@@ -118,7 +111,7 @@ export class PgBossCvExtractQueue
       schedule: false,
     });
     this.#boss.on("error", (error: Error) =>
-      logger.error({ queue: CV_EXTRACT.name, errorClass: error.name }, "pg-boss error"),
+      logger.error({ queues: CAREER_QUEUE_NAMES, errorClass: error.name }, "pg-boss error"),
     );
   }
 
@@ -136,17 +129,18 @@ export class PgBossCvExtractQueue
 
   ensureReady(): Promise<void> {
     if (this.#ready) return Promise.resolve();
-    return Promise.reject(new CvExtractQueueUnavailableError("not_started"));
+    return Promise.reject(new CareerQueueUnavailableError("not_started"));
   }
 
   async enqueue(payload: CvExtractPayload, db: SqlExecutor): Promise<{ jobId: string }> {
-    if (!this.#ready) throw new CvExtractQueueUnavailableError("not_started");
+    if (!this.#ready) throw new CareerQueueUnavailableError("not_started");
     const valid = CvExtractPayloadSchema.parse(payload);
     const jobId = await this.#boss.send(CV_EXTRACT.name, valid, {
       db,
       singletonKey: CV_EXTRACT.singletonKeyFrom?.(valid),
     });
-    // A new draft id never collides with a pending singleton; null would mean a lost job.
+    // Queues use the `standard` policy (pg-boss 12.37), where `singletonKey` never deduplicates: null can only
+    // mean a job that was not created, an internal error that rolls the caller's transaction back.
     if (jobId === null) throw new Error("cv.extract job was not created");
     return { jobId };
   }
@@ -156,25 +150,25 @@ export class PgBossCvExtractQueue
     groupId: string,
     db: SqlExecutor,
   ): Promise<{ jobId: string }> {
-    if (!this.#ready) throw new CvExtractQueueUnavailableError("not_started");
+    if (!this.#ready) throw new CareerQueueUnavailableError("not_started");
     const valid = JobFetchPayloadSchema.parse(payload);
     const jobId = await this.#boss.send(JOB_FETCH.name, valid, {
       db,
       singletonKey: JOB_FETCH.singletonKeyFrom?.(valid),
       group: { id: groupId },
     });
-    if (jobId === null) throw new CareerJobAlreadyQueuedError(JOB_FETCH.name);
+    if (jobId === null) throw new Error("job.fetch job was not created");
     return { jobId };
   }
 
   async enqueueTailor(payload: CvTailorPayload, db: SqlExecutor): Promise<{ jobId: string }> {
-    if (!this.#ready) throw new CvExtractQueueUnavailableError("not_started");
+    if (!this.#ready) throw new CareerQueueUnavailableError("not_started");
     const valid = CvTailorPayloadSchema.parse(payload);
     const jobId = await this.#boss.send(CV_TAILOR.name, valid, {
       db,
       singletonKey: CV_TAILOR.singletonKeyFrom?.(valid),
     });
-    if (jobId === null) throw new CareerJobAlreadyQueuedError(CV_TAILOR.name);
+    if (jobId === null) throw new Error("cv.tailor job was not created");
     return { jobId };
   }
 
@@ -198,8 +192,8 @@ export class PgBossCvExtractQueue
       () => {
         this.#ready = true;
         this.#logger.info(
-          { queue: CV_EXTRACT.name, attempts: this.#attempts },
-          "cv.extract producer ready",
+          { queues: CAREER_QUEUE_NAMES, attempts: this.#attempts },
+          "career producer ready",
         );
       },
       (error: unknown) => {
@@ -224,8 +218,13 @@ export class PgBossCvExtractQueue
     const delayMs = Math.min(this.#retry.initialMs * 2 ** (this.#attempts - 1), this.#retry.maxMs);
     // Class only: the driver error may quote the connection target.
     this.#logger.warn(
-      { queue: CV_EXTRACT.name, errorClass: failure, attempt: this.#attempts, retryInMs: delayMs },
-      "cv.extract producer start failed; retrying in the background",
+      {
+        queues: CAREER_QUEUE_NAMES,
+        errorClass: failure,
+        attempt: this.#attempts,
+        retryInMs: delayMs,
+      },
+      "career producer start failed; retrying in the background",
     );
     this.#retryTimer = setTimeout(() => void this.#attempt(), delayMs);
     this.#retryTimer.unref();

@@ -45,7 +45,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AppModule } from "../src/app.module.js";
 import { configureApp, createFastifyAdapter } from "../src/app.factory.js";
 import { CAREER_RATE_LIMITS, DEFAULT_CAREER_RATE_LIMITS } from "../src/career/cv-base.service.js";
-import { CV_EXTRACT_QUEUE, PgBossCvExtractQueue } from "../src/career/cv-extract.queue.js";
+import { CV_EXTRACT_QUEUE, PgBossCareerQueue } from "../src/career/career.queue.js";
 import { REQUESTED_WITH_VALUE } from "../src/common/route-access.guard.js";
 import { createLogger } from "../src/logging/logger.js";
 import { fictitiousCvStructured } from "./fixtures/cv-structured.js";
@@ -140,7 +140,7 @@ let app: NestFastifyApplication;
 let request: ReturnType<typeof supertest>;
 let env: RuntimeEnv;
 let boss: PgBoss;
-let producer: PgBossCvExtractQueue;
+let producer: PgBossCareerQueue;
 let worker: PrismaJobPostingStore;
 const logs = new LogCapture();
 
@@ -315,7 +315,7 @@ beforeAll(async () => {
   }
   prisma = createPrismaClient({ connectionString: databaseUrl });
   const logger = createLogger({ level: "info", pretty: false, stream: logs.stream });
-  producer = new PgBossCvExtractQueue(databaseUrl, logger);
+  producer = new PgBossCareerQueue(databaseUrl, logger);
   await producer.onApplicationBootstrap();
   expect(producer.ready).toBe(true);
   worker = new PrismaJobPostingStore(prisma, async (db, job) => {
