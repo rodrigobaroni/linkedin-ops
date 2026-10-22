@@ -614,6 +614,28 @@ const INTRODUCERS: RoleIntroducer[] = [
     promotion: true,
     from: false,
   })),
+  // A verb that says the candidate held the role makes `como`/`as` strong ("Atuei como recrutador"; Codex review).
+  ...[
+    "atuei como",
+    "atuou como",
+    "atuando como",
+    "trabalhei como",
+    "trabalhou como",
+    "trabalhando como",
+    "contratado como",
+    "contratada como",
+    "entrei como",
+    "ingressei como",
+    "worked as",
+    "working as",
+    "served as",
+    "serving as",
+    "acted as",
+    "acting as",
+    "hired as",
+    "employed as",
+    "joined as",
+  ].map((phrase) => ({ words: phrase.split(" "), strong: true, promotion: false, from: false })),
   ...["promoted from", "promovido de", "promovida de"].map((phrase) => ({
     words: phrase.split(" "),
     strong: true,
@@ -629,7 +651,8 @@ const ROLE_ATTACHMENTS = new Set(["da", "do", "dos", "das"]);
 const ROLE_MAX_COMPLEMENTS = 3;
 /**
  * A complement runs over several words ("head of data engineering"; Codex review, issue #93), up to a stop word,
- * a pause, another complement, seniority or a PT gerund ("engenheira de software desenvolvendo APIs").
+ * a pause, another complement, seniority or a gerund ("engenheira de software desenvolvendo APIs", "head of data
+ * leading teams"; not `ING_NOUNS`).
  */
 const ROLE_COMPLEMENT_WORDS = 3;
 /** Words that end the search for a title's head ("como parte do time em pagamentos", "appointed to lead"). */
@@ -637,6 +660,20 @@ const ROLE_STOP_WORDS = new Set(
   "em no na nos nas in at on for para pelo pela com with durante during after apos onde where que that which who e and ou or & to".split(
     " ",
   ),
+);
+/** What a strong introducer may present that is not a role ("Atuei como parte do time", "as part of"). */
+const NOT_ROLES = new Set(
+  "parte part ponte bridge referencia reference ponto elo apoio suporte support membro member interface voz voice".split(
+    " ",
+  ),
+);
+/** EN `-ing` words that name an area, not an action, inside a complement ("head of data engineering"). */
+const ING_NOUNS = new Set(
+  `engineering marketing billing pricing accounting banking consulting computing learning manufacturing networking
+  processing testing sourcing branding publishing planning licensing onboarding reporting staffing recruiting
+  hosting streaming`
+    .split(/\s+/u)
+    .filter(Boolean),
 );
 /** Words that list another role after the first ("engenheira e tech lead"). */
 const ROLE_CONJUNCTIONS = new Set(["e", "and", "ou", "or", "&"]);
@@ -703,7 +740,8 @@ interface RolePhrase {
  * Role phrases a text presents with a role introducer (issue #93; Pena review §6.10.2), folded. After the
  * introducer, its article and a nested introducer ("promoted to the role of …", "appointed as …"), the phrase runs
  * up to the last role title word within `ROLE_WINDOW` words, short of a stop word; a strong introducer takes up to
- * `ROLE_STRONG_WINDOW` words when there is none ("No papel de responsável técnico"). Then any seniority and up to
+ * `ROLE_STRONG_WINDOW` words when there is none ("No papel de responsável técnico", "Atuei como recrutador"),
+ * unless they open with one of `NOT_ROLES`. Then any seniority and up to
  * `ROLE_MAX_COMPLEMENTS` complements ("coordenador de engenharia de dados", "engenheiro de dados sênior"), without
  * a credential's words up to its last marker. A comma or conjunction right after it lists another role, whose head
  * must come within `ROLE_LIST_WINDOW` words ("engenheira de software, tech lead e mentora"; "engineer, architect,
@@ -713,9 +751,12 @@ function introducedRoles(text: string): RolePhrase[] {
   const words = roleWords(text);
   const word = (at: number) => words[at]?.word ?? "";
   const phrases: RolePhrase[] = [];
+  // Past the last introducer, so "as" inside "worked as" does not count twice.
+  let introduced = 0;
   for (let index = 0; index < words.length; index += 1) {
-    const introducer = introducerAt(words, index);
+    const introducer = index < introduced ? null : introducerAt(words, index);
     if (introducer === null) continue;
+    introduced = index + introducer.words.length;
     let clause = index;
     while (clause > 0 && !words[clause - 1]?.pause) clause -= 1;
     const context = words
@@ -740,7 +781,7 @@ function introducedRoles(text: string): RolePhrase[] {
         if (ROLE_TITLE_WORDS.has(word(at))) head = at;
         if (words[at]?.pause) break;
       }
-      if (head < 0 && strong) {
+      if (head < 0 && strong && !NOT_ROLES.has(word(start))) {
         for (let at = start; at < Math.min(words.length, start + ROLE_STRONG_WINDOW); at += 1) {
           if (ROLE_STOP_WORDS.has(word(at)) || ROLE_COMPLEMENT.has(word(at))) break;
           head = at;
@@ -767,7 +808,8 @@ function introducedRoles(text: string): RolePhrase[] {
           !ROLE_STOP_WORDS.has(word(next)) &&
           !ROLE_COMPLEMENT.has(word(next)) &&
           !ROLE_SENIORITY.has(word(next)) &&
-          !/ndo$/u.test(word(next))
+          !/ndo$/u.test(word(next)) &&
+          !(/ing$/u.test(word(next)) && !ING_NOUNS.has(word(next)))
         ) {
           next += 1;
         }
@@ -778,11 +820,12 @@ function introducedRoles(text: string): RolePhrase[] {
       }
       // A credential naming the role ("como AWS Certified Solutions Architect") is `newCredentials`'s call; the
       // role is what follows its last marker. After a promotion it is the credential itself ("Became an AWS
-      // Certified …").
-      const marker = words
-        .slice(start, head)
-        .findLastIndex(({ word }) => CREDENTIAL_WORD.test(word) || word === "professional");
-      if (!(introducer.promotion && marker >= 0)) {
+      // Certified …", "Became an AWS Solutions Architect Associate").
+      const isMarker = ({ word }: RoleWord) =>
+        CREDENTIAL_WORD.test(word) || word === "professional";
+      const marker = words.slice(start, head).findLastIndex(isMarker);
+      const credential = words.slice(start, end + 1).some(isMarker);
+      if (!(introducer.promotion && credential)) {
         const first = start + marker + 1;
         phrases.push({
           words: words.slice(first, end).map((role) => role.word),

@@ -479,7 +479,11 @@ describe("credentials in rewritten and changed original segments (Sentinela, PR 
     const result = run(baseWith("Atuei como AWS Certified Solutions Architect com Kubernetes."), {
       bullet: "Atuei como Certified Kubernetes com AWS.",
     });
-    expect(issues(result)).toEqual(["seg-2: hard limit, credential not in cited base items"]);
+    // "Atuei como …" also presents it as a role the base CV does not have (issue #93).
+    expect(issues(result)).toEqual([
+      "seg-2: hard limit, credential not in cited base items",
+      "seg-2: hard limit, invented role title",
+    ]);
   });
 
   it("positive: a rewritten segment keeping the certification already in its source passes", () => {
@@ -747,6 +751,8 @@ describe("inventedRoleTitles (issue #93, Codex review)", () => {
     ["Atuei como gerente de produto.", ["Gerente"], "gerente de produto"],
     ["No papel de responsável técnico, conduzi a migração.", ["Engenheira"], "responsavel tecnico"],
     ["Worked as head of data engineering.", ["Head of Data Science"], "head of data engineering"],
+    ["Worked as a recruiter.", ["Software Engineer"], "recruiter"],
+    ["Atuei como recrutador.", ["Engenheira de software"], "recrutador"],
   ])("negative: '%s' with titles %j names '%s'", (text, titles, role) => {
     expect(inventedRoleTitles(text, titles).some((found) => found.startsWith(role))).toBe(true);
   });
@@ -768,6 +774,9 @@ describe("inventedRoleTitles (issue #93, Codex review)", () => {
     ["Worked as an engineering manager of the payments team.", ["Engineering Manager"]],
     ["Atuei como engenheira de software desenvolvendo APIs.", ["Engenheira de software sênior"]],
     ["Worked as head of data science at a fintech.", ["Head of Data Science"]],
+    ["Worked as head of data leading teams.", ["Head of Data"]],
+    ["Became an AWS Solutions Architect Associate.", ["Software Engineer"]],
+    ["Worked as a member of the payments team.", ["Software Engineer"]],
   ])("positive: '%s' with titles %j", (text, titles) => {
     expect(inventedRoleTitles(text, titles)).toEqual([]);
   });
