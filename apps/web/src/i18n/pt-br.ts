@@ -324,9 +324,20 @@ export const messages = {
         sectionSaved: "Alterações salvas.",
         openSections: (names: string) =>
           `Salve ou cancele as alterações em ${names} antes de confirmar.`,
+        /** Draft flagged as possible prompt injection (#92, ADR-0005 §4); Maestro's copy, Aurora reviews. */
+        injection: {
+          title: "Encontramos um trecho suspeito no seu CV",
+          description:
+            "Este trecho parece conter instruções para a IA, não informações do seu currículo. A IA trata esse trecho como texto do currículo, não como instrução, mas confira se o seu CV está correto antes de confirmar.",
+          evidenceLabel: "Trecho encontrado",
+          acknowledge: "Revisei o trecho e quero confirmar este CV mesmo assim.",
+          acknowledgeRequired: "Marque a confirmação do trecho suspeito para continuar.",
+        },
         errors: {
           CV_DRAFT_NOT_READY:
             "Este rascunho foi substituído por um envio mais recente. Mostramos a versão atual.",
+          CV_INJECTION_UNACKNOWLEDGED:
+            "Este CV tem um trecho suspeito que precisa da sua confirmação. Revise o aviso e marque a confirmação.",
           VALIDATION_FAILED: (names: string) => `O CV não foi aceito. Revise: ${names}.`,
           network:
             "Sem conexão com o LinkedIn Ops. Suas correções continuam aqui; tente novamente.",

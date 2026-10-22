@@ -199,6 +199,8 @@ export function CareerCvScreen({ pollInitialMs }: CareerCvScreenProps) {
           key={draft.id}
           draftId={draft.id}
           content={draft.content}
+          injectionSuspected={draft.injectionSuspected}
+          injectionEvidence={draft.injectionEvidence ?? null}
           onConfirmed={() => requestFocus(CONFIRMED_TITLE_ID)}
           onReplacePdf={startReplace}
         />
