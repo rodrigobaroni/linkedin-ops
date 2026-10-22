@@ -73,6 +73,15 @@ describe("parseCvHumanizeResponse (humanizer-cv-rules.md §3.1)", () => {
     expect(result.ok && result.value.revertedSegmentIds).toEqual(["seg-3"]);
   });
 
+  it("reverts a segment that gained a lowercase credential (Sentinela, PR #91)", () => {
+    const cv = before();
+    const result = parseCvHumanizeResponse(
+      output(cv, { "seg-3": "Evaluated Kafka associate tooling for event streaming." }),
+      { before: cv },
+    );
+    expect(result.ok && result.value.revertedSegmentIds).toEqual(["seg-3"]);
+  });
+
   it("reverts a segment that gained a lint marker (over-correction guard)", () => {
     const cv = before();
     const result = parseCvHumanizeResponse(

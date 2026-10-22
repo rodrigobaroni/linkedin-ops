@@ -353,21 +353,86 @@ export function withoutLexiconTerms(text: string): string {
   return words.filter((_word, index) => covered[index] === undefined).join(" ");
 }
 
+/** A credential word, compared folded (D4 hard limit 1): degrees, certifications and their levels. */
+const CREDENTIAL_WORD =
+  /^(?:certifica\p{L}*|certified|certificate\p{L}*|diploma\p{L}*|bacharel\p{L}*|bachelor\p{L}*|mestrado|mestre|master'?s|mba|ph\.?d|doutorado|doutor|licenca\p{L}*|licen[cs]e[ds]?|pos-gradua\p{L}*|foundation|practitioner|agilist|belt|associate|specialty|fundamentals)$/u;
+
+/** Certification exam codes (`AZ-900`, `DP-203`, `SAA-C03`; Pena review §6.4). Case-sensitive: codes are caps. */
+const EXAM_CODE = /^(?:AZ|DP|AI|PL|SC|MS|MB|SAA|SAP|DVA|SOA|CLF|DEA|MLS|DOP|ANS)-[A-Z]?\d{2,3}$/u;
+
+/** What `Professional` names as a credential besides a lexicon term (`professional` alone is a common word). */
+const PROFESSIONAL_CREDENTIALS = [
+  ["scrum"],
+  ["data", "engineer"],
+  ["cloud", "architect"],
+  ["machine", "learning", "engineer"],
+];
+
+/** Credential deny phrases, in any spelling (Sentinela PR #91: `solutions architect` in lowercase too). */
+const CREDENTIAL_DENY_FORMS = CV_COMPETENCY_LEXICON.denyTerms
+  .filter((group) => group.group.startsWith("credentials"))
+  .flatMap((group) => group.terms.map((term) => tokens(term).map(fold)));
+
 /**
- * Whether `word` stands right after (`before: false`) or right before (`before: true`) a lexicon term: the
- * certification level in `Kubernetes Expert` or `Professional Scrum` (Pena review §6.4), never the common word
- * in "expert em…" or "professional services".
+ * Credential phrases of a text, folded: each credential word, exam code, credential deny phrase, `expert` right
+ * after a lexicon term (`Kubernetes Expert`) or `Professional` right before one (or before `Data Engineer`…),
+ * extended over its sentence neighbours that are names or lexicon terms ("aws certified solutions architect",
+ * "certified kubernetes"). A sentence-opening capital alone does not extend it.
  */
-export function besideLexiconTerm(text: string, word: string, before: boolean): boolean {
-  const words = tokens(text).map(fold);
-  const covered = lexiconCoverage(words);
-  const target = fold(word);
-  return words.some(
-    (current, index) =>
-      current === target &&
-      covered[index] === undefined &&
-      covered[before ? index + 1 : index - 1] !== undefined,
-  );
+function credentialPhrases(text: string): string[][] {
+  const phrases: string[][] = [];
+  for (const sentence of text.normalize("NFKC").split(/(?<=[.!?;:])\s+/u)) {
+    const raw = tokens(sentence);
+    const words = raw.map(fold);
+    const covered = lexiconCoverage(words);
+    const keyword = words.map(
+      (word, index) =>
+        [word, ...word.split(/[-/]/u)].some((part) => CREDENTIAL_WORD.test(part)) ||
+        EXAM_CODE.test(raw[index] ?? "") ||
+        (word === "expert" && covered[index] === undefined && covered[index - 1] !== undefined) ||
+        (word === "professional" &&
+          covered[index] === undefined &&
+          (covered[index + 1] !== undefined ||
+            PROFESSIONAL_CREDENTIALS.some((phrase) =>
+              phrase.every((next, offset) => words[index + 1 + offset] === next),
+            ))),
+    );
+    for (const form of CREDENTIAL_DENY_FORMS) {
+      for (let start = 0; start + form.length <= words.length; start += 1) {
+        if (form.every((word, offset) => words[start + offset] === word)) {
+          for (let i = 0; i < form.length; i += 1) keyword[start + i] = true;
+        }
+      }
+    }
+    const linked = (index: number) => {
+      const token = raw[index] ?? "";
+      const strong = /.\p{Lu}|[\p{N}+#.]/u.test(token);
+      const capitalized = /^\p{Lu}/u.test(token) && index > 0;
+      return keyword[index] === true || covered[index] !== undefined || strong || capitalized;
+    };
+    for (let index = 0; index < words.length; index += 1) {
+      if (!keyword[index]) continue;
+      let first = index;
+      let last = index;
+      while (first > 0 && linked(first - 1)) first -= 1;
+      while (last + 1 < words.length && linked(last + 1)) last += 1;
+      phrases.push(words.slice(first, last + 1));
+      index = last;
+    }
+  }
+  return phrases;
+}
+
+/**
+ * Credential phrases of `text` that `reference` does not already hold (D4 hard limit 1; Sentinela PR #91). An
+ * added segment has no reference, so any credential is new; a rewritten or changed `original` segment may only
+ * keep (or shorten) a credential phrase of its cited base items, never add or extend one.
+ */
+export function newCredentials(text: string, reference = ""): string[] {
+  const allowed = credentialPhrases(reference);
+  return credentialPhrases(text)
+    .filter((phrase) => !allowed.some((source) => containsPhrase(source, phrase)))
+    .map((phrase) => phrase.join(" "));
 }
 
 function containsPhrase(words: readonly string[], phrase: readonly string[]): boolean {

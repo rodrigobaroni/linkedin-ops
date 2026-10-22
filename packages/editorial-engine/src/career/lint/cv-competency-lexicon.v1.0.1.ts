@@ -1316,7 +1316,8 @@ export const CV_COMPETENCY_LEXICON: CompetencyLexicon = {
     },
     {
       group: "credentials-common-words",
-      match: "capitalized",
+      // any-case (Sentinela PR #91): "solutions architect" in lowercase is still the credential or title.
+      match: "any-case",
       terms: ["Solutions Architect", "Professional Data Engineer"],
     },
     {

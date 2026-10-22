@@ -460,7 +460,7 @@ describe("cv-competency-lexicon@1.0.1 (Pena review §6.1, §6.2, §6.6 R4)", () 
     expect(CV_COMPETENCY_LEXICON.denyTerms.flatMap((g) => g.terms)).not.toContain("Amazon Inc");
   });
 
-  it("R4: names that are common words are capitalized-only; short forms are lexicon-only", () => {
+  it("R4: names that are common words are capitalized-only; short forms are lexicon-only; credential titles any-case", () => {
     expect(groupOf("common-word-names")).toMatchObject({ match: "capitalized" });
     expect(groupOf("common-word-names")?.terms).toEqual(
       expect.arrayContaining([
@@ -477,7 +477,7 @@ describe("cv-competency-lexicon@1.0.1 (Pena review §6.1, §6.2, §6.6 R4)", () 
     );
     expect(groupOf("credentials-common-words")).toEqual({
       group: "credentials-common-words",
-      match: "capitalized",
+      match: "any-case",
       terms: ["Solutions Architect", "Professional Data Engineer"],
     });
     expect(groupOf("ambiguous-short-forms")).toMatchObject({ match: "lexicon-only" });

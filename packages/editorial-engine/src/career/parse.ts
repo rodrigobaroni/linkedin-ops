@@ -22,7 +22,7 @@ import {
 import type { z } from "zod";
 import { err, ok, type EngineError, type Result } from "../result.js";
 import { sanitizeUntrustedText } from "../untrusted.js";
-import { besideLexiconTerm, createEntityGuard, withoutLexiconTerms } from "./entities.js";
+import { createEntityGuard, newCredentials, withoutLexiconTerms } from "./entities.js";
 import { cvFullText, cvItemTexts, normalizeCvIds } from "./ids.js";
 import type { TargetLanguage } from "./language.js";
 import { lintText } from "./lint/checker.js";
@@ -140,32 +140,6 @@ export function parseJobExtractResponse(
 // cv-tailor
 // ---------------------------------------------------------------------------------------------------
 
-/**
- * D4 hard limits (career-editorial-exception.md §3, confirmed by Rodrigo on 2026-10-22, §9). Fixed rule:
- * employer, title, dates, education, certifications and languages are never generated (copied from the base CV
- * by id); added segments carry no number absent from the base CV and no credential; no added or rewritten
- * segment names an entity absent from the base CV (`entities.ts`).
- */
-const CREDENTIAL_PATTERN =
-  /(?<![\p{L}\p{N}])(?:certifica\p{L}*|certified|certificate\p{L}*|diploma\p{L}*|bacharel\p{L}*|bachelor\p{L}*|mestrado|mestre|master'?s|mba|ph\.?d|doutorado|doutor|licen[cç]a\p{L}*|licen[cs]e[ds]?|p[oó]s-gradua\p{L}*|foundation|practitioner|agilist|belt|associate|specialty|fundamentals|professional\s+(?:scrum|data\s+engineer|cloud\s+architect|machine\s+learning\s+engineer))(?![\p{L}\p{N}])/iu;
-
-/** Certification exam codes (`AZ-900`, `DP-203`, `SAA-C03`; Pena review §6.4). Case-sensitive: codes are caps. */
-const EXAM_CODE_PATTERN =
-  /(?<![\p{L}\p{N}])(?:AZ|DP|AI|PL|SC|MS|MB|SAA|SAP|DVA|SOA|CLF|DEA|MLS|DOP|ANS)-[A-Z]?\d{2,3}(?![\p{L}\p{N}])/u;
-
-/**
- * An added credential (D4 hard limit 1): a credential word, an exam code, or a certification level beside a
- * lexicon term (`Kubernetes Expert`, `Professional Python`) — `expert` and `professional` alone are common words.
- */
-function namesCredential(text: string): boolean {
-  return (
-    CREDENTIAL_PATTERN.test(text) ||
-    EXAM_CODE_PATTERN.test(text) ||
-    besideLexiconTerm(text, "expert", false) ||
-    besideLexiconTerm(text, "professional", true)
-  );
-}
-
 export interface ParsedCvTailoring extends InjectionReport {
   /** Tailored CV in display order, provenance enforced. */
   cv: TailoredCvContent;
@@ -175,6 +149,13 @@ export interface ParsedCvTailoring extends InjectionReport {
   promotedSegmentIds: string[];
 }
 
+/**
+ * D4 hard limits (career-editorial-exception.md §3, confirmed by Rodrigo on 2026-10-22, §9). Fixed rule:
+ * employer, title, dates, education, certifications and languages are never generated (copied from the base CV
+ * by id); added segments carry no number absent from the base CV and no credential, rewritten and changed
+ * `original` segments no credential absent from their cited items; no added or rewritten segment names an entity
+ * absent from the base CV (`entities.ts`).
+ */
 export function parseCvTailorResponse(
   raw: unknown,
   context: { base: CvStructured; job: JobPostingExtracted; target: TargetLanguage },
@@ -294,7 +275,7 @@ export function parseCvTailorResponse(
       ) {
         issues.push(`${segment.segmentId}: hard limit, added number`);
       }
-      if (namesCredential(segment.text)) {
+      if (newCredentials(segment.text).length > 0) {
         issues.push(`${segment.segmentId}: hard limit, added credential`);
       }
       continue;
@@ -305,6 +286,11 @@ export function parseCvTailorResponse(
       continue;
     }
     const sourceText = sources.join("\n");
+    // Rewritten and changed `original` text may keep a credential of its cited items, never add one (Sentinela
+    // PR #91); an unchanged `original` holds exactly its source's.
+    if (newCredentials(segment.text, sourceText).length > 0) {
+      issues.push(`${segment.segmentId}: hard limit, credential not in cited base items`);
+    }
     const sourceNumbers = new Set(numericTokens(sourceText));
     if (
       numericTokens(withoutLexiconTerms(segment.text)).some((token) => !sourceNumbers.has(token))
@@ -346,8 +332,8 @@ export interface ParsedCvHumanization extends InjectionReport {
 
 /**
  * Preservation (humanizer-cv-rules.md §3.1, career-prompts.md §4): same segments in the same order (else the
- * whole output is invalid); per segment, same numbers, no entity added or removed and no new lint marker,
- * otherwise the previous text is kept. A changed `original` segment becomes `rewritten`; `added` stays `added`.
+ * whole output is invalid); per segment, same numbers, no entity added or removed, no new credential and no new
+ * lint marker, otherwise the previous text is kept. A changed `original` segment becomes `rewritten`; `added` stays `added`.
  */
 export function parseCvHumanizeResponse(
   raw: unknown,
@@ -385,7 +371,9 @@ export function parseCvHumanizeResponse(
     const newMarker = lintText(segment.segmentId, update.text, language, block).some(
       (finding) => !oldMarkers.has(finding.entryId),
     );
-    if (!sameNumbers(segment.text, update.text) || !entitiesKept || newMarker) {
+    // A credential the segment did not already hold (`Kafka associate`) is an addition (Sentinela PR #91).
+    const newCredential = newCredentials(update.text, segment.text).length > 0;
+    if (!sameNumbers(segment.text, update.text) || !entitiesKept || newMarker || newCredential) {
       revertedSegmentIds.push(segment.segmentId);
       return segment;
     }
