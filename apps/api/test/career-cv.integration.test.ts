@@ -1,0 +1,448 @@
+/**
+ * CV base flow against a real PostgreSQL (career PR 2, spec 2026-10-22 §5): upload → `EXTRACTING` draft
+ * with the PDF text only (the file is never stored) → `cv.extract` enqueued with the draft id only → the
+ * worker side (`PrismaCvBases.completeExtraction`, called directly here) → review and confirm → new
+ * version deactivates the previous one → delete everything. Personal data never reaches logs or the audit
+ * trail (canary). The queue is a recording double; the real producer arrives with career PR 1.
+ *
+ * Without Docker, point `INTEGRATION_DATABASE_URL` at an EMPTY database (e.g. a throwaway local cluster);
+ * the container is then skipped.
+ */
+import "reflect-metadata";
+import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { Test } from "@nestjs/testing";
+import type { NestFastifyApplication } from "@nestjs/platform-fastify";
+import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
+import {
+  CvBaseStateSchema,
+  CvBaseSchema,
+  CvExtractPayloadSchema,
+  CvStructuredSchema,
+  CvUploadAcceptedSchema,
+  type CvExtractPayload,
+  type CvStructured,
+} from "@linkedin-ops/contracts";
+import {
+  createPrismaClient,
+  CV_EXTRACTION_STALE_MS,
+  deriveCsrfToken,
+  hashSessionSecret,
+  newId,
+  PrismaCvBases,
+  validateRuntimeEnv,
+  type PrismaClient,
+  type RuntimeEnv,
+} from "@linkedin-ops/domain";
+import supertest from "supertest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { AppModule } from "../src/app.module.js";
+import { configureApp, createFastifyAdapter } from "../src/app.factory.js";
+import { CAREER_RATE_LIMITS } from "../src/career/cv-base.service.js";
+import { CV_EXTRACT_QUEUE, type CvExtractQueue } from "../src/career/cv-extract.queue.js";
+import { REQUESTED_WITH_VALUE } from "../src/common/route-access.guard.js";
+import { createLogger } from "../src/logging/logger.js";
+import { fictitiousCvStructured } from "./fixtures/cv-structured.js";
+import { fictitiousCvPdf } from "./fixtures/pdf.js";
+import { APP_BASE_URL, LogCapture, cookieHeader, mutationHeaders } from "./helpers.js";
+
+const POSTGRES_IMAGE =
+  "postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24";
+const DOMAIN_ROOT = fileURLToPath(new URL("../../../packages/domain", import.meta.url));
+const PRISMA_BIN = fileURLToPath(
+  new URL("../../../packages/domain/node_modules/.bin/prisma", import.meta.url),
+);
+const UPLOAD_LIMIT = 4;
+
+/** Records every `cv.extract` job; `failNext` simulates a queue outage. */
+class RecordingQueue implements CvExtractQueue {
+  jobs: CvExtractPayload[] = [];
+  failNext = false;
+
+  async enqueue(payload: CvExtractPayload): Promise<{ jobId: string }> {
+    if (this.failNext) {
+      this.failNext = false;
+      throw new Error("queue down");
+    }
+    this.jobs.push(CvExtractPayloadSchema.parse(payload));
+    return { jobId: `job-${this.jobs.length}` };
+  }
+}
+
+let container: StartedPostgreSqlContainer | undefined;
+let prisma: PrismaClient;
+let app: NestFastifyApplication;
+let request: ReturnType<typeof supertest>;
+let env: RuntimeEnv;
+let worker: PrismaCvBases<CvStructured>;
+const queue = new RecordingQueue();
+const logs = new LogCapture();
+
+interface Actor {
+  userId: string;
+  cookie: string;
+  csrfToken: string;
+}
+
+async function newActor(options: { elevated?: boolean } = {}): Promise<Actor> {
+  const userId = newId();
+  const sessionId = newId();
+  await prisma.user.create({
+    data: {
+      id: userId,
+      email: `owner-${userId}@example.test`,
+      passwordHash: "not-a-login",
+      name: "Owner",
+    },
+  });
+  const cookie = randomBytes(32).toString("base64url");
+  await prisma.session.create({
+    data: {
+      id: sessionId,
+      userId,
+      secretHash: hashSessionSecret(cookie),
+      expiresAt: new Date(Date.now() + 3_600_000),
+      elevatedUntil: options.elevated ? new Date(Date.now() + 15 * 60_000) : null,
+    },
+  });
+  return { userId, cookie, csrfToken: deriveCsrfToken(env.sessionSecret, sessionId) };
+}
+
+function upload(actor: Actor, file: Buffer = fictitiousCvPdf()) {
+  return request
+    .post("/api/v1/career/cv")
+    .set({
+      origin: APP_BASE_URL,
+      "x-requested-with": REQUESTED_WITH_VALUE,
+      cookie: cookieHeader(actor.cookie),
+    })
+    .attach("file", file, { filename: "meu-cv.pdf", contentType: "application/pdf" });
+}
+
+function getState(actor: Actor) {
+  return request.get("/api/v1/career/cv").set("cookie", cookieHeader(actor.cookie));
+}
+
+function confirm(actor: Actor, draftId: string, content: unknown) {
+  return request
+    .post("/api/v1/career/cv/confirm")
+    .set(mutationHeaders({ cookie: cookieHeader(actor.cookie) }))
+    .send({ draftId, content });
+}
+
+function deleteAll(actor: Actor) {
+  return request
+    .delete("/api/v1/career/cv")
+    .set(mutationHeaders({ cookie: cookieHeader(actor.cookie), "x-csrf-token": actor.csrfToken }))
+    .send({});
+}
+
+/** Upload + simulated `cv.extract` success; returns the READY draft id. */
+async function readyDraft(actor: Actor, content = fictitiousCvStructured()): Promise<string> {
+  const res = await upload(actor).expect(202);
+  const ok = await worker.completeExtraction(res.body.id as string, content, {
+    correlationId: "job-test",
+    actor: { type: "WORKER", jobId: "job-test" },
+  });
+  expect(ok).toBe(true);
+  return res.body.id as string;
+}
+
+beforeAll(async () => {
+  let databaseUrl = process.env.INTEGRATION_DATABASE_URL;
+  if (!databaseUrl) {
+    container = await new PostgreSqlContainer(POSTGRES_IMAGE).start();
+    databaseUrl = container.getConnectionUri();
+  }
+  execFileSync(PRISMA_BIN, ["migrate", "deploy"], {
+    cwd: DOMAIN_ROOT,
+    env: { ...process.env, DATABASE_URL: databaseUrl },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  env = validateRuntimeEnv({
+    NODE_ENV: "test",
+    APP_BASE_URL,
+    DATABASE_URL: databaseUrl,
+    SESSION_SECRET: randomBytes(48).toString("base64"),
+    ENCRYPTION_KEY: randomBytes(32).toString("base64"),
+  });
+  prisma = createPrismaClient({ connectionString: databaseUrl });
+  worker = new PrismaCvBases(prisma, (value) => CvStructuredSchema.parse(value));
+  const logger = createLogger({ level: "info", pretty: false, stream: logs.stream });
+  const moduleRef = await Test.createTestingModule({
+    imports: [AppModule.forRoot({ env, logger })],
+  })
+    .overrideProvider(CV_EXTRACT_QUEUE)
+    .useValue(queue)
+    .overrideProvider(CAREER_RATE_LIMITS)
+    .useValue({ windowMs: 60_000, uploadPerUser: UPLOAD_LIMIT })
+    .compile();
+  app = moduleRef.createNestApplication<NestFastifyApplication>(createFastifyAdapter(logger), {
+    bufferLogs: true,
+    bodyParser: false,
+  });
+  await configureApp(app, env, logger);
+  await app.init();
+  await app.getHttpAdapter().getInstance().ready();
+  request = supertest(app.getHttpServer());
+});
+
+afterAll(async () => {
+  await app?.close();
+  await prisma?.$disconnect();
+  await container?.stop();
+});
+
+beforeEach(() => {
+  queue.jobs = [];
+  queue.failNext = false;
+});
+
+describe("POST /career/cv (upload)", () => {
+  it("answers 202 with an EXTRACTING draft, stores only the PDF text and enqueues the draft id", async () => {
+    const actor = await newActor();
+    const res = await upload(actor).expect(202);
+    expect(CvUploadAcceptedSchema.parse(res.body)).toMatchObject({
+      status: "EXTRACTING",
+      jobId: "job-1",
+      draft: { status: "EXTRACTING", version: 1, content: null, failureReason: null },
+    });
+    expect(res.body.id).toBe(res.body.draft.id);
+    expect(res.headers.location).toBe("/api/v1/career/cv");
+    expect(res.headers["cache-control"]).toBe("no-store");
+
+    expect(queue.jobs).toEqual([
+      {
+        schemaVersion: 1,
+        correlationId: res.headers["x-correlation-id"],
+        requestedBy: { type: "USER", id: actor.userId },
+        cvBaseId: res.body.id,
+      },
+    ]);
+    const row = await prisma.cvBase.findUniqueOrThrow({ where: { id: res.body.id as string } });
+    expect(row.extractedText).toContain("Ana Exemplo da Silva");
+    expect(row.extractedText).toContain("Universidade Imaginária");
+    // Nothing that looks like the file itself was stored.
+    expect(JSON.stringify(row)).not.toContain("%PDF");
+  });
+
+  it("a new upload replaces the pending draft (one draft per user)", async () => {
+    const actor = await newActor();
+    const first = await upload(actor).expect(202);
+    const second = await upload(actor).expect(202);
+    const drafts = await prisma.cvBase.findMany({ where: { userId: actor.userId } });
+    expect(drafts.map((row) => row.id)).toEqual([second.body.id]);
+    expect(second.body.draft.version).toBe(1);
+    expect(first.body.id).not.toBe(second.body.id);
+  });
+
+  it("a queue outage fails the draft at once, erases its text and answers 503", async () => {
+    const actor = await newActor();
+    queue.failNext = true;
+    const res = await upload(actor).expect(503);
+    expect(res.body.code).toBe("UPSTREAM_UNAVAILABLE");
+    const [row] = await prisma.cvBase.findMany({ where: { userId: actor.userId } });
+    expect(row).toMatchObject({ status: "FAILED", failureReason: "EXTRACTION_FAILED" });
+    expect(row?.extractedText).toBeNull();
+  });
+
+  it("is rate limited per user", async () => {
+    const actor = await newActor();
+    for (let attempt = 0; attempt < UPLOAD_LIMIT; attempt += 1) await upload(actor).expect(202);
+    const res = await upload(actor).expect(429);
+    expect(res.body.code).toBe("RATE_LIMITED");
+    expect(Number(res.headers["retry-after"])).toBeGreaterThan(0);
+  });
+});
+
+describe("GET /career/cv", () => {
+  it("is empty for a new user", async () => {
+    const actor = await newActor();
+    const res = await getState(actor).expect(200);
+    expect(res.body).toEqual({ active: null, draft: null });
+    expect(res.headers["cache-control"]).toBe("no-store");
+  });
+
+  it("shows the draft as EXTRACTING, then READY with content once cv.extract finished", async () => {
+    const actor = await newActor();
+    const { body } = await upload(actor).expect(202);
+    expect((await getState(actor).expect(200)).body.draft.status).toBe("EXTRACTING");
+
+    await worker.completeExtraction(body.id as string, fictitiousCvStructured(), {
+      correlationId: "job-1",
+      actor: { type: "WORKER", jobId: "job-1" },
+    });
+    const state = CvBaseStateSchema.parse((await getState(actor).expect(200)).body);
+    expect(state.active).toBeNull();
+    expect(state.draft).toMatchObject({ status: "READY", content: fictitiousCvStructured() });
+    const row = await prisma.cvBase.findUniqueOrThrow({ where: { id: body.id as string } });
+    expect(row.extractedText).toBeNull();
+  });
+
+  it("settles a draft stuck in EXTRACTING as FAILED/TIMED_OUT and erases its text", async () => {
+    const actor = await newActor();
+    const { body } = await upload(actor).expect(202);
+    await prisma.cvBase.update({
+      where: { id: body.id as string },
+      data: { updatedAt: new Date(Date.now() - CV_EXTRACTION_STALE_MS - 1000) },
+    });
+    const res = await getState(actor).expect(200);
+    expect(res.body.draft).toMatchObject({ status: "FAILED", failureReason: "TIMED_OUT" });
+    const row = await prisma.cvBase.findUniqueOrThrow({ where: { id: body.id as string } });
+    expect(row.extractedText).toBeNull();
+    // A late worker result no longer applies.
+    expect(
+      await worker.completeExtraction(body.id as string, fictitiousCvStructured(), {
+        correlationId: "late",
+        actor: { type: "WORKER", jobId: "late" },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("POST /career/cv/confirm", () => {
+  it("activates the reviewed content (the owner's edits win over the extraction)", async () => {
+    const actor = await newActor();
+    const draftId = await readyDraft(actor);
+    const edited = fictitiousCvStructured();
+    edited.contact.name = "Ana E. da Silva";
+    const res = await confirm(actor, draftId, edited).expect(200);
+    expect(CvBaseSchema.parse(res.body)).toMatchObject({
+      id: draftId,
+      version: 1,
+      content: edited,
+    });
+
+    const state = (await getState(actor).expect(200)).body;
+    expect(state.draft).toBeNull();
+    expect(state.active.content.contact.name).toBe("Ana E. da Silva");
+  });
+
+  it("a new confirmed version deactivates the previous one", async () => {
+    const actor = await newActor();
+    const first = await readyDraft(actor);
+    await confirm(actor, first, fictitiousCvStructured()).expect(200);
+    const second = await readyDraft(actor);
+    const res = await confirm(actor, second, fictitiousCvStructured()).expect(200);
+    expect(res.body.version).toBe(2);
+
+    const rows = await prisma.cvBase.findMany({
+      where: { userId: actor.userId },
+      orderBy: { version: "asc" },
+    });
+    expect(rows.map((row) => [row.version, row.isActive])).toEqual([
+      [1, false],
+      [2, true],
+    ]);
+    expect((await getState(actor).expect(200)).body.active.id).toBe(second);
+  });
+
+  it("refuses a draft that is still extracting, was replaced, or belongs to someone else (409)", async () => {
+    const actor = await newActor();
+    const extracting = await upload(actor).expect(202);
+    let res = await confirm(actor, extracting.body.id as string, fictitiousCvStructured()).expect(
+      409,
+    );
+    expect(res.body.code).toBe("CV_DRAFT_NOT_READY");
+
+    const replaced = extracting.body.id as string;
+    await readyDraft(actor);
+    res = await confirm(actor, replaced, fictitiousCvStructured()).expect(409);
+    expect(res.body.code).toBe("CV_DRAFT_NOT_READY");
+
+    const other = await newActor();
+    const othersDraft = await readyDraft(other);
+    res = await confirm(actor, othersDraft, fictitiousCvStructured()).expect(409);
+    expect(res.body.code).toBe("CV_DRAFT_NOT_READY");
+    expect(await prisma.cvBase.count({ where: { userId: other.userId, isActive: true } })).toBe(0);
+  });
+
+  it("validates the content against CvStructured (strict: unknown keys, duplicate ids) without echoing it", async () => {
+    const actor = await newActor();
+    const draftId = await readyDraft(actor);
+    const marker = "CANARIO-CONFIRM-51d0";
+    const res = await confirm(actor, draftId, {
+      ...fictitiousCvStructured(marker),
+      hobby: marker,
+    }).expect(400);
+    expect(res.body.code).toBe("VALIDATION_FAILED");
+    expect(JSON.stringify(res.body)).not.toContain(marker);
+
+    const duplicated = fictitiousCvStructured();
+    duplicated.skills.technical.push({ id: "skill-1", text: "Go" });
+    expect((await confirm(actor, draftId, duplicated).expect(400)).body.code).toBe(
+      "VALIDATION_FAILED",
+    );
+  });
+
+  it("concurrent confirmations of the same draft activate exactly one version", async () => {
+    const actor = await newActor();
+    const draftId = await readyDraft(actor);
+    const results = await Promise.all([
+      confirm(actor, draftId, fictitiousCvStructured()),
+      confirm(actor, draftId, fictitiousCvStructured()),
+    ]);
+    expect(results.map((res) => res.status).sort()).toEqual([200, 409]);
+    expect(await prisma.cvBase.count({ where: { userId: actor.userId, isActive: true } })).toBe(1);
+  });
+});
+
+describe("DELETE /career/cv", () => {
+  it("requires a recent re-authentication", async () => {
+    const actor = await newActor({ elevated: false });
+    const res = await deleteAll(actor).expect(401);
+    expect(res.body.code).toBe("AUTH_REAUTH_REQUIRED");
+  });
+
+  it("deletes every version and the draft, and only the owner's", async () => {
+    const actor = await newActor({ elevated: true });
+    const other = await newActor();
+    await confirm(actor, await readyDraft(actor), fictitiousCvStructured()).expect(200);
+    await confirm(actor, await readyDraft(actor), fictitiousCvStructured()).expect(200);
+    await upload(actor).expect(202);
+    await readyDraft(other);
+
+    await deleteAll(actor).expect(204);
+    expect(await prisma.cvBase.count({ where: { userId: actor.userId } })).toBe(0);
+    expect(await prisma.cvBase.count({ where: { userId: other.userId } })).toBe(1);
+    expect((await getState(actor).expect(200)).body).toEqual({ active: null, draft: null });
+    // Idempotent.
+    await deleteAll(actor).expect(204);
+
+    const audit = await prisma.auditEvent.findFirstOrThrow({
+      where: { userId: actor.userId, action: "cv_base.deleted" },
+    });
+    expect(audit.after).toEqual({ deletedVersions: 3 });
+  });
+});
+
+describe("personal data (canary)", () => {
+  it("CV text never reaches logs, audit events or error responses", async () => {
+    const marker = "CANARIO-INTEGRACAO-9b2e";
+    const actor = await newActor({ elevated: true });
+    const res = await upload(actor, fictitiousCvPdf(marker)).expect(202);
+    expect(JSON.stringify(res.body)).not.toContain(marker);
+    await worker.completeExtraction(res.body.id as string, fictitiousCvStructured(marker), {
+      correlationId: "job-canary",
+      actor: { type: "WORKER", jobId: "job-canary" },
+    });
+    await confirm(actor, res.body.id as string, fictitiousCvStructured(marker)).expect(200);
+    await deleteAll(actor).expect(204);
+
+    expect(logs.text).not.toContain(marker);
+    expect(logs.text).not.toContain("Ana Exemplo");
+    const audit = await prisma.auditEvent.findMany({
+      where: { userId: actor.userId },
+      orderBy: { id: "asc" },
+    });
+    expect(audit.map((event) => event.action)).toEqual([
+      "cv_base.draft_started",
+      "cv_base.extraction_ready",
+      "cv_base.confirmed",
+      "cv_base.deleted",
+    ]);
+    expect(JSON.stringify(audit)).not.toContain(marker);
+    expect(JSON.stringify(audit)).not.toContain("Ana Exemplo");
+  });
+});

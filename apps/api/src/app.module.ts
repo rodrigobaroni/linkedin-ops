@@ -4,6 +4,7 @@ import { APP_FILTER, APP_GUARD } from "@nestjs/core";
 import type { RuntimeEnv } from "@linkedin-ops/domain";
 import type { Logger } from "pino";
 import { AuthModule } from "./auth/auth.module.js";
+import { CareerModule } from "./career/career.module.js";
 import { ProblemDetailsFilter } from "./common/problem-details.filter.js";
 import { RouteAccessGuard } from "./common/route-access.guard.js";
 import { RuntimeEnvModule } from "./config/runtime-env.module.js";
@@ -31,6 +32,7 @@ export class AppModule {
         HealthModule,
         AuthModule,
         LinkedInModule.forRoot(logger),
+        CareerModule.forRoot(logger),
       ],
       controllers: [
         // `/openapi.json` is public in development and session-only elsewhere (contracts.md §5);

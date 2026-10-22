@@ -2,7 +2,12 @@ import { timingSafeEqual } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import type { CanActivate, ExecutionContext } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
-import { REQUESTED_WITH_HEADER, type RouteAuth, type UserRole } from "@linkedin-ops/contracts";
+import {
+  REQUESTED_WITH_HEADER,
+  type RouteAuth,
+  type RouteDefinition,
+  type UserRole,
+} from "@linkedin-ops/contracts";
 import type { RuntimeEnv } from "@linkedin-ops/domain";
 import type { FastifyRequest } from "fastify";
 import { RUNTIME_ENV } from "../config/runtime-env.module.js";
@@ -36,6 +41,8 @@ declare module "fastify" {
  * ADR-0007 N4 as a global guard. Every `POST/PUT/PATCH/DELETE` must carry `Origin` exactly equal to
  * `APP_BASE_URL`, `Content-Type: application/json` and `X-Requested-With: linkedin-ops`; `Origin: null`,
  * form bodies, method-override headers and cross-site Fetch Metadata are rejected (`403 CSRF_REJECTED`).
+ * The one exception is a route whose registry entry declares `requestContentType: multipart/form-data`
+ * (uploads): it accepts only that type (`415 UNSUPPORTED_MEDIA_TYPE` otherwise) and keeps every other control.
  * Then the route's auth level applies: `session` requires a live `__Host-session` (`401 AUTH_REQUIRED`),
  * `elevated` adds `X-CSRF-Token` bound to the session (`403 CSRF_REJECTED`) and a recent re-authentication
  * (`401 AUTH_REAUTH_REQUIRED`); `roles` narrows further (`403 FORBIDDEN`). The level comes from the route
@@ -59,7 +66,9 @@ export class RouteAccessGuard implements CanActivate {
     const roles: readonly UserRole[] | undefined = route?.roles;
 
     this.rejectMethodOverride(request);
-    if (MUTATING_METHODS.has(request.method)) this.enforceCsrfControls(request);
+    if (MUTATING_METHODS.has(request.method)) {
+      this.enforceCsrfControls(request, route?.requestContentType ?? "application/json");
+    }
     if (auth === "none") return true;
 
     const session = await this.sessions.resolve(request.cookies[SESSION_COOKIE_NAME]);
@@ -100,7 +109,10 @@ export class RouteAccessGuard implements CanActivate {
     }
   }
 
-  private enforceCsrfControls(request: FastifyRequest): void {
+  private enforceCsrfControls(
+    request: FastifyRequest,
+    declaredContentType: NonNullable<RouteDefinition["requestContentType"]>,
+  ): void {
     const origin = header(request, "origin");
     if (origin === undefined || origin === "null" || origin !== this.env.appBaseUrl) {
       throw new ProblemError("CSRF_REJECTED", { detail: "Origem da requisição não permitida" });
@@ -109,12 +121,23 @@ export class RouteAccessGuard implements CanActivate {
     if (fetchSite !== undefined && fetchSite !== "same-origin") {
       throw new ProblemError("CSRF_REJECTED", { detail: "Origem da requisição não permitida" });
     }
-    if (!isJson(header(request, "content-type"))) {
+    const contentType = header(request, "content-type");
+    if (declaredContentType === "application/json" && !isJson(contentType)) {
       throw new ProblemError("CSRF_REJECTED", { detail: "Content-Type deve ser application/json" });
     }
     if (header(request, REQUESTED_WITH_NAME) !== REQUESTED_WITH_VALUE) {
       throw new ProblemError("CSRF_REJECTED", {
         detail: "Cabeçalho X-Requested-With ausente ou inválido",
+      });
+    }
+    // An upload route (the registry declares `multipart/form-data`) is the only place a form body passes;
+    // past the Origin and X-Requested-With checks, any other type is a client error, not CSRF.
+    if (
+      declaredContentType !== "application/json" &&
+      mediaTypeOf(contentType) !== declaredContentType
+    ) {
+      throw new ProblemError("UNSUPPORTED_MEDIA_TYPE", {
+        detail: `Content-Type deve ser ${declaredContentType}`,
       });
     }
   }
@@ -126,11 +149,14 @@ function header(request: FastifyRequest, name: string): string | undefined {
   return value;
 }
 
+/** Media type without parameters, lowercased (`Multipart/Form-Data; boundary=x` → `multipart/form-data`). */
+export function mediaTypeOf(contentType: string | undefined): string | undefined {
+  return contentType?.split(";")[0]?.trim().toLowerCase();
+}
+
 /** `application/json` with optional parameters (`; charset=utf-8`); anything else fails. */
 export function isJson(contentType: string | undefined): boolean {
-  if (!contentType) return false;
-  const mediaType = contentType.split(";")[0]?.trim().toLowerCase();
-  return mediaType === "application/json";
+  return mediaTypeOf(contentType) === "application/json";
 }
 
 function constantTimeEquals(a: string, b: string): boolean {
