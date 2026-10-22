@@ -42,6 +42,7 @@ const IMPLEMENTED: readonly RouteKey[] = [
   "career.jobs.get",
   "career.jobs.pasteText",
   "career.jobs.retry",
+  "career.jobs.pdf",
   "career.jobs.delete",
 ];
 

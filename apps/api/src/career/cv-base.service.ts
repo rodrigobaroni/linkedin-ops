@@ -35,6 +35,8 @@ export interface CareerRateLimits {
   batchPerUser: number;
   /** Pasted texts and reprocessings per user (each one costs model calls, maybe a fetch). */
   reprocessPerUser: number;
+  /** Tailored CV PDF downloads per user (each one renders synchronously on the event loop). */
+  pdfPerUser: number;
 }
 
 export const DEFAULT_CAREER_RATE_LIMITS: Readonly<CareerRateLimits> = {
@@ -42,6 +44,7 @@ export const DEFAULT_CAREER_RATE_LIMITS: Readonly<CareerRateLimits> = {
   uploadPerUser: 10,
   batchPerUser: 10,
   reprocessPerUser: 60,
+  pdfPerUser: 60,
 };
 
 /** PT-BR detail per rejection (shown by the web; never file content). */

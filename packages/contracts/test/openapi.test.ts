@@ -24,6 +24,23 @@ describe("OpenAPI document (contracts.md §5)", () => {
     expect(ids).toEqual(Object.keys(routesV1).sort());
   });
 
+  it("documents the tailored CV download as a binary PDF, with Problem Details on errors", () => {
+    const operation = (document.paths["/career/jobs/{id}/pdf"] as Record<string, unknown>)[
+      "get"
+    ] as {
+      responses: Record<string, { content?: Record<string, unknown> }>;
+    };
+    expect(operation.responses["200"]?.content).toEqual({
+      "application/pdf": { schema: { type: "string", format: "binary" } },
+    });
+    expect(Object.keys(operation.responses["404"]?.content ?? {})).toEqual([
+      "application/problem+json",
+    ]);
+    expect(Object.keys(operation.responses["429"]?.content ?? {})).toEqual([
+      "application/problem+json",
+    ]);
+  });
+
   it("every $ref resolves to a component and no component carries JSON Schema-only keywords", () => {
     const text = JSON.stringify(document);
     const refs = [...text.matchAll(/"\$ref":"#\/components\/schemas\/([A-Za-z0-9]+)"/g)].map(

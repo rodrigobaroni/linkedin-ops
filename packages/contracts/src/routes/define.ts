@@ -26,6 +26,11 @@ export interface RouteDefinition {
   body?: z.ZodType;
   /** Defaults to `application/json` when `body` is set. */
   requestContentType?: "application/json" | "multipart/form-data";
+  /**
+   * Media type of the success body; defaults to `application/json`. `application/pdf` is a binary download:
+   * its `responses` entry is `null` (no JSON schema) and errors stay `ProblemDetails`.
+   */
+  responseContentType?: "application/json" | "application/pdf";
   /** Success responses; `null` = no body (204/302). Error responses are always `ProblemDetails`. */
   responses: Readonly<Partial<Record<SuccessStatus, z.ZodType | null>>>;
   /** Enqueues a job and answers 202 (⚡). */

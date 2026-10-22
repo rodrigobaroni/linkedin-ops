@@ -95,14 +95,24 @@ describe("routes/v1 registry", () => {
     ]);
   });
 
-  it("every route has at least one success response and 204/302 responses have no body", () => {
+  it("every route has at least one success response and 204/302 and binary responses have no schema", () => {
     for (const [key, route] of entries) {
       const statuses = Object.keys(route.responses);
       expect(statuses.length, key).toBeGreaterThan(0);
+      const binary = route.responseContentType === "application/pdf";
       for (const [status, schema] of Object.entries(route.responses)) {
-        if (status === "204" || status === "302") expect(schema, `${key} ${status}`).toBeNull();
-        else expect(schema, `${key} ${status}`).toBeInstanceOf(z.ZodType);
+        if (status === "204" || status === "302" || binary) {
+          expect(schema, `${key} ${status}`).toBeNull();
+        } else expect(schema, `${key} ${status}`).toBeInstanceOf(z.ZodType);
       }
+    }
+  });
+
+  it("serves binary bodies only from GET routes with one 200 response", () => {
+    for (const [key, route] of entries) {
+      if (route.responseContentType !== "application/pdf") continue;
+      expect(route.method, key).toBe("GET");
+      expect(Object.keys(route.responses), key).toEqual(["200"]);
     }
   });
 

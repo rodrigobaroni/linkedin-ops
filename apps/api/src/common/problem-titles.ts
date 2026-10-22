@@ -32,6 +32,8 @@ export const PROBLEM_TITLES: Readonly<Record<ErrorCode, string>> = {
   CV_BASE_REQUIRED: "Envie e confirme seu CV antes",
   JOB_POSTING_INVALID_TRANSITION: "A vaga ainda está sendo processada",
   JOB_POSTING_URL_REJECTED: "Link de vaga não aceito",
+  TAILORED_CV_NOT_READY: "O CV adaptado ainda não está pronto",
+  TAILORED_CV_STALE: "O CV adaptado precisa ser refeito",
   RATE_LIMITED: "Muitas requisições; tente novamente em instantes",
   PAYLOAD_TOO_LARGE: "Corpo da requisição grande demais",
   UNSUPPORTED_MEDIA_TYPE: "Tipo de conteúdo não suportado",

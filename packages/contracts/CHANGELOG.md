@@ -35,6 +35,10 @@ versioning: internal SemVer (see `README.md`).
   `FAILED`/`FETCH_BLOCKED` without a job, ADR-0008 §1); `status` becomes `FETCHING | FAILED` and `jobId` nullable
   (every link blocked). `ErrorCode` gains `JOB_POSTING_URL_REJECTED` (422): a link that outgrows 2048 characters
   once normalized, or a retry that would fetch a blocked link.
+- Tailored CV download (career PR 3c, ADR-0009): route `career.jobs.pdf` (`GET /career/jobs/{id}/pdf`, binary
+  `application/pdf`, rate limited); `RouteDefinition` gains `responseContentType` (`application/json` default,
+  `application/pdf` with a `null` response schema), documented in OpenAPI as `type: string, format: binary`;
+  `ErrorCode` gains `TAILORED_CV_NOT_READY` (409) and `TAILORED_CV_STALE` (409).
 - `job.fetch` and `cv.tailor` payloads gain `attempt` (int ≥ 1): the posting's processing cycle, so a late job of
   an earlier cycle is a no-op (career PR 3b; no job of these queues was produced before).
 - Queues `cv.extract` (`{ cvBaseId }`, retry 2 with backoff), `job.fetch` (`{ jobPostingId }`, retry 1 after 60 s,

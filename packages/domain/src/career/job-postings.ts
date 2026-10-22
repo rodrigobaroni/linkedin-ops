@@ -1,8 +1,10 @@
 import {
+  CvStructuredSchema,
   JobPostingExtractedSchema,
   MatchReportSchema,
   QUEUES,
   TailoredCvContentSchema,
+  type CvStructured,
   type JobPostingExtracted,
   type JobPostingFailure,
   type JobPostingSourceKind,
@@ -183,6 +185,38 @@ export class JobPostingBusyError extends Error {
   }
 }
 
+/** The tailored CV of a posting is only downloadable once the posting is `READY`. */
+export class TailoredCvNotReadyError extends Error {
+  constructor(readonly status: JobPostingStatus) {
+    super(`Job posting is ${status}`);
+    this.name = "TailoredCvNotReadyError";
+  }
+}
+
+/**
+ * The tailored CV can no longer be rendered: its CV base version (and with it, by cascade, the tailored CV)
+ * was deleted, or it cites a base CV item that does not exist. Carries an id at most, never content.
+ */
+export class TailoredCvStaleError extends Error {
+  constructor(readonly missingItemId: string | null) {
+    super(
+      missingItemId === null
+        ? "Tailored CV is gone"
+        : `Tailored CV references unknown base CV item "${missingItemId}"`,
+    );
+    this.name = "TailoredCvStaleError";
+  }
+}
+
+/** What the PDF renderer needs: the tailored CV and the CV base VERSION it was tailored from. */
+export interface TailoredCvSource {
+  /** From the posting extraction, for the file name. */
+  title: string | null;
+  company: string | null;
+  content: TailoredCvContent;
+  base: CvStructured;
+}
+
 type PostingRow = Awaited<ReturnType<PrismaClient["jobPosting"]["findUniqueOrThrow"]>>;
 type TailoredRow = Awaited<ReturnType<PrismaClient["tailoredCv"]["findUniqueOrThrow"]>>;
 type StalePosting = { id: string; userId: string; status: JobPostingStatus };
@@ -323,6 +357,52 @@ export class PrismaJobPostings {
       this.prisma.cvBase.findFirst({ where: { userId, isActive: true }, select: { id: true } }),
     ]);
     return toRecord(row, tailored, active?.id ?? null);
+  }
+
+  /**
+   * Source of `GET /career/jobs/{id}/pdf`: the tailored CV and the CV base version recorded in
+   * `tailored_cvs.cv_base_id` (never the active one, whose companies and dates may differ). Read only.
+   */
+  async tailoredCvSource(userId: string, id: string): Promise<TailoredCvSource> {
+    const row = await this.prisma.jobPosting.findFirst({
+      where: { id, userId },
+      select: { id: true, status: true, extracted: true },
+    });
+    if (!row) throw new JobPostingNotFoundError();
+    if (row.status !== "READY") throw new TailoredCvNotReadyError(row.status);
+    const tailored = await this.prisma.tailoredCv.findUnique({
+      where: { jobPostingId: row.id },
+      select: { cvBaseId: true, content: true },
+    });
+    if (!tailored) throw new TailoredCvStaleError(null);
+    const base = await this.prisma.cvBase.findFirst({
+      where: { id: tailored.cvBaseId, userId },
+      select: { content: true },
+    });
+    if (!base || base.content === null) throw new TailoredCvStaleError(tailored.cvBaseId);
+    const extracted =
+      row.extracted === null ? null : JobPostingExtractedSchema.parse(row.extracted);
+    return {
+      title: extracted?.title ?? null,
+      company: extracted?.company ?? null,
+      content: TailoredCvContentSchema.parse(tailored.content),
+      base: CvStructuredSchema.parse(base.content),
+    };
+  }
+
+  /** Audit trail of a download refused as stale: the missing id only (CV content never). */
+  async recordStaleTailoredCv(
+    userId: string,
+    id: string,
+    missingItemId: string | null,
+    meta: CareerAuditMeta,
+  ): Promise<void> {
+    await this.prisma.$transaction((tx) =>
+      audit(tx, userId, meta, "tailored_cv.stale", "job_posting", id, {
+        before: null,
+        after: missingItemId === null ? { tailoredCv: "missing" } : { missingItemId },
+      }),
+    );
   }
 
   /**

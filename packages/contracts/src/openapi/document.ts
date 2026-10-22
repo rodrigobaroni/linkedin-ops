@@ -161,6 +161,13 @@ function operationOf(
 
   const responses: Record<string, JsonObject> = {};
   for (const [status, schema] of Object.entries(route.responses)) {
+    if (route.responseContentType === "application/pdf") {
+      responses[status] = {
+        description: "PDF file (`Content-Disposition: attachment`)",
+        content: { "application/pdf": { schema: { type: "string", format: "binary" } } },
+      };
+      continue;
+    }
     responses[status] = schema
       ? { description: "OK", content: { "application/json": { schema: ref(idOf(schema)) } } }
       : { description: status === "302" ? "Redirect" : "No content" };
