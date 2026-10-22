@@ -415,6 +415,9 @@ nomes de Pena nos Structured Outputs e de `contracts` nos DTOs, ADR-0005 §9; `<
 | `publication.reconcile`  | `{ publicationId }`               | `publicationId`  | 3                           | api/alerta → worker             |
 | `notification.send`      | `{ notificationId }`              | `notificationId` | 5, backoff                  | worker/api → worker             |
 | `linkedin.token-refresh` | `{ userId }`                      | `userId`         | 3                           | cron diário → worker            |
+| `cv.extract`             | `{ cvBaseId }`                    | `cvBaseId`       | 2, backoff                  | api → worker                    |
+| `job.fetch`              | `{ jobPostingId }`                | `jobPostingId`   | 1, após 60 s (ADR-0008)     | api → worker                    |
+| `cv.tailor`              | `{ jobPostingId }`                | `jobPostingId`   | 2, backoff                  | worker → worker                 |
 
 Todos os payloads carregam `schemaVersion`, `correlationId` e `requestedBy` (`{ type: USER\|SYSTEM, id }`).
 

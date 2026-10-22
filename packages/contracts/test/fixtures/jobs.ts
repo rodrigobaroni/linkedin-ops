@@ -30,6 +30,9 @@ export const jobPayloads: Record<QueueName, Record<string, unknown>> = {
     requestedBy: { type: "SYSTEM", id: "cron" },
     userId: ids.user,
   },
+  "cv.extract": { ...envelope, cvBaseId: ids.cvBase },
+  "job.fetch": { ...envelope, jobPostingId: ids.jobPosting },
+  "cv.tailor": { ...envelope, jobPostingId: ids.jobPosting },
 };
 
 const specificInvalid: Partial<Record<QueueName, Record<string, (v: unknown) => unknown>>> = {
@@ -51,6 +54,15 @@ const specificInvalid: Partial<Record<QueueName, Record<string, (v: unknown) => 
   "publication.reconcile": { "bad publicationId": set("publicationId", "pub") },
   "notification.send": { "bad notificationId": set("notificationId", "") },
   "linkedin.token-refresh": { "bad userId": set("userId", null) },
+  "cv.extract": {
+    "missing cvBaseId": drop("cvBaseId"),
+    "content in payload": set("text", "Ana Exemplo"),
+  },
+  "job.fetch": {
+    "url instead of id": set("jobPostingId", "https://example.com/jobs/1"),
+    "content in payload": set("rawText", "Senior Engineer"),
+  },
+  "cv.tailor": { "missing jobPostingId": drop("jobPostingId") },
 };
 
 export const jobCases: SchemaCase[] = (Object.keys(QUEUES) as QueueName[]).map((name) => ({
