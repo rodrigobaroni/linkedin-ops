@@ -217,7 +217,7 @@ export function tailoringOutput(): CvTailoringOutput {
     tailoredCv: {
       summary: {
         segments: [
-          segment("seg-1", "Backend engineer with 8 years in payment systems.", "rewritten", [
+          segment("seg-1", "Backend engineering for payment systems over 8 years.", "rewritten", [
             "summary",
           ]),
         ],

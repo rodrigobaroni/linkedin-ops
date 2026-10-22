@@ -24,6 +24,7 @@ import { err, ok, type EngineError, type Result } from "../result.js";
 import { sanitizeUntrustedText } from "../untrusted.js";
 import {
   createEntityGuard,
+  inventedRoleLabels,
   inventedRoleTitles,
   newCredentials,
   titlesFromCredentials,
@@ -268,7 +269,24 @@ export function parseCvTailorResponse(
   const baseText = cvFullText(base);
   const titles = base.experiences.map((experience) => experience.title);
   const promotedSegmentIds: string[] = [];
-  for (const { segment } of listSegments(draft.data)) {
+  for (const { segment, block } of listSegments(draft.data)) {
+    // A role used as a label at the opening of a summary sentence or of a bullet ("Tech lead de dados com…"),
+    // unless an experience title covers it; an unchanged `original` keeps the base text (issue #99, Pena §3).
+    const unchangedOriginal =
+      segment.provenance === "original" &&
+      segment.sourceCvItemIds.some((id) => {
+        const source = itemTexts.get(id);
+        return (
+          source !== undefined && normalizeForMatch(source) === normalizeForMatch(segment.text)
+        );
+      });
+    if (
+      (block === "summary" || block === "bullet") &&
+      !unchangedOriginal &&
+      inventedRoleLabels(segment.text, titles, block === "bullet").length > 0
+    ) {
+      issues.push(`${segment.segmentId}: hard limit, invented role label`);
+    }
     for (const id of segment.targetRequirementIds) {
       if (!requirementIds.has(id)) issues.push(`${segment.segmentId}: unknown requirement ${id}`);
     }
@@ -404,7 +422,12 @@ export function parseCvHumanizeResponse(
       titlesFromCredentials(update.text, baseText, titles).some((title) => !oldTitles.has(title));
     // So is a role the segment did not already present ("Atuei com pipelines…" → "Atuei como product manager…";
     // issue #93).
-    const newRole = inventedRoleTitles(update.text, titles, segment.text, baseText).length > 0;
+    const newRole =
+      inventedRoleTitles(update.text, titles, segment.text, baseText).length > 0 ||
+      ((block === "summary" || block === "bullet") &&
+        inventedRoleLabels(update.text, titles, block === "bullet").some(
+          (label) => !inventedRoleLabels(segment.text, titles, block === "bullet").includes(label),
+        ));
     if (
       !sameNumbers(segment.text, update.text) ||
       !entitiesKept ||

@@ -162,7 +162,7 @@ describe("parseCvTailorResponse (cv-tailor)", () => {
   it("rejects a rewritten segment carrying a number absent from its sources (hidden addition)", () => {
     const output = tailoringOutput();
     const seg = output.tailoredCv.summary.segments[0];
-    if (seg) seg.text = "Backend engineer with 12 years in payment systems.";
+    if (seg) seg.text = "Backend engineering for payment systems over 12 years.";
     expect(issuesOf(output)).toContain("seg-1: number not in cited base items");
   });
 
