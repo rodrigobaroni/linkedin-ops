@@ -50,6 +50,10 @@ describe("Structured Outputs JSON Schema (OpenAI strict mode)", () => {
     expect(STRUCTURED_OUTPUTS.mediaSuggestion.promptId).toBe("media");
     expect(STRUCTURED_OUTPUTS.qualityEvaluation.promptId).toBe("quality");
     expect(STRUCTURED_OUTPUTS.voiceProfileExtraction.promptId).toBe("voice-extract");
+    expect(STRUCTURED_OUTPUTS.cvExtraction.promptId).toBe("cv-extract");
+    expect(STRUCTURED_OUTPUTS.jobExtraction.promptId).toBe("job-extract");
+    expect(STRUCTURED_OUTPUTS.cvTailoring.promptId).toBe("cv-tailor");
+    expect(STRUCTURED_OUTPUTS.cvHumanization.promptId).toBe("cv-humanize");
   });
 
   it("shared $defs match docs/editorial/structured-outputs.md §1.1", () => {
@@ -93,6 +97,25 @@ describe("Structured Outputs JSON Schema (OpenAI strict mode)", () => {
     expect(structuredOutputJsonSchema("mediaSuggestion").schema.required as string[]).toContain(
       "altText",
     );
+  });
+});
+
+describe("Career outputs (spec 2026-10-22 §5)", () => {
+  it("cv-tailor never asks the model for a score; coverage is per requirement", () => {
+    const properties = structuredOutputJsonSchema("cvTailoring").schema.properties as Record<
+      string,
+      unknown
+    >;
+    expect(Object.keys(properties)).not.toContain("baseScore");
+    expect(Object.keys(properties)).toContain("coverage");
+  });
+
+  it("provenance enum is original | rewritten | added", () => {
+    const defs = structuredOutputJsonSchema("cvTailoring").schema.$defs as Record<
+      string,
+      Record<string, unknown>
+    >;
+    expect(defs.Provenance?.enum).toEqual(["original", "rewritten", "added"]);
   });
 });
 
