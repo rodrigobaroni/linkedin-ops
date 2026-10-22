@@ -565,5 +565,5 @@ export function validateWorkerEnv(env: EnvironmentLike): WorkerRuntimeEnv {
     "dry-run";
 
   if (issues.length > 0 || databaseUrl === null) throw new RuntimeEnvError(issues);
-  return { nodeEnv, logLevel, databaseUrl, openai, jobFetchLinkedIn, retentionPurge };
+  return { nodeEnv, logLevel, databaseUrl, openai, retentionPurge, jobFetchLinkedIn };
 }

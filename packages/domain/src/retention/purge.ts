@@ -54,31 +54,32 @@ export class PrismaRetentionPurge {
         idempotencyKeys: await this.prisma.idempotencyKey.count({ where: idempotencyKeys }),
       };
     }
-    // OAuth states first: they reference sessions.
-    const result: RetentionPurgeResult = {
-      dryRun: false,
-      oauthStates: (await this.prisma.oAuthState.deleteMany({ where: oauthStates })).count,
-      sessions: (await this.prisma.session.deleteMany({ where: sessions })).count,
-      idempotencyKeys: (await this.prisma.idempotencyKey.deleteMany({ where: idempotencyKeys }))
-        .count,
-    };
-    if (result.sessions + result.oauthStates + result.idempotencyKeys > 0) {
-      await this.prisma.auditEvent.create({
-        data: {
-          id: newId(),
-          userId: null,
-          actorType: "SYSTEM",
-          action: "retention.purged",
-          entityType: "retention",
-          after: {
-            sessions: result.sessions,
-            oauthStates: result.oauthStates,
-            idempotencyKeys: result.idempotencyKeys,
+    // One short transaction: never a deletion without its audit event. OAuth states first: they reference sessions.
+    return this.prisma.$transaction(async (tx) => {
+      const result: RetentionPurgeResult = {
+        dryRun: false,
+        oauthStates: (await tx.oAuthState.deleteMany({ where: oauthStates })).count,
+        sessions: (await tx.session.deleteMany({ where: sessions })).count,
+        idempotencyKeys: (await tx.idempotencyKey.deleteMany({ where: idempotencyKeys })).count,
+      };
+      if (result.sessions + result.oauthStates + result.idempotencyKeys > 0) {
+        await tx.auditEvent.create({
+          data: {
+            id: newId(),
+            userId: null,
+            actorType: "SYSTEM",
+            action: "retention.purged",
+            entityType: "retention",
+            after: {
+              sessions: result.sessions,
+              oauthStates: result.oauthStates,
+              idempotencyKeys: result.idempotencyKeys,
+            },
+            correlationId: options.correlationId ?? `retention:${now.toISOString()}`,
           },
-          correlationId: options.correlationId ?? `retention:${now.toISOString()}`,
-        },
-      });
-    }
-    return result;
+        });
+      }
+      return result;
+    });
   }
 }
