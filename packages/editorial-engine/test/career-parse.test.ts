@@ -846,10 +846,11 @@ describe("listed roles and copulas (issue #93, Maestro on PR #98)", () => {
   });
 
   it("positive: a copula before a word of the base CV is not a role candidate", () => {
-    const baseText = "Conduzi entrevistas como parte do comitê de recrutamento com um recrutador.";
-    expect(inventedRoleTitles("Fui recrutador.", ["Engenheira de software"], "", baseText)).toEqual(
-      [],
-    );
+    // A role title word ("recrutador", QA on PR #98) is a role whatever the base CV's vocabulary.
+    const baseText = "Apresentei a migração de cobrança como palestrante convidada.";
+    const titles = ["Engenheira de software"];
+    expect(inventedRoleTitles("Fui palestrante.", titles, "", baseText)).toEqual([]);
+    expect(inventedRoleTitles("Fui palestrante.", titles, "", "")).toEqual(["palestrante"]);
   });
 });
 
@@ -862,5 +863,73 @@ describe("cv.tailor rejects a copula before an invented role (Maestro on PR #98)
     expect(result.ok ? [] : result.error.issues).toContain(
       "seg-3: hard limit, invented role title",
     );
+  });
+});
+
+describe("QA on PR #98 (9f02a0d)", () => {
+  const titles = ["Engenheira de software"];
+  const has = (found: string[], role: string) => found.some((name) => name.includes(role));
+
+  it.each([
+    ["PO", "po"],
+    ["gestor de TI", "gestor de ti"],
+    ["gestora de TI", "gestora de ti"],
+    ["SRE", "sre"],
+    ["DBA", "dba"],
+    ["PM", "pm"],
+    ["programadora", "programadora"],
+    ["programador", "programador"],
+    ["agilista", "agilista"],
+    ["staff", "staff"],
+    ["principal", "principal"],
+    ["tech recruiter", "tech recruiter"],
+    ["recrutadora", "recrutadora"],
+    ["professora", "professora"],
+    ["professor", "professor"],
+    ["instrutora", "instrutora"],
+    ["instrutor", "instrutor"],
+  ])("canary (1): 'Liderei a migração como %s' is rejected", (role, found) => {
+    expect(has(inventedRoleTitles(`Liderei a migração como ${role}.`, titles), found)).toBe(true);
+  });
+
+  it.each([
+    ["Led the migration as a programmer.", "programmer"],
+    ["Led the migration as an instructor.", "instructor"],
+    ["Led the migration as a teacher.", "teacher"],
+    ["Led the migration as a recruiter.", "recruiter"],
+  ])("canary (1): EN '%s' is rejected", (text, found) => {
+    expect(has(inventedRoleTitles(text, ["Software Engineer"]), found)).toBe(true);
+  });
+
+  it.each([
+    ["Atuei como engenheira de software e, mais tarde, tech lead.", titles],
+    ["Worked as a software engineer and, later, tech lead.", ["Software Engineer"]],
+    ["Worked as a software engineer, later, tech lead.", ["Software Engineer"]],
+    ["Worked as a software engineer, and later, tech lead.", ["Software Engineer"]],
+  ])("canary (2): an aside between commas does not end the list: '%s'", (text, base) => {
+    expect(has(inventedRoleTitles(text, base), "tech lead")).toBe(true);
+  });
+
+  it("canary (3): a typographic apostrophe (I’m) is a copula too", () => {
+    expect(
+      has(inventedRoleTitles("I’m a recruiter.", ["Software Engineer"], "", ""), "recruiter"),
+    ).toBe(true);
+  });
+
+  it.each([
+    "Served as the point of contact for payments.",
+    "I was a key contributor to the billing migration.",
+    "I am a strong believer in durable queues.",
+  ])("positive (4): '%s' presents no role", (text) => {
+    expect(inventedRoleTitles(text, ["Software Engineer"], "", "")).toEqual([]);
+  });
+
+  it("positive: a listed title the base CV has, with an aside, passes", () => {
+    expect(
+      inventedRoleTitles("Worked as a software engineer and, later, tech lead.", [
+        "Software Engineer",
+        "Tech Lead",
+      ]),
+    ).toEqual([]);
   });
 });

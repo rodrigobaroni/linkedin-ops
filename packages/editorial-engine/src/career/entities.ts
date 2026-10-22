@@ -568,7 +568,8 @@ export function titlesFromCredentials(
 
 /**
  * Words that head a role title once a role introducer presents them (issue #93): the role nouns plus leadership,
- * founder, coaching, seniority and C-level terms. Wider than `ROLE_NOUNS`, which only cuts titles out of
+ * founder, coaching, seniority and C-level terms, and roles and acronyms that follow a plain `como`/`as` ("Liderei
+ * a migração como PO / SRE / gestora de TI / programadora / professora"; QA on PR #98). Wider than `ROLE_NOUNS`, which only cuts titles out of
  * credentials.
  */
 const ROLE_TITLE_WORDS = new Set([
@@ -577,7 +578,8 @@ const ROLE_TITLE_WORDS = new Set([
   lider head chefe coordenador coordenadora coordinator diretor diretora director supervisor supervisora
   presidente president cto ceo cfo coo cio cpo vp intern estagiario estagiaria trainee senior pleno junior sr jr
   founder cofounder fundador fundadora cofundador cofundadora socio socia partner mentor mentora coach evangelist
-  evangelista advocate steward
+  evangelista advocate steward po pm sre dba gestor gestora programador programadora programmer agilista staff
+  principal recruiter recrutador recrutadora professor professora teacher instrutor instrutora instructor
   `
     .split(/\s+/u)
     .filter(Boolean),
@@ -681,11 +683,15 @@ const ROLE_STOP_WORDS = new Set(
     " ",
   ),
 );
-/** What a strong introducer may present that is not a role ("Atuei como parte do time", "as part of"). */
+/**
+ * What a strong introducer or a copula may present that is not a role ("Atuei como parte do time", "as part of",
+ * "Served as the point of contact", "I was a key contributor", "I am a strong believer"; QA on PR #98).
+ */
 const NOT_ROLES = new Set(
-  "parte part ponte bridge referencia reference ponto elo apoio suporte support membro member interface voz voice".split(
-    " ",
-  ),
+  `parte part ponte bridge referencia reference ponto point contact elo apoio suporte support membro member interface
+  voz voice contributor believer`
+    .split(/\s+/u)
+    .filter(Boolean),
 );
 /** What a first-person copula may present that is not a role ("I was the first to …", "Fui a primeira a …"). */
 const COPULA_NOT_ROLES = new Set(
@@ -723,6 +729,7 @@ const COMPARISON_AFTER = new Set(["well", "soon", "long", "much", "far"]);
  */
 const ROLE_WINDOW = 4;
 const ROLE_STRONG_WINDOW = 3;
+const ROLE_ASIDE_WORDS = 4;
 
 interface RoleWord {
   word: string;
@@ -733,7 +740,9 @@ interface RoleWord {
 /** Folded words of a text for the role check: split on spaces, slashes and dashes, with the trailing pause. */
 function roleWords(text: string): RoleWord[] {
   const result: RoleWord[] = [];
-  for (const raw of text.normalize("NFKC").split(/[\s/\u2013\u2014-]+/u)) {
+  // A typographic apostrophe is the ASCII one ("I’m"; QA on PR #98).
+  const normalized = text.normalize("NFKC").replace(/[\u2018\u2019\u02bc]/gu, "'");
+  for (const raw of normalized.split(/[\s/\u2013\u2014-]+/u)) {
     const word = fold(raw.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}+#]+$/gu, ""));
     if (word.length === 0) continue;
     const trail = /[^\p{L}\p{N}+#]+$/u.exec(raw)?.[0] ?? "";
@@ -845,6 +854,7 @@ function introducedRoles(text: string, vocabulary: ReadonlySet<string>): RolePhr
           head = at;
           if (words[at]?.pause) break;
         }
+        if (head >= 0 && NOT_ROLES.has(word(head))) head = -1;
       }
       if (head < 0) break;
       let end = head + 1;
@@ -900,9 +910,22 @@ function introducedRoles(text: string, vocabulary: ReadonlySet<string>): RolePhr
         window = ROLE_WINDOW;
         continue;
       }
-      if (ROLE_CONJUNCTIONS.has(word(end))) start = end + 1;
+      const conjunction = ROLE_CONJUNCTIONS.has(word(end));
+      const separated = pause === "comma" || (conjunction && words[end]?.pause === "comma");
+      if (conjunction) start = end + 1;
       else if (pause === "comma") start = end;
       else break;
+      // An aside between commas does not end the list ("e, mais tarde, tech lead", ", and later, tech lead"; QA on
+      // PR #98): up to `ROLE_ASIDE_WORDS` words without a role title word, closed by a comma.
+      if (separated) {
+        for (let at = start; at < Math.min(words.length, start + ROLE_ASIDE_WORDS); at += 1) {
+          if (ROLE_TITLE_WORDS.has(word(at)) || words[at]?.pause === "stop") break;
+          if (words[at]?.pause === "comma") {
+            start = at + 1;
+            break;
+          }
+        }
+      }
       strong = false;
       copula = false;
       window = words.length;
