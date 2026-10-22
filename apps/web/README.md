@@ -59,6 +59,15 @@ draft that becomes `READY` (a fixed, fictitious CV) on a `GET` about 3 s later, 
 In `dev:mock` the PDF's file name picks a failure: `ilegivel` (`422 CV_PDF_UNREADABLE`), `ia-fora`
 (`FAILED`/`EXTRACTION_FAILED`), `parado` (`FAILED`/`TIMED_OUT`) or `lento` (40 s of extraction).
 
+`/carreira/vagas` (career module, PR 3b) is mocked by `src/mocks/career-jobs-handlers.ts` in the contract of
+`routesV1["career.batches.*" | "career.jobs.*"]`: a batch answers `202`, each distinct link goes `FETCHING` →
+`ANALYZING` → `READY` (a fixed, fictitious match report and tailored CV) about 4 s per step, and the screens
+poll meanwhile. Repeated links are merged; a LinkedIn link that is not `/jobs/view/<id>` is created
+`FAILED`/`FETCH_BLOCKED`. A word in the link picks the outcome: `bloqueado` (`FETCH_BLOCKED`), `site-fora`
+(`FETCH`), `nao-vaga` (`NOT_A_JOB`), `ia-fora` (`AI`), `parado` (`TIMED_OUT`), `cv-antigo` (ready, generated
+with the previous CV), `injecao` (ready, posting flagged as prompt injection) or `longo` (the whole batch
+refused with `422 JOB_POSTING_URL_REJECTED`).
+
 ## Layout
 
 ```text
@@ -68,7 +77,8 @@ src/app/(app)/              Route group behind RequireSession with the shell (Ap
 src/components/auth/        LoginForm/LoginScreen, RequireSession, LogoutButton, ReauthDialog
 src/components/shell/       Skip link, sidebar (desktop/tablet), bottom nav + "Mais" drawer (mobile), page header, route focus
 src/components/publish/     /publicar: LinkedIn connection card, composer (counter, escaped preview, confirm + 🔐), recent publications
-src/components/career/      /carreira/cv: PDF upload, extraction polling, section-by-section review, confirm, replace, delete (🔐)
+src/components/career/      /carreira/cv: PDF upload, extraction polling, section-by-section review, confirm, replace, delete (🔐);
+                            /carreira/vagas and /carreira/vagas/[id]: batch of links, status polling, paste text, reprocess, delete, match report
 src/components/placeholder-screen.tsx   Header + empty/loading/error state; `?estado=vazio|carregando|erro` previews (dev only)
 src/config/navigation.ts    Navigation map (docs/product/design/navigation-map.md)
 src/config/screens.ts       Per-screen copy (docs/product/design/screen-states.md)

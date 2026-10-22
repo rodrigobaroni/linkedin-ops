@@ -264,9 +264,180 @@ export const messages = {
         description: "Precisamos de um CV base revisado para calcular a aderência.",
         action: "Ir para Meu CV",
       },
-      /** Interim state until the job analysis ships (career PR 3b); Maestro's call, Aurora reviews. */
-      comingSoon: {
-        title: "A análise de vagas chega em breve.",
+      form: {
+        label: "Links das vagas",
+        hint: "Cole de 1 a 20 links, um por linha.",
+        placeholder: "https://www.linkedin.com/jobs/view/…\nhttps://empresa.com/vagas/…",
+        counter: (n: number) => `${n} de 20 links`,
+        empty: "Cole pelo menos um link de vaga.",
+        tooMany: "Você pode analisar até 20 links por vez.",
+        invalid: "Revise os links destacados.",
+        invalidLine: (position: number) => `Link ${position}: não é um link de vaga válido.`,
+        submit: "Analisar vagas",
+        submitting: "Enviando vagas…",
+        success: "Vagas adicionadas. Você pode acompanhar o processamento abaixo.",
+        /** Per-item feedback of the batch (Maestro, 3b; Aurora reviews). */
+        result: {
+          queued: "Na fila para análise",
+          blocked: "Não pode ser buscada automaticamente: cole o texto da vaga na lista abaixo.",
+          duplicates: (n: number) =>
+            n === 1 ? "1 link repetido foi unido." : `${n} links repetidos foram unidos.`,
+        },
+        errors: {
+          rejected: "Um ou mais links não foram aceitos.",
+          unavailable:
+            "Não foi possível iniciar a análise agora. Seus links foram mantidos; tente de novo.",
+          rateLimited: "Muitos envios em pouco tempo. Aguarde alguns minutos.",
+          network: "Sem conexão com o LinkedIn Ops. Verifique a internet.",
+          unexpected: "O envio falhou por um erro inesperado.",
+        },
+      },
+      list: {
+        title: "Suas vagas",
+        empty: "Nenhuma vaga ainda. Os links enviados aparecem aqui.",
+        columns: { job: "Vaga", status: "Status", updated: "Atualização", actions: "Ações" },
+        updated: (when: string) => `Atualizado em ${when}`,
+        score: (n: number) => `Aderência ${n} de 100`,
+        loadMore: "Carregar mais",
+        loadingMore: "Carregando…",
+        /** Consolidated `aria-live` announcement when statuses change. */
+        announce: {
+          ready: (n: number) => (n === 1 ? "1 vaga pronta." : `${n} vagas prontas.`),
+          failed: (n: number) => (n === 1 ? "1 vaga falhou." : `${n} vagas falharam.`),
+        },
+      },
+      status: {
+        FETCHING: "Buscando vaga",
+        ANALYZING: "Analisando aderência",
+        READY: "Pronto",
+        FAILED: "Falhou",
+      },
+      source: { LINKEDIN: "LinkedIn", OTHER: "Site da empresa", PASTED: "Texto colado" },
+      failure: {
+        title: "Não foi possível processar esta vaga.",
+        /** Safe reason by `failureReason` (FETCH_BLOCKED by source); Maestro's copy, Aurora reviews. */
+        reasons: {
+          FETCH: "A página da vaga não abriu. Tente reprocessar ou cole o texto da vaga.",
+          FETCH_BLOCKED_LINKEDIN:
+            "Não foi possível buscar esta vaga do LinkedIn agora (limite diário, bloqueio temporário ou busca desligada). Cole o texto da vaga para continuar.",
+          FETCH_BLOCKED_OTHER:
+            "O site não permitiu a busca automática desta vaga agora. Cole o texto da vaga para continuar.",
+          NOT_A_JOB: "A página não parece ser uma vaga. Confira o link ou cole o texto da vaga.",
+          AI: "A análise não terminou corretamente. Tente reprocessar.",
+          TIMED_OUT:
+            "O processamento demorou mais que o esperado e foi interrompido. Tente reprocessar.",
+        },
+      },
+      actions: {
+        viewReport: "Ver relatório",
+        more: (name: string) => `Mais ações para ${name}`,
+        pasteText: "Colar texto da vaga",
+        retry: "Reprocessar",
+        retrying: "Reprocessando…",
+        remove: "Apagar vaga",
+        removing: "Apagando…",
+        errors: {
+          busy: "Esta vaga ainda está sendo processada. Aguarde o fim para reprocessar.",
+          needsText: "Este link não pode ser buscado automaticamente. Cole o texto da vaga.",
+          notFound: "Esta vaga não existe mais.",
+          rateLimited: "Muitos reprocessamentos em pouco tempo. Aguarde alguns minutos.",
+          unavailable: "Não foi possível reprocessar agora. Tente de novo.",
+          unexpected: "A ação falhou por um erro inesperado.",
+        },
+        retried: "Reprocessamento iniciado.",
+        removed: "Vaga apagada.",
+      },
+      paste: {
+        title: "Colar texto da vaga",
+        description: "Cole a descrição completa para tentarmos novamente.",
+        label: "Texto da vaga",
+        placeholder: "Cole aqui responsabilidades, requisitos e demais informações…",
+        counter: (n: number) => `${n.toLocaleString("pt-BR")} de 20.000 caracteres`,
+        tooShort: "Cole pelo menos 200 caracteres da vaga.",
+        tooLong: "O texto pode ter até 20.000 caracteres.",
+        cancel: "Cancelar",
+        submit: "Salvar e reprocessar",
+        submitting: "Salvando…",
+        done: "Texto salvo. A vaga está sendo reprocessada.",
+      },
+      /** Delete confirmation (Maestro, 3b; Aurora reviews). */
+      remove: {
+        title: "Apagar vaga?",
+        description:
+          "Isso apaga a vaga, o relatório de aderência e o CV adaptado. Esta ação não pode ser desfeita.",
+        cancel: "Cancelar",
+        confirm: "Apagar vaga",
+      },
+      detail: {
+        metaTitle: "Vaga",
+        back: "Voltar para Vagas",
+        loading: "Carregando vaga",
+        loadError: "Não foi possível carregar esta vaga.",
+        notFound: "Vaga não encontrada",
+        notFoundDescription: "Ela pode ter sido apagada.",
+        untitled: "Vaga sem título",
+        processing: {
+          FETCHING: "Estamos lendo a página da vaga.",
+          ANALYZING: "Estamos comparando os requisitos com seu CV base.",
+        },
+        previousCv: {
+          title: "Gerado com o CV anterior",
+          description:
+            "Seu CV base mudou depois desta análise. Reprocesse para usar a versão atual.",
+          action: "Reprocessar com o CV atual",
+        },
+        injection: {
+          title: "A vaga contém um trecho que tenta dar instruções à IA",
+          description:
+            "Ele foi tratado apenas como texto da vaga. Confira o relatório com atenção.",
+          evidence: "Trecho encontrado:",
+        },
+        warnings: {
+          language_fallback:
+            "A vaga está em um idioma que não analisamos; o CV adaptado foi escrito em outro idioma.",
+          job_echo: "Parte do CV adaptado repete o texto da vaga. Revise antes de usar.",
+        },
+        humanizerFlagged:
+          "Alguns trechos do CV adaptado ainda soam artificiais. Revise antes de usar.",
+        score: {
+          title: "Aderência ao CV base",
+          value: (n: number) => `${n} de 100`,
+          legend:
+            "Nota calculada com seu CV base, antes de qualquer conteúdo acrescentado pela IA.",
+        },
+        met: {
+          title: "Requisitos atendidos",
+          quote: (quote: string) => `Trecho do seu CV: “${quote}”`,
+          partial: "Parcialmente",
+          empty: "Nenhum requisito foi identificado como atendido.",
+        },
+        missing: {
+          title: "Requisitos não encontrados no CV base",
+          empty: "Nenhum requisito ficou sem cobertura.",
+        },
+        kind: { mandatory: "Obrigatório", desirable: "Desejável" },
+        added: {
+          title: "O que a IA acrescentou",
+          description: "Confira todo conteúdo novo incluído na versão adaptada.",
+          empty: "Nenhum conteúdo foi acrescentado.",
+          targets: (list: string) => `Para o requisito: ${list}`,
+        },
+        tailored: {
+          title: "CV adaptado (revisão)",
+          description: "As marcações de origem aparecem só nesta revisão; o PDF não as inclui.",
+          summary: "Resumo",
+          experience: (n: number) => `Experiência ${n}`,
+          bullets: "Atividades",
+          skills: "Competências da experiência",
+          technical: "Competências técnicas",
+          behavioral: "Competências comportamentais",
+          empty: "Nenhum conteúdo nesta seção.",
+        },
+        provenance: {
+          original: "Original",
+          rewritten: "Reescrito",
+          added: "Acrescentado pela IA",
+        },
       },
     },
     cv: {
