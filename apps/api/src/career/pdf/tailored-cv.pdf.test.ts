@@ -237,6 +237,21 @@ describe("renderTailoredCvPdf", () => {
     expect(text).not.toContain("\u200B");
   });
 
+  it("puts the e-mail on a line of its own, as the links (QA of #118)", async () => {
+    const input = sample();
+    input.base.contact.email = "ana.exemplo@example.test";
+    input.base.contact.phone = "+55 11 90000-0000";
+    input.base.contact.location = "São Paulo, SP";
+    input.base.contact.links = ["https://example.test/ana"];
+
+    const document = await getDocumentProxy(new Uint8Array(await renderTailoredCvPdf(input)));
+    const { text } = await extractText(document, { mergePages: true });
+    const lines = text.split("\n").map((line) => line.replace(/\s+/g, " ").trim());
+    expect(lines).toContain("ana.exemplo@example.test");
+    expect(lines).toContain("+55 11 90000-0000 · São Paulo, SP");
+    expect(lines).toContain("https://example.test/ana");
+  });
+
   it("leaves body tokens up to 100 characters whole and breaks longer ones", async () => {
     // A token that fits the line comes out whole; one over 100 characters gets zero-width spaces.
     const whole = `https://example.test/${"a".repeat(64)}`;

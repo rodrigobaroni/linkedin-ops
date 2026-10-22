@@ -53,7 +53,8 @@ to be recorded.
    font, drawn as nothing) every 40 grapheme clusters (`Intl.Segmenter`, so never between a letter and its
    combining marks). The header (name, e-mail, phone, links) is never broken: a zero-width space inside a URL
    made pdf.js extract it split, and ATS read it broken. Those fields are short (≤ 200), so their layout stays
-   cheap, and each link goes on its own line, since the Unicode line breaker may wrap after `/`. A document is also capped at 30 000 printed characters (about 12 dense
+   cheap, and the e-mail and each link go on their own line, since the Unicode line breaker may wrap after `/`
+   (the e-mail shared a line with phone and location until QA of #118). A document is also capped at 30 000 printed characters (about 12 dense
    pages; the schema allows far more): above it the route answers `422 TAILORED_CV_TOO_LARGE` before
    layout.
 8. **Route:** `GET /career/jobs/{id}/pdf` (`career.jobs.pdf`, `responseContentType: application/pdf`) renders on
