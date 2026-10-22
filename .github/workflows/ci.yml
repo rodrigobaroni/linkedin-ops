@@ -380,6 +380,9 @@ jobs:
         # Crivo, PR #88: POST /career/cv with the committed fictitious CV against the runtime image, on the
         # stack's network and database, proves that pdf.js (unpdf, pure JS) and the parsing worker_thread run
         # in the shipped node:alpine image. Architecture: the runner's (amd64); ARM64 is proven by the deploy.
+        # Since PR #92 the upload enqueues `cv.extract` in the draft's transaction and the api never migrates the
+        # pgboss schema (the worker owns it, ADR-0002): as in production, the worker runtime image boots first,
+        # migrates pgboss and provisions the queues, and only then the api starts.
         run: |
           set -euo pipefail
           set -a; . ./.env; set +a
@@ -389,6 +392,29 @@ jobs:
           # Migrations with the toolchain stage, exactly like infra/deploy/deploy-shared-host.sh does.
           docker build -q --target build -f apps/api/Dockerfile -t linkedin-ops/api-tools:smoke . > /dev/null
           docker run --rm --network "$network" -e DATABASE_URL="$db_url" linkedin-ops/api-tools:smoke pnpm db:migrate
+          # The worker runtime image with the minimum validateWorkerEnv accepts in production (explicit -e only, no
+          # .env): a throwaway OpenAI key that is never used. It is stopped once pgboss is ready and before any
+          # upload, so it never consumes the job (a call with that key would fail the draft and erase its text,
+          # which this step inspects below).
+          fake_openai_key="sk-smoke-$(openssl rand -hex 16)"
+          echo "::add-mask::$fake_openai_key"
+          docker run -d --rm --name smoke-worker --network "$network" \
+            -e NODE_ENV=production -e LOG_LEVEL=info -e DATABASE_URL="$db_url" \
+            -e OPENAI_API_KEY="$fake_openai_key" -e OPENAI_MODEL=gpt-smoke linkedin-ops/worker:smoke-runtime > /dev/null
+          pgboss_ready=
+          for _ in $(seq 1 30); do
+            if [ "$(docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tA \
+              -c "SELECT count(*) FROM pgboss.queue WHERE name IN ('cv.extract', 'cv.extract.dlq')" 2>/dev/null)" = 2 ]; then
+              pgboss_ready=1; break
+            fi
+            sleep 2
+          done
+          if [ -z "$pgboss_ready" ]; then
+            echo "::error::the worker runtime image did not migrate pgboss and provision cv.extract within 60 s"
+            docker logs smoke-worker 2>&1 | tail -n 50
+            exit 1
+          fi
+          docker stop -t 30 smoke-worker > /dev/null
           # A throwaway owner and session (only the cookie's SHA-256 is stored, as at login).
           user_id="$(cat /proc/sys/kernel/random/uuid)"
           session_id="$(cat /proc/sys/kernel/random/uuid)"
@@ -409,7 +435,13 @@ jobs:
               -H "Origin: $APP_BASE_URL" -H "X-Requested-With: linkedin-ops" -H "Cookie: __Host-session=$cookie" \
               -F "file=@$1;type=$2" http://127.0.0.1:3101/api/v1/career/cv
           }
-          code="$(upload apps/api/test/fixtures/cv-ficticio.pdf application/pdf)"
+          # The api starts its producer at bootstrap and retries in the background; tolerate a short 503 window.
+          code=
+          for _ in $(seq 1 15); do
+            code="$(upload apps/api/test/fixtures/cv-ficticio.pdf application/pdf)"
+            if [ "$code" != 503 ]; then break; fi
+            sleep 2
+          done
           if [ "$code" != 202 ] || ! jq -e '.status == "EXTRACTING" and .draft.status == "EXTRACTING"' "$RUNNER_TEMP/cv-upload.json" > /dev/null; then
             echo "::error::POST /career/cv on the runtime image returned $code: $(cat "$RUNNER_TEMP/cv-upload.json")"
             docker logs smoke-api-cv 2>&1 | tail -n 50
@@ -420,12 +452,16 @@ jobs:
           found="$(docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tA \
             -c "SELECT position('Universidade Imaginária' in extracted_text) > 0 FROM cv_bases WHERE id = '$draft_id'")"
           if [ "$found" != t ]; then echo "::error::the stored draft does not hold the fictitious CV text"; exit 1; fi
+          # Its cv.extract job was committed with the draft: one job, ids only (never the CV text).
+          job="$(docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tA \
+            -c "SELECT count(*) || ':' || bool_and(data->>'cvBaseId' = '$draft_id') || ':' || bool_and(position('Imaginária' in data::text) = 0) FROM pgboss.job WHERE name = 'cv.extract' AND singleton_key = '$draft_id'")"
+          if [ "$job" != "1:true:true" ]; then echo "::error::expected exactly one id-only cv.extract job for the draft, got $job"; exit 1; fi
           # And a non-PDF is refused by its signature.
           printf 'PK\003\004 not a pdf' > "$RUNNER_TEMP/not-a-pdf.pdf"
           code="$(upload "$RUNNER_TEMP/not-a-pdf.pdf" application/pdf)"
           if [ "$code" != 415 ]; then echo "::error::a non-PDF upload returned $code, expected 415"; exit 1; fi
           docker rm -f smoke-api-cv > /dev/null
-          echo "runtime api read the fictitious CV through POST /career/cv (draft $draft_id); non-PDF refused (415)"
+          echo "runtime api read the fictitious CV through POST /career/cv (draft $draft_id, cv.extract enqueued); non-PDF refused (415)"
 
       - name: Build the dev images and start web, api and caddy (dev combination)
         run: |
