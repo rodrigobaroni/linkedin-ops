@@ -31,6 +31,11 @@ sem acento, e um termo encontrado é rejeitado (salvo se já estiver no CV base)
 escritos como nome. Termos da lista que aparecem num requisito, em qualquer grafia, também passam a contar como
 nomes usados pela vaga.
 
+Precedência: uma ocorrência da `denyTerms` inteiramente contida na **mesma** ocorrência de um termo de várias
+palavras do léxico que seja permitido naquele trecho (no CV base ou num requisito citado) vale como o produto, não
+como a empresa: `Google Cloud`, `Amazon S3`, `Oracle Database`, `SAP HANA` e `OpenAI API` passam; `Google`,
+`Amazon` ou `Oracle` sozinhos, e credenciais como `AWS Certified …`, continuam rejeitados.
+
 ## 2. O que entra e o que nunca entra
 
 Entra: tecnologia, linguagem, framework, banco de dados, plataforma, ferramenta, protocolo, padrão técnico ou

@@ -129,6 +129,43 @@ describe("denyTerms at runtime (Sentinela PR #89)", () => {
   });
 });
 
+describe("a brand inside an allowed multi-word competence (Sentinela PR #89)", () => {
+  const guard = (requirement: string) => createEntityGuard(baseCv, postingWith(requirement));
+
+  it("'Google Cloud' passes when cited; 'Google' alone fails", () => {
+    const g = guard("Google Cloud data platform");
+    expect(g.newEntities("Ran batch jobs on Google Cloud.", ["req-9"])).toEqual([]);
+    expect(g.newEntities("Ran batch jobs at Google.", ["req-9"])).toEqual(["google"]);
+  });
+
+  it("'Amazon S3', 'Amazon Redshift', 'Oracle Database', 'SAP HANA' and 'OpenAI API' pass when cited", () => {
+    const g = guard("Amazon S3, Amazon Redshift, Oracle Database, SAP HANA and the OpenAI API");
+    for (const text of [
+      "Stored raw events in Amazon S3.",
+      "Loaded marts into Amazon Redshift.",
+      "Tuned queries on Oracle Database.",
+      "Modeled finance tables in SAP HANA.",
+      "Called the OpenAI API for summaries.",
+    ]) {
+      expect(g.newEntities(text, ["req-9"]), text).toEqual([]);
+    }
+  });
+
+  it("the same products fail when no cited requirement names them", () => {
+    expect(guard("Kafka").newEntities("Stored raw events in Amazon S3.", ["req-9"])).toEqual([
+      "amazon",
+      "s3",
+    ]);
+  });
+
+  it("'AWS Certified Solutions Architect' fails (credential deny phrase is not a lexicon phrase)", () => {
+    const g = guard("AWS cloud architecture");
+    expect(g.newEntities("Became an AWS Certified Solutions Architect.", ["req-9"])).toContain(
+      "aws certified",
+    );
+  });
+});
+
 describe("Pena's evals (cv-competency-lexicon-review.md §7)", () => {
   const guard = (requirement: string) => createEntityGuard(baseCv, postingWith(requirement));
 

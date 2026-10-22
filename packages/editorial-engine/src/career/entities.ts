@@ -106,7 +106,7 @@ const OPENING_WORDS = new Set(
   contributed contribute hired hire trained train tested test monitored monitor secured secure standardized
   streamlined rebuilt replaced replace consolidated reviewed review presented present negotiated planned
   prioritized organized organised acted served serve took handled oversaw directed headed spearheaded
-  exposed expose exportei expus packaged package tuned tune configured configure debugged debug profiled benchmarked documented document
+  exposed expose stored store loaded load called call ingested ingest queried query cleaned transformed exportei expus armazenei carreguei chamei ingeri consultei limpei transformei packaged package tuned tune configured configure debugged debug profiled benchmarked documented document
   prototyped prototype validated validate modernized modernised upgraded upgrade resolved resolve fixed fix
   enabled enable released release rolled set saved save accelerated accelerate measured measure researched
   investigated investigate identified identify translated translate onboarded onboard used use leveraged
@@ -202,21 +202,52 @@ const LEXICON_FORMS: ReadonlyArray<{ entry: number; words: readonly string[] }> 
     .filter((form) => form.words.length > 0)
     .sort((a, b) => b.words.length - a.words.length);
 
-/** For each position of `words`, the lexicon entry whose phrase covers it (or undefined). */
-function lexiconCoverage(words: readonly string[]): (number | undefined)[] {
-  const covered: (number | undefined)[] = new Array<number | undefined>(words.length).fill(
-    undefined,
-  );
+interface LexiconSpan {
+  entry: number;
+  start: number;
+  length: number;
+}
+
+/** Lexicon occurrences in `words`, longest match first, non-overlapping. */
+function lexiconSpans(words: readonly string[]): LexiconSpan[] {
+  const spans: LexiconSpan[] = [];
   for (let start = 0; start < words.length; start += 1) {
-    if (covered[start] !== undefined) continue;
     const form = LEXICON_FORMS.find(
       (candidate) =>
         start + candidate.words.length <= words.length &&
         candidate.words.every((word, offset) => words[start + offset] === word),
     );
-    if (form) for (let i = 0; i < form.words.length; i += 1) covered[start + i] = form.entry;
+    if (form) {
+      spans.push({ entry: form.entry, start, length: form.words.length });
+      start += form.words.length - 1;
+    }
+  }
+  return spans;
+}
+
+/** For each position of `words`, the lexicon entry whose phrase covers it (or undefined). */
+function lexiconCoverage(words: readonly string[]): (number | undefined)[] {
+  const covered: (number | undefined)[] = new Array<number | undefined>(words.length).fill(
+    undefined,
+  );
+  for (const span of lexiconSpans(words)) {
+    for (let i = 0; i < span.length; i += 1) covered[span.start + i] = span.entry;
   }
   return covered;
+}
+
+/**
+ * The multi-word lexicon occurrence that wholly contains a deny match, if any: `Google` inside `Google Cloud`,
+ * `Amazon` inside `Amazon S3`, `Oracle` inside `Oracle Database`. A deny term standing alone is never covered.
+ */
+function coveringSpan(
+  spans: readonly LexiconSpan[],
+  match: { start: number; words: readonly string[] },
+): LexiconSpan | undefined {
+  const end = match.start + match.words.length;
+  return spans.find(
+    (span) => span.length > 1 && span.start <= match.start && span.start + span.length >= end,
+  );
 }
 
 /** Deny terms as folded token sequences, longest first (`cv-competency-lexicon` `denyTerms`). */
@@ -340,8 +371,11 @@ export function createEntityGuard(base: CvStructured, job: JobPostingExtracted):
     for (const text of [requirement.text, requirement.evidence]) {
       const analysed = analyse(text);
       // Clients the deny list knows are names in any spelling, even in a lowercase requirement.
-      for (const match of denyMatches(analysed))
+      const requirementSpans = lexiconSpans(analysed.map((token) => token.word));
+      for (const match of denyMatches(analysed)) {
+        if (coveringSpan(requirementSpans, match)) continue;
         for (const word of match.words) postingNames.add(word);
+      }
       const capitalized = analysed.filter((token) => /^\p{Lu}/u.test(token.word) || token.nameLike);
       if (analysed.length > 2 && capitalized.length / analysed.length > 0.6) continue;
       const covered = lexiconCoverage(analysed.map((token) => token.word));
@@ -359,11 +393,19 @@ export function createEntityGuard(base: CvStructured, job: JobPostingExtracted):
   return {
     newEntities(text, targetRequirementIds) {
       const analysed = analyse(text);
-      const covered = lexiconCoverage(analysed.map((token) => token.word));
+      const words = analysed.map((token) => token.word);
+      const spans = lexiconSpans(words);
+      const covered = lexiconCoverage(words);
+      const entryAllowed = (entry: number) =>
+        baseEntries.has(entry) ||
+        targetRequirementIds.some((id) => requirementEntries.get(id)?.has(entry));
       const violations: string[] = [];
       const denied = new Set<number>();
       for (const match of denyMatches(analysed)) {
         if (containsPhrase(baseTokens, match.words)) continue;
+        // A brand inside an allowed multi-word competence is the product, not the company (Google Cloud).
+        const span = coveringSpan(spans, match);
+        if (span && entryAllowed(span.entry)) continue;
         for (let i = 0; i < match.words.length; i += 1) denied.add(match.start + i);
         violations.push(match.words.join(" "));
       }
@@ -373,8 +415,7 @@ export function createEntityGuard(base: CvStructured, job: JobPostingExtracted):
         if (!token.nameLike && !namedByPosting) return;
         const entry = covered[index];
         if (entry !== undefined) {
-          const cited = targetRequirementIds.some((id) => requirementEntries.get(id)?.has(entry));
-          if (!baseEntries.has(entry) && !cited) violations.push(token.word);
+          if (!entryAllowed(entry)) violations.push(token.word);
           return;
         }
         if (baseWords.has(token.word) || LANGUAGE_NAMES.has(token.word)) return;
