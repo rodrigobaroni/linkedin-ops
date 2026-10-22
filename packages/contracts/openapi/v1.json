@@ -9025,6 +9025,10 @@
           },
           "content": {
             "$ref": "#/components/schemas/CvStructured"
+          },
+          "acknowledgeInjection": {
+            "description": "The owner reviewed the excerpt flagged as possible prompt injection",
+            "type": "boolean"
           }
         },
         "required": [
@@ -9114,6 +9118,24 @@
                 "$ref": "#/components/schemas/CvStructured"
               }
             ]
+          },
+          "parseWarnings": {
+            "description": "What the extraction could not read unambiguously; shown on review",
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ParseWarning"
+            }
+          },
+          "injectionSuspected": {
+            "description": "The extraction found text that tries to instruct the model; confirming needs `acknowledgeInjection`",
+            "type": "boolean"
+          },
+          "injectionEvidence": {
+            "description": "Offending excerpt of the CV, set only when `injectionSuspected`",
+            "nullable": true,
+            "type": "string",
+            "maxLength": 500
           },
           "createdAt": {
             "type": "string",
@@ -10721,6 +10743,7 @@
           "AUTONOMY_MODE_NOT_ENABLED",
           "CV_PDF_UNREADABLE",
           "CV_DRAFT_NOT_READY",
+          "CV_INJECTION_UNACKNOWLEDGED",
           "RATE_LIMITED",
           "PAYLOAD_TOO_LARGE",
           "UNSUPPORTED_MEDIA_TYPE",

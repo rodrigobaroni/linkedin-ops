@@ -1,7 +1,14 @@
-import { QUEUES, type CvDraftStatus, type CvExtractionFailure } from "@linkedin-ops/contracts";
+import {
+  ParseWarningSchema,
+  QUEUES,
+  type CvDraftStatus,
+  type CvExtractionFailure,
+  type ParseWarning,
+} from "@linkedin-ops/contracts";
 import type { PrismaClient } from "../client.js";
 import type { Prisma } from "../generated/prisma/client.js";
 import { newId } from "../ids.js";
+import type { CareerFailureReason, GenerationInfo } from "./ports.js";
 
 type Transaction = Parameters<Parameters<PrismaClient["$transaction"]>[0]>[0];
 type CvBaseRow = Awaited<ReturnType<PrismaClient["cvBase"]["findUniqueOrThrow"]>>;
@@ -17,6 +24,21 @@ const CV_EXTRACT_QUEUE = QUEUES["cv.extract"];
 export const CV_EXTRACTION_STALE_MS =
   (CV_EXTRACT_QUEUE.retryLimit + 1) * CV_EXTRACT_QUEUE.expireInSeconds * 1000 + 10 * 60 * 1000;
 
+/** Longest injection excerpt kept with a draft (`cv_bases_injection_evidence_check`). */
+export const CV_INJECTION_EVIDENCE_MAX_CHARS = 500;
+
+/**
+ * Runs one SQL statement on the caller's connection. `startDraft` hands its transaction to the enqueue
+ * callback through this shape, which is what pg-boss accepts as `send(..., { db })`: the job row commits
+ * or rolls back with the draft (ADR-0002 §3). The domain never depends on pg-boss itself.
+ */
+export interface SqlExecutor {
+  executeSql(text: string, values?: unknown[]): Promise<{ rows: unknown[] }>;
+}
+
+/** Enqueues the draft's `cv.extract` on `db` (the draft's transaction) and returns the job id. */
+export type CvExtractEnqueue = (db: SqlExecutor, draftId: string) => Promise<string>;
+
 /** Validates structured CV content on every write and read (the schema lives in `packages/contracts`). */
 export type CvContentParser<C> = (value: unknown) => C;
 
@@ -26,8 +48,22 @@ export interface CvDraftRecord<C> {
   status: CvDraftStatus;
   failureReason: CvExtractionFailure | null;
   content: C | null;
+  /** Empty until `READY`. */
+  parseWarnings: ParseWarning[];
+  injectionSuspected: boolean;
+  /** CV content: shown to the owner only, never logged nor audited. */
+  injectionEvidence: string | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+/** What `cv.extract` produced for a draft. */
+export interface CvExtraction<C> {
+  content: C;
+  parseWarnings: ParseWarning[];
+  injectionSuspected: boolean;
+  injectionEvidence: string | null;
+  generation: GenerationInfo;
 }
 
 export interface CvBaseRecord<C> {
@@ -58,6 +94,17 @@ export class CvDraftNotReadyError extends Error {
 }
 
 /**
+ * `confirm` of a draft whose extraction flagged instructions in the CV text without the owner's explicit
+ * acknowledgement (ADR-0005 §4: fail closed).
+ */
+export class CvInjectionUnacknowledgedError extends Error {
+  constructor() {
+    super("CV draft flagged as possible prompt injection; confirmation must acknowledge it");
+    this.name = "CvInjectionUnacknowledgedError";
+  }
+}
+
+/**
  * CV base repository (career module, spec 2026-10-22 §5–6). Version allocation, draft replacement and
  * activation run under a lock on the owner's `users` row, so concurrent uploads and confirmations serialize;
  * the partial unique indexes (one draft, one active version) back this up in the database.
@@ -82,12 +129,16 @@ export class PrismaCvBases<C> {
     };
   }
 
-  /** Stores the PDF text as a new `EXTRACTING` draft, replacing any pending draft. */
+  /**
+   * Stores the PDF text as a new `EXTRACTING` draft, replacing any pending draft, and enqueues its
+   * `cv.extract` in the same transaction: if `enqueue` throws, neither the draft nor the job exist.
+   */
   async startDraft(
     userId: string,
     extractedText: string,
     meta: CvAuditMeta,
-  ): Promise<CvDraftRecord<C>> {
+    enqueue: CvExtractEnqueue,
+  ): Promise<{ draft: CvDraftRecord<C>; jobId: string }> {
     const now = this.now();
     return this.prisma.$transaction(async (tx) => {
       await lockOwner(tx, userId);
@@ -112,7 +163,8 @@ export class PrismaCvBases<C> {
         before: replaced ? { replacedDraftId: replaced.id, version: replaced.version } : null,
         after: { status: row.status, version: row.version },
       });
-      return this.toDraft(row);
+      const jobId = await enqueue(sqlExecutor(tx), row.id);
+      return { draft: this.toDraft(row), jobId };
     });
   }
 
@@ -125,33 +177,71 @@ export class PrismaCvBases<C> {
     return row?.extractedText ? { userId: row.userId, text: row.extractedText } : null;
   }
 
-  /** `cv.extract` succeeded: the draft becomes `READY` and the PDF text is erased. False = no longer pending. */
-  async completeExtraction(cvBaseId: string, content: C, meta: CvAuditMeta): Promise<boolean> {
-    const valid = this.parseContent(content);
-    return this.leaveExtracting(cvBaseId, meta, "cv_base.extraction_ready", {
-      status: "READY",
-      content: valid as Prisma.InputJsonValue,
-    });
+  /**
+   * `cv.extract` succeeded: the draft becomes `READY` with the extraction and the PDF text is erased, in
+   * one conditional update. False = no longer pending (duplicated or late job).
+   */
+  async completeExtraction(
+    cvBaseId: string,
+    extraction: CvExtraction<C>,
+    meta: CvAuditMeta,
+  ): Promise<boolean> {
+    const valid = this.parseContent(extraction.content);
+    const parseWarnings = ParseWarningSchema.array().parse(extraction.parseWarnings);
+    // Cut by code point, as PostgreSQL's `char_length` counts (never splits a surrogate pair).
+    const evidence = extraction.injectionSuspected
+      ? Array.from(extraction.injectionEvidence ?? "")
+          .slice(0, CV_INJECTION_EVIDENCE_MAX_CHARS)
+          .join("") || null
+      : null;
+    return this.leaveExtracting(
+      cvBaseId,
+      meta,
+      "cv_base.extraction_ready",
+      {
+        status: "READY",
+        content: valid as Prisma.InputJsonValue,
+        parseWarnings: parseWarnings as Prisma.InputJsonValue,
+        injectionSuspected: extraction.injectionSuspected,
+        injectionEvidence: evidence,
+        generation: { ...extraction.generation } as Prisma.InputJsonValue,
+      },
+      {
+        parseWarnings: parseWarnings.length,
+        injectionSuspected: String(extraction.injectionSuspected),
+      },
+    );
   }
 
-  /** `cv.extract` gave up: the draft becomes `FAILED` and the PDF text is erased. */
+  /**
+   * `cv.extract` gave up: the draft becomes `FAILED` and the PDF text is erased. `cause` (the worker's
+   * detailed reason) goes to the audit trail only.
+   */
   async failExtraction(
     cvBaseId: string,
     reason: CvExtractionFailure,
     meta: CvAuditMeta,
+    cause?: CareerFailureReason,
   ): Promise<boolean> {
-    return this.leaveExtracting(cvBaseId, meta, "cv_base.extraction_failed", {
-      status: "FAILED",
-      failureReason: reason,
-    });
+    return this.leaveExtracting(
+      cvBaseId,
+      meta,
+      "cv_base.extraction_failed",
+      { status: "FAILED", failureReason: reason },
+      cause === undefined ? {} : { cause },
+    );
   }
 
-  /** Activates the reviewed `READY` draft with the owner's edits; the previous version is deactivated. */
+  /**
+   * Activates the reviewed `READY` draft with the owner's edits; the previous version is deactivated. A
+   * draft flagged `injectionSuspected` needs `acknowledgeInjection` (fail closed, ADR-0005 §4).
+   */
   async confirm(
     userId: string,
     draftId: string,
     content: C,
     meta: CvAuditMeta,
+    options: { acknowledgeInjection?: boolean } = {},
   ): Promise<CvBaseRecord<C>> {
     const valid = this.parseContent(content);
     const now = this.now();
@@ -162,6 +252,9 @@ export class PrismaCvBases<C> {
       });
       if (!draft) throw new CvDraftNotReadyError(null);
       if (draft.status !== "READY") throw new CvDraftNotReadyError(draft.status);
+      if (draft.injectionSuspected && options.acknowledgeInjection !== true) {
+        throw new CvInjectionUnacknowledgedError();
+      }
       const previous = await tx.cvBase.findFirst({
         where: { userId, isActive: true },
         select: { id: true, version: true },
@@ -183,7 +276,11 @@ export class PrismaCvBases<C> {
       });
       await audit(tx, userId, meta, "cv_base.confirmed", row.id, {
         before: previous ? { activeId: previous.id, version: previous.version } : null,
-        after: { activeId: row.id, version: row.version },
+        after: {
+          activeId: row.id,
+          version: row.version,
+          ...(draft.injectionSuspected ? { injectionAcknowledged: "true" } : {}),
+        },
       });
       return this.toBase(row);
     });
@@ -209,11 +306,19 @@ export class PrismaCvBases<C> {
     meta: CvAuditMeta,
     action: string,
     data:
-      | { status: "READY"; content: Prisma.InputJsonValue }
+      | {
+          status: "READY";
+          content: Prisma.InputJsonValue;
+          parseWarnings: Prisma.InputJsonValue;
+          injectionSuspected: boolean;
+          injectionEvidence: string | null;
+          generation: Prisma.InputJsonValue;
+        }
       | {
           status: "FAILED";
           failureReason: CvExtractionFailure;
         },
+    auditDetail: Record<string, string | number>,
   ): Promise<boolean> {
     const now = this.now();
     return this.prisma.$transaction(async (tx) => {
@@ -233,6 +338,7 @@ export class PrismaCvBases<C> {
           status: data.status,
           version: row.version,
           ...(data.status === "FAILED" ? { failureReason: data.failureReason } : {}),
+          ...auditDetail,
         },
       });
       return true;
@@ -303,6 +409,10 @@ export class PrismaCvBases<C> {
       status: row.status,
       failureReason: row.failureReason,
       content: row.content === null ? null : this.parseContent(row.content),
+      parseWarnings:
+        row.parseWarnings === null ? [] : ParseWarningSchema.array().parse(row.parseWarnings),
+      injectionSuspected: row.injectionSuspected,
+      injectionEvidence: row.injectionEvidence,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
@@ -320,6 +430,15 @@ export class PrismaCvBases<C> {
       createdAt: row.createdAt,
     };
   }
+}
+
+/** Lets a statement built elsewhere (pg-boss) run inside a Prisma interactive transaction. */
+function sqlExecutor(tx: Transaction): SqlExecutor {
+  return {
+    executeSql: async (text, values = []) => ({
+      rows: await tx.$queryRawUnsafe<unknown[]>(text, ...values),
+    }),
+  };
 }
 
 /** Serializes CV base writes of one owner (row lock on `users`, released at commit). */

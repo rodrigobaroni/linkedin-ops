@@ -26,6 +26,9 @@ export const QueueNameSchema = z.enum([
 export const QueueName = QueueNameSchema.enum;
 export type QueueName = z.infer<typeof QueueNameSchema>;
 
+/** pg-boss tables live in their own schema of the application database (ADR-0002 §1); api and worker share it. */
+export const PGBOSS_SCHEMA_NAME = "pgboss";
+
 /** Fields present in every job payload. Handlers accept version N-1 during deploys (contracts.md §5). */
 export function jobEnvelope<V extends number>(schemaVersion: V) {
   return z.strictObject({

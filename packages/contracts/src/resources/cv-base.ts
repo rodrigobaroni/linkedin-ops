@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CvStructuredSchema } from "../career/schemas.js";
+import { CvStructuredSchema, ParseWarningSchema } from "../career/schemas.js";
 import { AsyncAcceptedSchema } from "../common/async.js";
 import { IsoDateTimeSchema } from "../common/datetime.js";
 import { UuidSchema } from "../common/ids.js";
@@ -27,6 +27,23 @@ export const CvDraftSchema = z
     status: CvDraftStatusSchema,
     failureReason: CvExtractionFailureSchema.nullable().describe("Set only when FAILED"),
     content: CvStructuredSchema.nullable().describe("Set only when READY"),
+    parseWarnings: z
+      .array(ParseWarningSchema)
+      .max(50)
+      .optional()
+      .describe("What the extraction could not read unambiguously; shown on review"),
+    injectionSuspected: z
+      .boolean()
+      .optional()
+      .describe(
+        "The extraction found text that tries to instruct the model; confirming needs `acknowledgeInjection`",
+      ),
+    injectionEvidence: z
+      .string()
+      .max(500)
+      .nullable()
+      .optional()
+      .describe("Offending excerpt of the CV, set only when `injectionSuspected`"),
     createdAt: IsoDateTimeSchema,
     updatedAt: IsoDateTimeSchema,
   })
@@ -60,11 +77,18 @@ export const CvUploadAcceptedSchema = AsyncAcceptedSchema.extend({
 }).meta({ id: "CvUploadAccepted" });
 export type CvUploadAccepted = z.infer<typeof CvUploadAcceptedSchema>;
 
-/** Confirms the reviewed draft; `draftId` guards against confirming a draft replaced meanwhile. */
+/**
+ * Confirms the reviewed draft; `draftId` guards against confirming a draft replaced meanwhile. A draft with
+ * `injectionSuspected` is only activated with `acknowledgeInjection: true` (ADR-0005 §4: fail closed).
+ */
 export const CvConfirmInputSchema = z
   .strictObject({
     draftId: UuidSchema,
     content: CvStructuredSchema,
+    acknowledgeInjection: z
+      .boolean()
+      .optional()
+      .describe("The owner reviewed the excerpt flagged as possible prompt injection"),
   })
   .meta({ id: "CvConfirmInput" });
 export type CvConfirmInput = z.infer<typeof CvConfirmInputSchema>;
