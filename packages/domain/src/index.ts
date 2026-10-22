@@ -162,6 +162,8 @@ export {
   LOG_REDACTED,
   safeLogArguments,
   scrubLogObject,
+  scrubChildBindings,
+  type ChildLogger,
   type SafeLoggedError,
 } from "./logging/safe-error.js";
 export {

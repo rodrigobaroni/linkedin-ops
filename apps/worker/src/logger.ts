@@ -2,7 +2,12 @@
  * Structured logger (ADR-0001: Pino). Defence in depth: credential-like keys and content-bearing keys are
  * redacted even if a call site passes them by mistake (spec §8: CV and posting content never in logs).
  */
-import { safeLogArguments, scrubLogObject, serializeErrorsDeep } from "@linkedin-ops/domain";
+import {
+  safeLogArguments,
+  scrubChildBindings,
+  scrubLogObject,
+  serializeErrorsDeep,
+} from "@linkedin-ops/domain";
 import { pino, type DestinationStream, type LogFn, type Logger } from "pino";
 
 export const REDACTED_PATHS = [
@@ -63,5 +68,6 @@ export function createLogger(level: string, destination?: DestinationStream): Lo
     },
     serializers: { err: serializeErrorsDeep, error: serializeErrorsDeep },
   };
-  return destination === undefined ? pino(options) : pino(options, destination);
+  // Child bindings skip `formatters.log`: scrubbed on `child()` instead (#102 residue 1).
+  return scrubChildBindings(destination === undefined ? pino(options) : pino(options, destination));
 }

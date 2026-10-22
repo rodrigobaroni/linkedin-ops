@@ -68,6 +68,23 @@ describe("Pino redaction and auth bodies never logged", () => {
     });
   });
 
+  it("scrubs child bindings too: errors reduced, credentials redacted (#102 residue 1)", () => {
+    const logs = new LogCapture();
+    const logger = createLogger({ level: "info", pretty: false, stream: logs.stream });
+    const child = logger.child({ exception: new DatabaseError(), ctx: { token: "SECRET-CHILD" } });
+    child.child({ nested: { e: new PrismaClientKnownRequestError() } }).error("from a child");
+    expect(logs.lines).toHaveLength(1);
+    expect(logs.lines[0]?.["exception"]).toMatchObject({ type: "DatabaseError", code: "23505" });
+    expect(logs.lines[0]?.["ctx"]).toEqual({ token: REDACTED });
+    expect(logs.lines[0]?.["nested"]).toMatchObject({
+      e: { type: "PrismaClientKnownRequestError" },
+    });
+    expect(logs.lines[0]?.["pid"]).toEqual(expect.any(Number));
+    for (const leak of [ROW_CANARY, "SECRET-CHILD", "driverAdapterError", '"detail"', '"meta"']) {
+      expect(logs.text).not.toContain(leak);
+    }
+  });
+
   it("never logs a raw error under any key, nested or not (#102)", () => {
     const logs = new LogCapture();
     const logger = createLogger({ level: "info", pretty: false, stream: logs.stream });

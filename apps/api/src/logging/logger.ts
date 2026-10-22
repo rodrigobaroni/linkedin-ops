@@ -2,6 +2,7 @@ import { isSensitiveKey } from "@linkedin-ops/contracts";
 import {
   isErrorLike,
   safeLogArguments,
+  scrubChildBindings,
   serializeErrorForLog,
   serializeErrorsDeep,
   type LogLevel,
@@ -133,5 +134,9 @@ export function buildLoggerOptions({ level, pretty }: LoggerConfig): LoggerOptio
 
 export function createLogger(config: LoggerConfig): Logger {
   const options = buildLoggerOptions(config);
-  return config.stream ? pino(options, config.stream) : pino(options);
+  // Child bindings skip `formatters.log`: scrubbed on `child()` instead (#102 residue 1).
+  return scrubChildBindings(
+    config.stream ? pino(options, config.stream) : pino(options),
+    scrubSensitiveKeys,
+  );
 }
