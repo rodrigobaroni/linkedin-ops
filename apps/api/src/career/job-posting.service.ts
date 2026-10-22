@@ -132,17 +132,24 @@ export class JobPostingService {
    * Renders the tailored CV on demand (spec §5 item 7) from the CV base version it was tailored from
    * (`tailored_cvs.cv_base_id`, never the active one). Only `READY` postings; another owner's posting is a
    * `404`. Nothing of the CV reaches logs, audit or Problem Details: a stale reference audits its id only.
-   * The rate limit counts renders only: it is consumed once ownership and status checked out, so probing
-   * other ids (cheap, always `404`) never spends the owner's quota.
+   * The rate limit counts renders and stale refusals: it is consumed once ownership and status checked out,
+   * so probing other ids (cheap, always `404`) never spends the owner's quota, and before any stale audit
+   * event is written, so repeated downloads of a stale CV cannot flood the audit trail.
    */
   async pdf(
     session: AuthenticatedSession,
     id: string,
     correlationId: string,
   ): Promise<TailoredCvPdf> {
+    let counted = false;
+    const count = (): void => {
+      if (counted) return;
+      counted = true;
+      this.#pdfLimiter.consume(session.userId, "Muitos downloads de PDF; tente de novo mais tarde");
+    };
     try {
       const source = await this.postings.tailoredCvSource(session.userId, id);
-      this.#pdfLimiter.consume(session.userId, "Muitos downloads de PDF; tente de novo mais tarde");
+      count();
       const body = await renderTailoredCvPdf({ content: source.content, base: source.base });
       return {
         fileName: cvPdfFileName({
@@ -154,6 +161,9 @@ export class JobPostingService {
       };
     } catch (error) {
       if (error instanceof TailoredCvStaleError || error instanceof TailoredCvRenderError) {
+        // `TailoredCvStaleError` comes before `count()` ran (no tailored row): count it now, so a full window
+        // answers 429 without another audit row.
+        count();
         await this.postings.recordStaleTailoredCv(
           session.userId,
           id,

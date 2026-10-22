@@ -50,9 +50,14 @@ export class TailoredCvTooLargeError extends Error {
  * Together with `breakLongTokens` it keeps a render linear and short (ADR-0009, consequences).
  */
 export const MAX_RENDERED_CHARS = 30_000;
-/** A run without break opportunities longer than this gets one every `TOKEN_CHUNK` characters. */
-const LONG_TOKEN = 60;
+/**
+ * A run without break opportunities longer than this (in code points) gets one every `TOKEN_CHUNK` grapheme
+ * clusters. High enough that ordinary long words and most URLs inside the text stay whole for ATS parsing.
+ */
+const LONG_TOKEN = 100;
 const TOKEN_CHUNK = 40;
+/** Grapheme clusters: a break never separates a base letter from its combining marks. */
+const GRAPHEMES = new Intl.Segmenter("und", { granularity: "grapheme" });
 const ZERO_WIDTH_SPACE = "\u200B";
 const LONG_TOKEN_PATTERN = new RegExp(`[^\\s\\u200B]{${LONG_TOKEN + 1},}`, "gu");
 
@@ -148,11 +153,16 @@ export async function renderTailoredCvPdf(input: TailoredCvPdfInput): Promise<Bu
 
   let printed = 0;
   /** `printable` + long-token breaks, counted against `MAX_RENDERED_CHARS` before anything is laid out. */
-  const prepare = (text: string): string => {
+  /**
+   * `printable` + long-token breaks, counted against `MAX_RENDERED_CHARS` before anything is laid out.
+   * `keepTokens` (header: name, e-mail, phone, links) never inserts breaks: a zero-width space inside a URL
+   * makes extractors and ATS read it split. Those fields are `ShortText` (≤ 200), so layout stays cheap.
+   */
+  const prepare = (text: string, keepTokens = false): string => {
     const shown = printable(text);
     printed += shown.length;
     if (printed > MAX_RENDERED_CHARS) throw new TailoredCvTooLargeError(MAX_RENDERED_CHARS);
-    return breakLongTokens(shown);
+    return keepTokens ? shown : breakLongTokens(shown);
   };
 
   const chunks: Buffer[] = [];
@@ -173,8 +183,9 @@ export async function renderTailoredCvPdf(input: TailoredCvPdfInput): Promise<Bu
     size: number,
     color: string,
     options: PDFKit.Mixins.TextOptions = {},
+    keepTokens = false,
   ): void => {
-    const shown = prepare(text);
+    const shown = prepare(text, keepTokens);
     if (shown === "") return;
     document.add(
       doc.struct(tag, {}, () => {
@@ -212,7 +223,7 @@ export async function renderTailoredCvPdf(input: TailoredCvPdfInput): Promise<Bu
   };
 
   const list = (entries: readonly string[]): void => {
-    const items = entries.map(prepare).filter((item) => item !== "");
+    const items = entries.map((entry) => prepare(entry)).filter((item) => item !== "");
     if (items.length === 0) return;
     const listStruct = doc.struct("L");
     document.add(listStruct);
@@ -236,12 +247,17 @@ export async function renderTailoredCvPdf(input: TailoredCvPdfInput): Promise<Bu
 
   // Header: name and contact line.
   const contact = base.contact;
-  if (contact.name) paragraph("H1", contact.name, "semibold", SIZE.name, COLOR.text);
-  const contactLine = [contact.email, contact.phone, contact.location, ...contact.links].filter(
+  if (contact.name) paragraph("H1", contact.name, "semibold", SIZE.name, COLOR.text, {}, true);
+  const contactLine = [contact.email, contact.phone, contact.location].filter(
     (part): part is string => Boolean(part),
   );
   if (contactLine.length > 0) {
-    paragraph("P", contactLine.join("  ·  "), "regular", SIZE.meta, COLOR.muted);
+    paragraph("P", contactLine.join("  ·  "), "regular", SIZE.meta, COLOR.muted, {}, true);
+  }
+  // One link per line: the Unicode line breaker may wrap after "/", so a URL sharing a line with other
+  // fields would come out split ("https://" + rest) in the extracted text that ATS read.
+  for (const link of contact.links) {
+    paragraph("P", link, "regular", SIZE.meta, COLOR.muted, {}, true);
   }
 
   if (content.summary.segments.length > 0) {
@@ -354,16 +370,17 @@ export function printable(text: string): string {
 
 /**
  * pdfkit breaks an unbreakable run character by character, re-measuring the line each time: quadratic in the
- * run length (a 20 000-character token took seconds). A zero-width space every `TOKEN_CHUNK` characters of a
- * run longer than `LONG_TOKEN` (long URLs, pasted garbage) gives the line breaker opportunities; it draws
+ * run length (a 20 000-character token took seconds). A zero-width space every `TOKEN_CHUNK` grapheme clusters
+ * of a run longer than `LONG_TOKEN` (pasted garbage, very long URLs in the body) gives the line breaker
+ * opportunities, never between a letter and its combining marks; it draws
  * nothing and is present in Source Sans 3.
  */
 export function breakLongTokens(text: string): string {
   return text.replace(LONG_TOKEN_PATTERN, (token) => {
-    const chars = Array.from(token);
+    const clusters = Array.from(GRAPHEMES.segment(token), (part) => part.segment);
     const parts: string[] = [];
-    for (let i = 0; i < chars.length; i += TOKEN_CHUNK) {
-      parts.push(chars.slice(i, i + TOKEN_CHUNK).join(""));
+    for (let i = 0; i < clusters.length; i += TOKEN_CHUNK) {
+      parts.push(clusters.slice(i, i + TOKEN_CHUNK).join(""));
     }
     return parts.join(ZERO_WIDTH_SPACE);
   });

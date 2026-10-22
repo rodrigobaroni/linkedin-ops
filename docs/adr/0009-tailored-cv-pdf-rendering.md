@@ -49,8 +49,11 @@ to be recorded.
    characters. Without this, pdfkit would print an empty `.notdef` box.
    **Bounded layout:** pdfkit breaks a run with no break opportunity character by character, re-measuring
    the line each time, so its cost is quadratic in the run's length (QA #110: 20 000 characters took about
-   6 s). Every run longer than 60 characters gets a zero-width space (U+200B, present in the font, drawn as
-   nothing) every 40 characters. A document is also capped at 30 000 printed characters (about 12 dense
+   6 s). In the body, every run longer than 100 characters gets a zero-width space (U+200B, present in the
+   font, drawn as nothing) every 40 grapheme clusters (`Intl.Segmenter`, so never between a letter and its
+   combining marks). The header (name, e-mail, phone, links) is never broken: a zero-width space inside a URL
+   made pdf.js extract it split, and ATS read it broken. Those fields are short (≤ 200), so their layout stays
+   cheap, and each link goes on its own line, since the Unicode line breaker may wrap after `/`. A document is also capped at 30 000 printed characters (about 12 dense
    pages; the schema allows far more): above it the route answers `422 TAILORED_CV_TOO_LARGE` before
    layout.
 8. **Route:** `GET /career/jobs/{id}/pdf` (`career.jobs.pdf`, `responseContentType: application/pdf`) renders on
@@ -61,8 +64,9 @@ to be recorded.
    ("reprocesse a vaga"), and the audit trail records the missing id only. The response carries
    `Content-Disposition: attachment; filename="<file name>"` (re-checked against `^[A-Za-z0-9-]+\.pdf$` before
    it reaches the header) and `Cache-Control: no-store`, and the route is rate limited per user (60 per hour).
-   The limit counts renders only: it is consumed after the ownership and status checks, so a `404` or `409`
-   never spends it.
+   The limit is consumed after the ownership and status checks, so a `404` or `409 TAILORED_CV_NOT_READY`
+   never spends it. A stale refusal spends it before its audit event is written, so retries cannot flood the
+   audit trail: once the window is full they get `429` and no audit row.
 
 ## Alternatives considered
 

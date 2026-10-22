@@ -184,7 +184,13 @@ async function activateCv(userId: string, content: CvStructured): Promise<string
 async function seedPosting(
   actor: Actor,
   cvBaseId: string,
-  options: { status?: JobPostingStatus; job?: JobPostingExtracted; tailored?: object } = {},
+  options: {
+    status?: JobPostingStatus;
+    job?: JobPostingExtracted;
+    tailored?: object;
+    /** `READY` without its tailored CV row (stale: the row is gone). */
+    withoutTailored?: boolean;
+  } = {},
 ): Promise<string> {
   const status = options.status ?? "READY";
   const now = new Date();
@@ -210,7 +216,7 @@ async function seedPosting(
       updatedAt: now,
     },
   });
-  if (status === "READY") {
+  if (status === "READY" && !options.withoutTailored) {
     await prisma.tailoredCv.create({
       data: {
         id: newId(),
@@ -395,6 +401,26 @@ describe("GET /career/jobs/{id}/pdf", () => {
     });
     expect(JSON.stringify(events)).not.toContain(CV_MARKER);
     expect(JSON.stringify(events)).not.toContain(SEGMENT_MARKER);
+  });
+
+  it("rate limits stale refusals before auditing them, so retries never flood the audit trail", async () => {
+    const actor = await newActor();
+    const cvBaseId = await activateCv(actor.userId, fictitiousCvStructured());
+    const id = await seedPosting(actor, cvBaseId, { withoutTailored: true });
+
+    for (let i = 0; i < PDF_LIMIT; i += 1) {
+      const res = await download(actor, id).expect(409);
+      expect(problemOf(res.body as Buffer).code).toBe("TAILORED_CV_STALE");
+    }
+    const limited = await download(actor, id).expect(429);
+    expect(problemOf(limited.body as Buffer).code).toBe("RATE_LIMITED");
+    await download(actor, id).expect(429);
+
+    const events = await prisma.auditEvent.findMany({
+      where: { userId: actor.userId, action: "tailored_cv.stale" },
+    });
+    expect(events).toHaveLength(PDF_LIMIT);
+    expect(events[0]).toMatchObject({ entityId: id, after: { tailoredCv: "missing" } });
   });
 
   it("keeps hostile posting fields out of the Content-Disposition header", async () => {

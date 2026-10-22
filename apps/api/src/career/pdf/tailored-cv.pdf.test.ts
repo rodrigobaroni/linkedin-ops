@@ -182,22 +182,29 @@ describe("renderTailoredCvPdf", () => {
     expect(text).not.toContain("\u0007");
   });
 
-  it("lays out the worst case (unbreakable runs up to the cap) in linear time", async () => {
+  it("lays out the worst case (unbreakable runs up to the cap) without wrapping past 40 graphemes", async () => {
     // "W" is the widest glyph: the most line breaks per run. Before `breakLongTokens`, 20 000 characters
-    // of it took ~1 s here and ~6 s on the QA machine (quadratic); now the whole cap takes tens of ms.
+    // of it took ~1 s locally and ~6 s on the QA machine (quadratic). The structural check below is the
+    // guard (every run wraps at the 40-grapheme breaks); the time bound is only a smoke test, with a warm-up
+    // and room for slow CI runners (~50 ms locally, ~0.6 s on CI; without the breaks, seconds).
+    await renderTailoredCvPdf(sample());
     const input = sample();
     const runs = Math.floor((MAX_RENDERED_CHARS - 4_000) / 2_000);
     input.content.summary.segments = Array.from({ length: runs }, (_, i) =>
       segmentOf(i, "W".repeat(2_000)),
     );
-    input.content.experiences[0]!.bullets.segments = [segmentOf(99, "W".repeat(1_500))];
+    // Several bullets: every list item (not only the first) goes through the token breaks.
+    input.content.experiences[0]!.bullets.segments = [97, 98, 99].map((n) =>
+      segmentOf(n, "W".repeat(500)),
+    );
 
     const started = performance.now();
     const pdf = await renderTailoredCvPdf(input);
-    // ~45 ms here with the fix, ~1.3 s without it: the bound catches the regression with CI headroom.
-    expect(performance.now() - started).toBeLessThan(500);
+    expect(performance.now() - started).toBeLessThan(2_000);
     const { text } = await textOf(pdf);
-    expect(text.replace(/[\s\u200B]/g, "")).toContain("W".repeat(1_500));
+    const pieces = text.split(/[\s\u200B]+/).filter((piece) => /^W+$/.test(piece));
+    expect(pieces.join("")).toBe("W".repeat(runs * 2_000 + 3 * 500));
+    expect(Math.max(...pieces.map((piece) => piece.length))).toBeLessThanOrEqual(40);
   });
 
   it("refuses a tailored CV above the printed-character cap before laying it out", async () => {
@@ -213,14 +220,37 @@ describe("renderTailoredCvPdf", () => {
     expect(performance.now() - started).toBeLessThan(1_000);
   });
 
-  it("keeps a long URL whole in the extracted text once the zero-width spaces are removed", async () => {
-    const url = `https://example.test/${"segmento-".repeat(3)}${"a".repeat(120)}`;
+  it("never breaks contact links or e-mail: ATS reads them whole from the extracted text", async () => {
+    // 86 characters, longer than the old 60-character threshold: it used to come out as "…- da-…".
+    const url =
+      "https://www.linkedin.com/in/ana-exemplo-da-conceicao-engenheira-de-software-1234567890";
+    const email = `ana.exemplo.da.conceicao.engenharia.de.software.${"x".repeat(30)}@example.test`;
     const input = sample();
     input.base.contact.links = [url];
+    input.base.contact.email = email;
+    input.base.contact.phone = null;
+    input.base.contact.location = null;
 
     const { text } = await textOf(await renderTailoredCvPdf(input));
-    // Lines break at the zero-width spaces; the extractor turns each line end into whitespace.
-    expect(text.replace(/[\s\u200B]/g, "")).toContain(url);
+    expect(text).toContain(url);
+    expect(text).toContain(email);
+    expect(text).not.toContain("\u200B");
+  });
+
+  it("leaves body tokens up to 100 characters whole and breaks longer ones", async () => {
+    // A token that fits the line comes out whole; one over 100 characters gets zero-width spaces.
+    const whole = `https://example.test/${"a".repeat(64)}`;
+    const long = "b".repeat(150);
+    const input = sample();
+    input.content.experiences[0]!.bullets.segments = [segmentOf(1, whole), segmentOf(2, long)];
+
+    const { text } = await textOf(await renderTailoredCvPdf(input));
+    expect(text).toContain(whole);
+    // The long run is the SECOND list item: it wraps at the 40-grapheme breaks, not at the line width (~85).
+    const pieces = text.split(/[\s\u200B]+/).filter((piece) => /^b+$/.test(piece));
+    expect(pieces.join("")).toBe(long);
+    expect(Math.max(...pieces.map((piece) => piece.length))).toBeLessThanOrEqual(40);
+    expect(text.replace(/[\s\u200B]/g, "")).toContain(long);
   });
 
   it("rejects a tailored CV citing a missing base item, naming only the id", async () => {
@@ -235,18 +265,31 @@ describe("renderTailoredCvPdf", () => {
 });
 
 describe("breakLongTokens", () => {
-  it("leaves words and runs up to 60 characters alone", () => {
-    const text = `uma frase normal ${"a".repeat(60)} fim`;
+  it("leaves words and runs up to 100 characters alone", () => {
+    const text = `uma frase normal ${"a".repeat(100)} fim`;
     expect(breakLongTokens(text)).toBe(text);
   });
 
-  it("puts a zero-width space every 40 code points of a longer run, keeping the spaces around it", () => {
-    expect(breakLongTokens(`x ${"ç".repeat(61)} y`)).toBe(
-      `x ${"ç".repeat(40)}\u200B${"ç".repeat(21)} y`,
+  it("puts a zero-width space every 40 graphemes of a longer run, keeping the spaces around it", () => {
+    expect(breakLongTokens(`x ${"ç".repeat(101)} y`)).toBe(
+      `x ${"ç".repeat(40)}\u200B${"ç".repeat(40)}\u200B${"ç".repeat(21)} y`,
     );
     const broken = breakLongTokens("W".repeat(2_000));
     expect(broken.split("\u200B").every((part) => part.length === 40)).toBe(true);
     expect(broken.replaceAll("\u200B", "")).toBe("W".repeat(2_000));
+  });
+
+  it("never separates a base letter from its combining marks", () => {
+    // q + U+0301 and n + U+0303 + U+0323 have no precomposed form: two and three code points per grapheme.
+    for (const cluster of ["q\u0301", "n\u0303\u0323"]) {
+      const broken = breakLongTokens(cluster.repeat(120));
+      expect(broken).not.toMatch(/\u200B\p{M}/u);
+      expect(broken.split("\u200B").map((part) => part.length)).toEqual([
+        40 * cluster.length,
+        40 * cluster.length,
+        40 * cluster.length,
+      ]);
+    }
   });
 });
 
