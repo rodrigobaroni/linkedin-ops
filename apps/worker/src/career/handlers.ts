@@ -26,7 +26,7 @@ import {
 } from "@linkedin-ops/editorial-engine";
 import { PermanentJobError, RetryableJobError } from "../jobs/errors.js";
 import type { JobContext, JobHandler } from "../jobs/runner.js";
-import { runLlmStep } from "./llm-step.js";
+import { runLlmStep, runLlmStepWithRegenerations } from "./llm-step.js";
 import {
   JobFetchError,
   type CareerFailureReason,
@@ -37,6 +37,8 @@ import {
 
 /** Spec §5 step 5: the humanizer runs once and regenerates at most twice. */
 export const HUMANIZE_MAX_ATTEMPTS = 3;
+/** Spec §9: invalid `job-extract` output gets up to 2 new attempts inside the handler. */
+export const JOB_EXTRACT_MAX_REGENERATIONS = 2;
 
 export interface CareerHandlerDeps {
   llm: LlmClient;
@@ -137,6 +139,10 @@ export function createCareerHandlers(deps: CareerHandlerDeps): CareerHandlers {
     let text: string;
     if (source.kind === "pasted") {
       text = source.text;
+    } else if (posting.fetchedText !== null) {
+      // Saved by an earlier attempt: retrying the AI step never fetches the page again (ADR-0008 §4).
+      text = posting.fetchedText;
+      context.logger.info({ fetchOutcome: "reused" }, "job page text reused");
     } else if (isLinkedInUrl(source.url) && !deps.linkedInFetchEnabled) {
       context.logger.info(
         { outcome: "paste-text", reason: "kill-switch" },
@@ -146,7 +152,8 @@ export function createCareerHandlers(deps: CareerHandlerDeps): CareerHandlers {
       return;
     } else {
       try {
-        text = (await deps.fetcher.fetchJobText(source.url, context.signal)).text;
+        const fetched = (await deps.fetcher.fetchJobText(source.url, context.signal)).text;
+        text = sanitizeUntrustedText(fetched, JOB_TEXT_MAX_CHARS).text;
       } catch (error) {
         const kind = error instanceof JobFetchError ? error.kind : "transient";
         context.logger.info({ fetchOutcome: kind }, "job page fetch failed");
@@ -154,16 +161,22 @@ export function createCareerHandlers(deps: CareerHandlerDeps): CareerHandlers {
         if (kind === "permanent") return markFailed("fetch");
         return failIfFinal(new RetryableJobError("fetch"), context, markFailed, "fetch");
       }
+      await deps.jobStore.saveFetchedText(jobPostingId, text);
     }
 
     try {
       const sourceUrl = source.kind === "url" ? source.url : null;
-      const built = buildJobExtractRequest({ jobText: text, sourceUrl }, options);
-      const { value, model } = await runLlmStep(
+      const { value, model, built } = await runLlmStepWithRegenerations(
         deps.llm,
-        built,
+        () => buildJobExtractRequest({ jobText: text, sourceUrl }, options),
         (raw) => parseJobExtractResponse(raw, { postingText: text }),
         context.signal,
+        JOB_EXTRACT_MAX_REGENERATIONS,
+        (attempt, reason) =>
+          context.logger.warn(
+            { extractAttempt: attempt, errorClass: reason },
+            "job extract output invalid",
+          ),
       );
       if (value.kind === "not_a_job") {
         await markFailed("not_a_job");

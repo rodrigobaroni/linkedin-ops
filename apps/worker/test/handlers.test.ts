@@ -50,8 +50,14 @@ function fakeStores(source: JobPostingSource | null = { kind: "pasted", text: po
     ),
     markFailed: (_id, reason) => (events.push(`cv:failed:${reason}`), Promise.resolve()),
   };
+  let fetchedText: string | null = null;
   const jobStore: JobPostingStore = {
-    loadForFetch: () => Promise.resolve(source ? { source } : null),
+    loadForFetch: () => Promise.resolve(source ? { source, fetchedText } : null),
+    saveFetchedText: (_id, text) => (
+      (fetchedText = text),
+      events.push("job:fetched"),
+      Promise.resolve()
+    ),
     completeExtraction: (_id, result) => (
       (saved.job = result),
       events.push("job:extracted"),
@@ -197,6 +203,64 @@ describe("job.fetch", () => {
       b.h["job.fetch"]({ ...envelope, jobPostingId: IDS.posting }, context()),
     ).rejects.toBeInstanceOf(RetryableJobError);
     expect(b.events).toEqual([]);
+  });
+
+  it("invalid AI output never triggers a second HTTP request (ADR-0008 §4, spec §9)", async () => {
+    let requests = 0;
+    const fetcher: JobPageFetcher = {
+      fetchJobText: () => ((requests += 1), Promise.resolve({ text: postingText })),
+    };
+    const stores = fakeStores({ kind: "url", url: "https://jobs.example.com/1" });
+    const { h, events, llm } = handlers({ "job-extract": { nonsense: true } }, stores, fetcher);
+    const payload = { ...envelope, jobPostingId: IDS.posting };
+    // 1 call + 2 regenerations inside the handler, then a permanent failure (no queue retry, no refetch).
+    await expect(h["job.fetch"](payload, context())).rejects.toBeInstanceOf(PermanentJobError);
+    expect(llm.calls.filter((c) => c.promptId === "job-extract")).toHaveLength(3);
+    expect(requests).toBe(1);
+    expect(events).toEqual(["job:fetched", "job:failed:ai"]);
+    // Even if the queue retried the job (e.g. after a transient LLM error), the saved text is reused.
+    await expect(h["job.fetch"](payload, context())).rejects.toBeInstanceOf(PermanentJobError);
+    expect(requests).toBe(1);
+  });
+
+  it("recovers when a regeneration returns valid output", async () => {
+    let requests = 0;
+    const fetcher: JobPageFetcher = {
+      fetchJobText: () => ((requests += 1), Promise.resolve({ text: postingText })),
+    };
+    const { h, events, llm } = handlers(
+      {
+        "job-extract": (_request, call) => (call === 0 ? { nonsense: true } : jobExtractionOutput),
+      },
+      fakeStores({ kind: "url", url: "https://jobs.example.com/1" }),
+      fetcher,
+    );
+    await h["job.fetch"]({ ...envelope, jobPostingId: IDS.posting }, context());
+    expect(events).toEqual(["job:fetched", "job:extracted"]);
+    expect(llm.calls).toHaveLength(2);
+    expect(requests).toBe(1);
+  });
+
+  it("a transient LLM error is retried by the queue without refetching", async () => {
+    const { LlmError } = await import("@linkedin-ops/editorial-engine");
+    let requests = 0;
+    const fetcher: JobPageFetcher = {
+      fetchJobText: () => ((requests += 1), Promise.resolve({ text: postingText })),
+    };
+    const { h } = handlers(
+      {
+        "job-extract": (_request, call) => {
+          if (call === 0) throw new LlmError("UNAVAILABLE", { status: 503 });
+          return jobExtractionOutput;
+        },
+      },
+      fakeStores({ kind: "url", url: "https://jobs.example.com/1" }),
+      fetcher,
+    );
+    const payload = { ...envelope, jobPostingId: IDS.posting };
+    await expect(h["job.fetch"](payload, context())).rejects.toBeInstanceOf(RetryableJobError);
+    await h["job.fetch"](payload, context({ retryCount: 1, isLastAttempt: true }));
+    expect(requests).toBe(1);
   });
 
   it("fails `not_a_job` for a login wall", async () => {

@@ -44,8 +44,16 @@ export interface CvBaseDraftStore {
 export type JobPostingSource = { kind: "pasted"; text: string } | { kind: "url"; url: string };
 
 export interface JobPostingStore {
-  /** Posting in status `fetching` (buscando). */
-  loadForFetch(jobPostingId: string): Promise<{ source: JobPostingSource } | null>;
+  /**
+   * Posting in status `fetching` (buscando). `fetchedText` is the page text saved by an earlier attempt
+   * (`saveFetchedText`); when present the handler never fetches again (ADR-0008 §4: retries only for
+   * network/5xx, never because the AI step failed).
+   */
+  loadForFetch(
+    jobPostingId: string,
+  ): Promise<{ source: JobPostingSource; fetchedText: string | null } | null>;
+  /** Persists the fetched page text (already sanitized and truncated) before any model call. */
+  saveFetchedText(jobPostingId: string, text: string): Promise<void>;
   /** Stores the extraction and enqueues `cv.tailor` atomically. `rawText` is truncated by the store. */
   completeExtraction(
     jobPostingId: string,

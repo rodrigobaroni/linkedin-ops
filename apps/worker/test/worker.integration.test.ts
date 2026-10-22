@@ -33,6 +33,7 @@ let failTailoring = false;
 
 const jobStore: JobPostingStore = {
   loadForFetch: () => Promise.resolve(null),
+  saveFetchedText: () => Promise.resolve(),
   completeExtraction: () => Promise.resolve(),
   loadForTailoring: () =>
     Promise.resolve({

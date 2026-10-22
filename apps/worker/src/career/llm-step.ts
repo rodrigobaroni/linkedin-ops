@@ -38,3 +38,32 @@ export async function runLlmStep<T>(
   if (!parsed.ok) throw new RetryableJobError(`ai:${parsed.error.code}`);
   return { value: parsed.value, model: response.model };
 }
+
+/**
+ * Same step with in-handler regenerations for invalid model output (spec §9: up to 2 new attempts), so a schema
+ * failure never consumes a queue retry (and never re-runs the work before it, e.g. a page fetch). Transient LLM
+ * errors still surface as `RetryableJobError`; when regenerations run out the failure is permanent.
+ */
+export async function runLlmStepWithRegenerations<T>(
+  llm: LlmClient,
+  build: () => BuiltRequest,
+  parse: (raw: unknown) => Result<T, EngineError>,
+  signal: AbortSignal,
+  maxRegenerations: number,
+  onInvalid: (attempt: number, reason: string) => void = () => undefined,
+): Promise<LlmStepOutcome<T> & { built: BuiltRequest }> {
+  for (let attempt = 1; ; attempt += 1) {
+    const built = build();
+    try {
+      return { ...(await runLlmStep(llm, built, parse, signal)), built };
+    } catch (error) {
+      const invalid =
+        error instanceof RetryableJobError &&
+        /^(ai:|llm:(INVALID_OUTPUT|INCOMPLETE))/.test(error.reason);
+      if (!invalid) throw error;
+      onInvalid(attempt, error.reason);
+      if (attempt > maxRegenerations)
+        throw new PermanentJobError(`${error.reason}:regenerations-exhausted`);
+    }
+  }
+}
