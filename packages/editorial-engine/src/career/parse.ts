@@ -292,7 +292,7 @@ export function parseCvTailorResponse(
       }
       // "Atuei como tech lead…": an added segment cites no base item, so only an experience title covers a role
       // (issue #93).
-      if (inventedRoleTitles(segment.text, titles).length > 0) {
+      if (inventedRoleTitles(segment.text, titles, "", baseText).length > 0) {
         issues.push(`${segment.segmentId}: hard limit, invented role title`);
       }
       continue;
@@ -310,7 +310,7 @@ export function parseCvTailorResponse(
     }
     // A role a rewritten or original segment presents must be an experience title or a role its cited items
     // already state (issue #93).
-    if (inventedRoleTitles(segment.text, titles, sourceText).length > 0) {
+    if (inventedRoleTitles(segment.text, titles, sourceText, baseText).length > 0) {
       issues.push(`${segment.segmentId}: hard limit, invented role title`);
     }
     const sourceNumbers = new Set(numericTokens(sourceText));
@@ -404,7 +404,7 @@ export function parseCvHumanizeResponse(
       titlesFromCredentials(update.text, baseText, titles).some((title) => !oldTitles.has(title));
     // So is a role the segment did not already present ("Atuei com pipelines…" → "Atuei como product manager…";
     // issue #93).
-    const newRole = inventedRoleTitles(update.text, titles, segment.text).length > 0;
+    const newRole = inventedRoleTitles(update.text, titles, segment.text, baseText).length > 0;
     if (
       !sameNumbers(segment.text, update.text) ||
       !entitiesKept ||

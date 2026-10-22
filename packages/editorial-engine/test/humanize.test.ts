@@ -224,3 +224,14 @@ describe("the humanizer never introduces an invented title (issue #93, Pena §6.
     expect(result.ok && result.value.revertedSegmentIds).toEqual([]);
   });
 });
+
+describe("the humanizer never turns a copula into an invented title (Maestro on PR #98)", () => {
+  it("canary: 'Evaluated Kafka…' → 'I was a recruiter…' is reverted", () => {
+    const cv = before();
+    const result = parseCvHumanizeResponse(
+      output(cv, { "seg-3": "I was a recruiter evaluating Kafka for event streaming." }),
+      { before: cv, base: baseCv },
+    );
+    expect(result.ok && result.value.revertedSegmentIds).toEqual(["seg-3"]);
+  });
+});

@@ -814,3 +814,53 @@ describe("inventedRoleTitles with a reference (issue #93, Codex review)", () => 
     ]);
   });
 });
+
+describe("listed roles and copulas (issue #93, Maestro on PR #98)", () => {
+  const has = (found: string[], role: string) => found.some((name) => name.includes(role));
+
+  it.each([
+    ["Worked as an engineer and technical product manager.", ["Engineer"], "product manager"],
+    ["Worked as an engineer, then senior technical product manager.", ["Engineer"], "manager"],
+    ["Atuei como engenheira e principal arquiteta de soluções.", ["Engenheira"], "arquiteta"],
+  ])("canary: a listed role past two words: '%s'", (text, titles, role) => {
+    expect(has(inventedRoleTitles(text, titles), role)).toBe(true);
+  });
+
+  it.each([
+    ["I was a recruiter.", "recruiter"],
+    ["I was a talent partner for payments.", "talent partner"],
+    ["Fui recrutador do time de pagamentos.", "recrutador"],
+    ["Sou instrutora de TypeScript.", "instrutora"],
+  ])("canary: a copula before a role outside the closed list: '%s'", (text, role) => {
+    expect(has(inventedRoleTitles(text, ["Engenheira de software"], "", ""), role)).toBe(true);
+  });
+
+  it.each([
+    "I was responsible for the billing migration.",
+    "I was part of the payments team.",
+    "I was the first to adopt durable queues.",
+    "Fui responsável pela migração de cobrança.",
+    "Fui premiada pela migração de cobrança.",
+  ])("positive: '%s' presents no role", (text) => {
+    expect(inventedRoleTitles(text, ["Engenheira de software"], "", "")).toEqual([]);
+  });
+
+  it("positive: a copula before a word of the base CV is not a role candidate", () => {
+    const baseText = "Conduzi entrevistas como parte do comitê de recrutamento com um recrutador.";
+    expect(inventedRoleTitles("Fui recrutador.", ["Engenheira de software"], "", baseText)).toEqual(
+      [],
+    );
+  });
+});
+
+describe("cv.tailor rejects a copula before an invented role (Maestro on PR #98)", () => {
+  it("canary: 'Fui recrutador do time de pagamentos.' in the added bullet", () => {
+    const output = tailoringOutput();
+    const added = output.tailoredCv.experiences[0]?.bullets.segments[1];
+    if (added) added.text = "Fui recrutador do time de pagamentos.";
+    const result = parseCvTailorResponse(output, { base: baseCv, job, target });
+    expect(result.ok ? [] : result.error.issues).toContain(
+      "seg-3: hard limit, invented role title",
+    );
+  });
+});
