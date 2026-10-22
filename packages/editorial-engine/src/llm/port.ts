@@ -33,6 +33,7 @@ export interface LlmResponse {
 export interface CancellationSignal {
   readonly aborted: boolean;
   addEventListener(type: "abort", listener: () => void): void;
+  removeEventListener(type: "abort", listener: () => void): void;
 }
 
 export interface LlmCallOptions {
@@ -45,7 +46,7 @@ export interface LlmClient {
 
 /**
  * - `TIMEOUT`, `RATE_LIMITED`, `UNAVAILABLE`, `NETWORK`: transient, the job may retry.
- * - `REFUSAL`, `INCOMPLETE`, `INVALID_OUTPUT`, `INVALID_REQUEST`, `AUTH`, `QUOTA_EXCEEDED`,
+ * - `REFUSAL`, `INCOMPLETE`, `INVALID_OUTPUT`, `INVALID_REQUEST`, `AUTH`, `QUOTA_EXCEEDED`, `ABORTED`,
  *   `NOT_CONFIGURED`: permanent for this attempt (the job decides whether a new generation is worth it).
  */
 export type LlmErrorKind =
@@ -60,6 +61,8 @@ export type LlmErrorKind =
   | "AUTH"
   /** Billing quota exhausted (a 429 that waiting does not fix). */
   | "QUOTA_EXCEEDED"
+  /** The caller cancelled (job shutdown or expiry): never retried. */
+  | "ABORTED"
   | "NOT_CONFIGURED";
 
 const TRANSIENT: ReadonlySet<LlmErrorKind> = new Set([

@@ -27,7 +27,13 @@ export async function runLlmStep<T>(
     response = await llm.complete(built.request, { signal });
   } catch (error) {
     if (error instanceof LlmError) {
-      if (error.transient || error.kind === "INVALID_OUTPUT" || error.kind === "INCOMPLETE") {
+      // ABORTED = shutdown or job expiry: the job runs again later, the posting is not failed.
+      if (
+        error.transient ||
+        error.kind === "INVALID_OUTPUT" ||
+        error.kind === "INCOMPLETE" ||
+        error.kind === "ABORTED"
+      ) {
         throw new RetryableJobError(`llm:${error.kind}`);
       }
       throw new PermanentJobError(`llm:${error.kind}`);

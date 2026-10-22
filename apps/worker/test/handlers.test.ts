@@ -362,6 +362,19 @@ describe("cv.tailor", () => {
     expect(events).toEqual(["job:tailored"]);
   });
 
+  it("an aborted LLM call (shutdown) is retryable and does not fail the posting", async () => {
+    const { LlmError } = await import("@linkedin-ops/editorial-engine");
+    const { h, events } = handlers({
+      "cv-tailor": () => {
+        throw new LlmError("ABORTED");
+      },
+    });
+    await expect(
+      h["cv.tailor"]({ ...envelope, jobPostingId: IDS.posting }, context()),
+    ).rejects.toBeInstanceOf(RetryableJobError);
+    expect(events).toEqual([]);
+  });
+
   it("treats auth/refusal LLM errors as permanent", async () => {
     const { LlmError } = await import("@linkedin-ops/editorial-engine");
     const { h, events } = handlers({

@@ -11,6 +11,7 @@ import {
 } from "@linkedin-ops/editorial-engine";
 import {
   OpenAiLlmClient,
+  abortableSleep,
   parseRetryAfter,
   toOpenAiStrictSchema,
   type LlmCallEvent,
@@ -136,6 +137,45 @@ describe("OpenAiLlmClient (Responses API, Structured Outputs)", () => {
     expect(bodies).toHaveLength(2);
   });
 
+  it("an abort during the backoff makes no new request (Crivo PR89-3)", async () => {
+    const controller = new AbortController();
+    const { url, bodies } = await serve([json(503, {}), completed({ ok: true })]);
+    const llm = client(url, [], {
+      // The backoff is where the job gets cancelled (worker shutdown / expiry).
+      sleep: (ms: number, signal?: AbortSignal) => {
+        controller.abort();
+        return abortableSleep(ms, signal);
+      },
+    });
+    await expect(llm.complete(request, { signal: controller.signal })).rejects.toMatchObject({
+      kind: "ABORTED",
+      transient: false,
+    });
+    expect(bodies).toHaveLength(1);
+  });
+
+  it("an already-aborted signal makes no request at all", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const { url, bodies } = await serve([completed({ ok: true })]);
+    await expect(
+      client(url).complete(request, { signal: controller.signal }),
+    ).rejects.toMatchObject({
+      kind: "ABORTED",
+    });
+    expect(bodies).toHaveLength(0);
+  });
+
+  it("aborting mid-request cancels it as ABORTED, not TIMEOUT", async () => {
+    const controller = new AbortController();
+    const { url } = await serve([() => undefined]);
+    const pending = client(url, [], { timeoutMs: 10_000 }).complete(request, {
+      signal: controller.signal,
+    });
+    setTimeout(() => controller.abort(), 50);
+    await expect(pending).rejects.toMatchObject({ kind: "ABORTED" });
+  });
+
   it("does not retry auth or bad-request errors", async () => {
     const { url, bodies } = await serve([json(401, {})]);
     await expect(client(url).complete(request)).rejects.toMatchObject({
@@ -207,6 +247,18 @@ describe("OpenAiLlmClient (Responses API, Structured Outputs)", () => {
     expect(error).toBeInstanceOf(LlmError);
     const dump = JSON.stringify(events) + String(error) + JSON.stringify(error);
     for (const secret of [API_KEY, SECRET_INPUT, "SYSTEM TEXT"]) expect(dump).not.toContain(secret);
+  });
+});
+
+describe("abortableSleep", () => {
+  it("resolves early when the signal aborts and immediately when already aborted", async () => {
+    const controller = new AbortController();
+    const started = Date.now();
+    const sleeping = abortableSleep(60_000, controller.signal);
+    controller.abort();
+    await sleeping;
+    await abortableSleep(60_000, controller.signal);
+    expect(Date.now() - started).toBeLessThan(1_000);
   });
 });
 

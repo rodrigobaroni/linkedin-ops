@@ -44,7 +44,8 @@ export interface OpenAiClientOptions {
   maxRetries?: number;
   /** Injected for tests. */
   fetch?: typeof fetch;
-  sleep?: (ms: number) => Promise<void>;
+  /** Must resolve early when `signal` aborts. */
+  sleep?: (ms: number, signal?: CancellationSignal) => Promise<void>;
   now?: () => number;
   onEvent?: (event: LlmCallEvent) => void;
 }
@@ -75,7 +76,19 @@ export function toOpenAiStrictSchema<T>(node: T): T {
   ) as T;
 }
 
-const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+/** Backoff that ends as soon as the caller cancels (Crivo PR89-3). */
+export function abortableSleep(ms: number, signal?: CancellationSignal): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (signal?.aborted) return resolve();
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener("abort", done);
+  });
+}
 
 export class OpenAiLlmClient implements LlmClient {
   private readonly apiKey: string;
@@ -83,7 +96,7 @@ export class OpenAiLlmClient implements LlmClient {
   private readonly timeoutMs: number;
   private readonly maxRetries: number;
   private readonly fetchImpl: typeof fetch;
-  private readonly sleep: (ms: number) => Promise<void>;
+  private readonly sleep: (ms: number, signal?: CancellationSignal) => Promise<void>;
   private readonly now: () => number;
   private readonly onEvent: (event: LlmCallEvent) => void;
 
@@ -93,13 +106,15 @@ export class OpenAiLlmClient implements LlmClient {
     this.timeoutMs = options.timeoutMs ?? OPENAI_DEFAULT_TIMEOUT_MS;
     this.maxRetries = options.maxRetries ?? OPENAI_DEFAULT_MAX_RETRIES;
     this.fetchImpl = options.fetch ?? fetch;
-    this.sleep = options.sleep ?? defaultSleep;
+    this.sleep = options.sleep ?? abortableSleep;
     this.now = options.now ?? Date.now;
     this.onEvent = options.onEvent ?? (() => undefined);
   }
 
   async complete(request: LlmRequest, options: LlmCallOptions = {}): Promise<LlmResponse> {
     for (let attempt = 1; ; attempt += 1) {
+      // Checked before every attempt, including right after a backoff: a cancelled job makes no new request.
+      if (options.signal?.aborted) throw new LlmError("ABORTED");
       const started = this.now();
       try {
         const response = await this.attempt(request, options.signal);
@@ -116,7 +131,7 @@ export class OpenAiLlmClient implements LlmClient {
         if (!llmError.transient || attempt > this.maxRetries || options.signal?.aborted) {
           throw llmError;
         }
-        await this.sleep(this.retryDelay(llmError, attempt));
+        await this.sleep(this.retryDelay(llmError, attempt), options.signal);
       }
     }
   }
@@ -124,7 +139,10 @@ export class OpenAiLlmClient implements LlmClient {
   private async attempt(request: LlmRequest, external?: CancellationSignal): Promise<LlmResponse> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-    external?.addEventListener("abort", () => controller.abort());
+    const onAbort = () => controller.abort();
+    // An already-aborted signal never fires `abort` again: abort the request up front.
+    if (external?.aborted) controller.abort();
+    else external?.addEventListener("abort", onAbort);
     let response: Response;
     try {
       response = await this.fetchImpl(`${this.baseUrl}/v1/responses`, {
@@ -152,9 +170,11 @@ export class OpenAiLlmClient implements LlmClient {
       });
     } catch {
       // The cause may carry request details: never attach it.
+      if (external?.aborted) throw new LlmError("ABORTED");
       throw new LlmError(controller.signal.aborted ? "TIMEOUT" : "NETWORK");
     } finally {
       clearTimeout(timer);
+      external?.removeEventListener("abort", onAbort);
     }
 
     if (!response.ok) {
