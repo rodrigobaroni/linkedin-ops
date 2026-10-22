@@ -899,6 +899,36 @@ describe("job postings and tailored CVs (career PR 3b, migration 20261023000000)
     ).resolves.toBeTruthy();
   });
 
+  it("never lets a row point at another owner's CV base or batch (composite owner FKs)", async () => {
+    const mine = await batchFixture();
+    const theirs = await batchFixture();
+    const FOREIGN_KEY = /23503|Foreign key constraint|foreign key/i;
+    await expectRejects(
+      prisma.tailoringBatch.create({
+        data: { id: newId(), userId: mine.userId, cvBaseId: theirs.cvBaseId, createdAt: now() },
+      }),
+      FOREIGN_KEY,
+    );
+    await expectRejects(posting({ userId: mine.userId, batchId: theirs.batchId }), FOREIGN_KEY);
+    const row = await posting(mine, { status: "READY", extracted: { title: "Vaga" } });
+    await expectRejects(
+      prisma.tailoredCv.create({
+        data: {
+          id: newId(),
+          userId: mine.userId,
+          jobPostingId: row.id,
+          cvBaseId: theirs.cvBaseId,
+          content: {},
+          matchReport: {},
+          generation: {},
+          createdAt: now(),
+          updatedAt: now(),
+        },
+      }),
+      FOREIGN_KEY,
+    );
+  });
+
   it("cascades from the CV base through the batch, and from the posting to its tailored CV", async () => {
     const fixture = await batchFixture();
     const row = await posting(fixture, { status: "READY", extracted: { title: "Vaga" } });

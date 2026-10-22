@@ -352,7 +352,13 @@ export class PrismaJobPostings {
         select: { id: true, batchId: true, status: true },
       });
       if (!row) throw new JobPostingNotFoundError();
-      await tx.jobPosting.delete({ where: { id: row.id } });
+      // Concurrent deletions of a batch's last postings serialize on the batch row: otherwise each one
+      // would still count the other's posting and the empty batch would stay behind.
+      const batch = await tx.$queryRaw<{ id: string }[]>`
+        SELECT "id" FROM "tailoring_batches" WHERE "id" = ${row.batchId}::uuid FOR UPDATE`;
+      if (batch.length === 0) throw new JobPostingNotFoundError();
+      const { count } = await tx.jobPosting.deleteMany({ where: { id: row.id, userId } });
+      if (count === 0) throw new JobPostingNotFoundError();
       const remaining = await tx.jobPosting.count({ where: { batchId: row.batchId } });
       if (remaining === 0) await tx.tailoringBatch.delete({ where: { id: row.batchId } });
       await audit(tx, userId, meta, "job_posting.deleted", "job_posting", row.id, {

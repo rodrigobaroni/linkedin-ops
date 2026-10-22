@@ -1161,6 +1161,8 @@ model CvBase {
   tailoredCvs      TailoredCv[]
 
   @@unique([userId, version])
+  /// Target of the composite owner FKs of the career tables (a child row never points at another owner's CV).
+  @@unique([id, userId])
   @@map("cv_bases")
 }
 
@@ -1172,9 +1174,10 @@ model TailoringBatch {
   createdAt DateTime @map("created_at") @db.Timestamptz(3)
 
   user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  cvBase      CvBase       @relation(fields: [cvBaseId], references: [id], onDelete: Cascade)
+  cvBase      CvBase       @relation(fields: [cvBaseId, userId], references: [id, userId], onDelete: Cascade)
   jobPostings JobPosting[]
 
+  @@unique([id, userId])
   @@index([userId])
   @@index([cvBaseId])
   @@map("tailoring_batches")
@@ -1207,7 +1210,7 @@ model JobPosting {
   updatedAt               DateTime             @map("updated_at") @db.Timestamptz(3)
 
   user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  batch      TailoringBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  batch      TailoringBatch @relation(fields: [batchId, userId], references: [id, userId], onDelete: Cascade)
   tailoredCv TailoredCv?
 
   @@unique([batchId, urlHash])
@@ -1234,7 +1237,7 @@ model TailoredCv {
 
   user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   jobPosting JobPosting @relation(fields: [jobPostingId], references: [id], onDelete: Cascade)
-  cvBase     CvBase     @relation(fields: [cvBaseId], references: [id], onDelete: Cascade)
+  cvBase     CvBase     @relation(fields: [cvBaseId, userId], references: [id, userId], onDelete: Cascade)
 
   @@index([cvBaseId])
   @@map("tailored_cvs")

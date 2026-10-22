@@ -595,6 +595,22 @@ describe("owner actions", () => {
     expect(await store.loadForFetch(second)).toBeNull();
   });
 
+  it("concurrent deletions of a batch's last postings still remove the batch", async () => {
+    const { userId } = await ownerWithCv();
+    for (let round = 0; round < 5; round += 1) {
+      const created = await batchOf(userId, [
+        `https://acme.gupy.io/jobs/race-${round}-a`,
+        `https://acme.gupy.io/jobs/race-${round}-b`,
+      ]);
+      const [a, b] = created.postings.map((p) => p.id) as [string, string];
+      await Promise.all([
+        postings.delete(userId, a, userMeta(userId)),
+        postings.delete(userId, b, userMeta(userId)),
+      ]);
+      expect(await prisma.tailoringBatch.count({ where: { id: created.batchId } })).toBe(0);
+    }
+  });
+
   it("lists the owner's postings newest first with a cursor", async () => {
     const { userId } = await ownerWithCv();
     const first = await batchOf(userId, [
