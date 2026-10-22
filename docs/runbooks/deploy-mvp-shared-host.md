@@ -6,13 +6,16 @@ Domínio: `linkedin.baroni.dedyn.io` (registro A na deSEC apontando para o IP re
 
 ## Peças
 
-- `infra/docker/docker-compose.shared-proxy.yml`: desliga nosso `caddy` e o `worker`; publica `web` e `api`
-  só em `172.17.0.1:3100/3101` (bridge do Docker, nunca interface pública).
+- `infra/docker/docker-compose.shared-proxy.yml`: desliga nosso `caddy`; publica `web` e `api` só em
+  `172.17.0.1:3100/3101` (bridge do Docker, nunca interface pública). O `worker` (pg-boss, dono do schema
+  `pgboss`) roda com a stack, sem portas publicadas e com env enumerada no Compose base.
 - `infra/caddy/shared-proxy.site.caddy.example`: bloco de site com os mesmos cabeçalhos de segurança e o
   filtro de access log (sem `code`/`state`/tokens/cookies) do `infra/caddy/Caddyfile`.
 - `infra/deploy/deploy-shared-host.sh`: `init-env` (cria `~/linkedin-ops/.env` 0600 na VM, segredos gerados
-  lá; credenciais do LinkedIn vão por stdin), `escrow-key` (cópia da `ENCRYPTION_KEY` no Keychain do Mac),
-  `deploy [ref]` (git archive via SSH, build na VM, migrations, sobe api+web, health), `status`.
+  lá; credenciais do LinkedIn e `OPENAI_API_KEY`/`OPENAI_MODEL` vão por stdin, lidas do `.env` local),
+  `escrow-key` (cópia da `ENCRYPTION_KEY` no Keychain do Mac), `deploy [ref]` (git archive via SSH, build de
+  api/web/worker na VM, migrations, sobe o worker e espera as filas, depois api+web, health), `status`
+  (containers, release atual e presença — nunca o valor — de `OPENAI_API_KEY`/`OPENAI_MODEL`).
 - `infra/deploy/backup-db.sh` + `infra/deploy/backup-offsite.sh`: dump diário cifrado com a chave GPG
   PÚBLICA do Mac (a VM não consegue decifrar), cópia para `~/Backups/linkedin-ops` no Mac e teste de
   restore real em container descartável.
@@ -28,8 +31,11 @@ Domínio: `linkedin.baroni.dedyn.io` (registro A na deSEC apontando para o IP re
 
 1. deSEC: registro A `linkedin.baroni.dedyn.io` → IP da VM. Portal do LinkedIn: redirect
    `https://linkedin.baroni.dedyn.io/api/v1/auth/linkedin/callback`.
-2. `export DEPLOY_HOST=ubuntu@<ip> DEPLOY_SSH_KEY=<chave> APP_HOST=linkedin.baroni.dedyn.io`
-3. `infra/deploy/deploy-shared-host.sh init-env` (idempotente) e `infra/deploy/deploy-shared-host.sh escrow-key`.
+2. `export DEPLOY_HOST=ubuntu@<ip> DEPLOY_SSH_KEY=<chave> APP_HOST=linkedin.baroni.dedyn.io`; o `.env` local
+   precisa de `LINKEDIN_CLIENT_ID/SECRET`, `OPENAI_API_KEY` e `OPENAI_MODEL` (o worker não sobe em produção sem
+   os dois últimos, `validateWorkerEnv`).
+3. `infra/deploy/deploy-shared-host.sh init-env` (idempotente; recusa um `.env` remoto incompleto, inclusive sem
+   as chaves da OpenAI) e `infra/deploy/deploy-shared-host.sh escrow-key`.
 4. `infra/deploy/backup-offsite.sh setup-key` (gera a chave GPG no Mac com senha; instala a pública, o
    `backup-db.sh` e o cron na VM). A partir do segundo deploy, `deploy` recusa migrar sem backup.
 5. `REQUIRE_PUBLIC=0 infra/deploy/deploy-shared-host.sh deploy origin/main` (o bloco do Caddy ainda não existe).
@@ -48,6 +54,20 @@ Domínio: `linkedin.baroni.dedyn.io` (registro A na deSEC apontando para o IP re
 - `deploy` usa lock (um deploy por vez) e imagens imutáveis por sha (`linkedin-ops/api:<sha>`).
 - Backup cifrado antes de qualquer migration; se a migration falhar, a release em execução **não** é tocada e o
   script imprime os próximos passos (status do Prisma, `migrate resolve`, restore). Sem retry cego.
+- Antes do build, `deploy` recusa seguir se `OPENAI_API_KEY` ou `OPENAI_MODEL` faltar no `.env` da VM (checa só
+  a presença; o valor nunca é impresso).
+- Depois das migrations o `worker` sobe **antes** de api/web e precisa ficar healthy e criar as filas
+  `cv.extract` e `cv.extract.dlq` em `pgboss.queue` em até 60 s (sem elas a API responde 503 aos uploads de CV).
+  Se falhar, api/web seguem intocados, os logs do worker vão para o terminal e o worker volta para a imagem da
+  release anterior, se existir, ou é parado.
 - Se `up` ou os health checks (api `/health` e `/ready`, web, HTTPS público) falharem, `api`/`web` voltam
-  automaticamente para a release anterior (o symlink `current`, única referência da release em execução), que só avança quando tudo passa. A cópia do código é preparada num diretório temporário e promovida sob o lock. Depois da migration, `db:migrate:status` precisa sair limpo.
+  automaticamente para a release anterior (o symlink `current`, única referência da release em execução), que só avança quando tudo passa. O worker volta junto, pela mesma regra acima, e os logs de api, web e worker vão para o terminal. A cópia do código é preparada num diretório temporário e promovida sob o lock. Depois da migration, `db:migrate:status` precisa sair limpo.
 - Rollback manual: `deploy <sha anterior>`; as releases ficam em `~/linkedin-ops/releases/`.
+
+## Custos e cota da OpenAI
+
+- Cada upload de CV gera um job `cv.extract` = 1 chamada ao `OPENAI_MODEL` (pior caso 6 requisições HTTP; tetos
+  por fila em `apps/worker/README.md`); o custo depende do modelo e do tamanho do CV, por isso defina um limite
+  de gasto e alerta no projeto da OpenAI em vez de estimar aqui.
+- Cota esgotada (`429 insufficient_quota`) não é repetida nem pelo cliente HTTP nem pela fila: o job vai direto
+  para `cv.extract.dlq`, o CV termina com falha `ai` e a API continua no ar.
