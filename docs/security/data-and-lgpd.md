@@ -26,6 +26,9 @@ Regras práticas:
 
 ## 2. Inventário de dados
 
+O mapeamento por tabela e coluna, com a retenção e o mecanismo de cada uma, está em
+[`data-inventory.md`](./data-inventory.md) (T-063), que também lista as decisões pendentes.
+
 | Categoria | Exemplos | Origem | Finalidade | Destinos | Sensibilidade |
 |---|---|---|---|---|---|
 | Conta local | e-mail/login, hash Argon2id, timestamps | Rodrigo | autenticação e segurança | PostgreSQL | alta |
@@ -38,6 +41,7 @@ Regras práticas:
 | Conteúdo | oportunidades, drafts, versões, aprovações, posts | sistema/Rodrigo | fluxo editorial e publicação | PostgreSQL, S3, OpenAI/LinkedIn conforme ação | alta |
 | Mídia | uploads, renders, alt text, checksum/metadados | Rodrigo/sistema | preview/publicação | S3, LinkedIn | alta antes de publicar |
 | LinkedIn activity/analytics | URN, posts, comentários, métricas | LinkedIn API | analytics autorizados | PostgreSQL/cache | alta e contratualmente restrita |
+| Carreira | CV base estruturado e versões, texto do PDF (temporário), vagas (URL, texto da página, extração), CVs adaptados, relatórios de aderência | Rodrigo, sites de vagas | adaptar o CV a vagas (spec 2026-10-22) | PostgreSQL, OpenAI minimizado | alta; o texto da vaga é de terceiro |
 | Telegram | chat/user id, username opcional, update id, status | Telegram/Rodrigo | notificação/vínculo | PostgreSQL, Telegram | média |
 | Auditoria | ator, evento, IDs, razão, timestamp, correlation id | sistema | segurança/compliance | PostgreSQL/backup | alta |
 | Observabilidade | erro classificado, duração, queue, request id | componentes | operação/incidente | logs/traces | média; sem conteúdo por padrão |
