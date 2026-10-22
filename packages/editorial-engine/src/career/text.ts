@@ -18,11 +18,39 @@ export function containsNormalized(haystack: string, needle: string): boolean {
 }
 
 /**
- * Numeric tokens (integers, decimals, percentages, money, years), digits only so `1.500`, `1,500` and `1500`
- * compare equal. Spelled-out numbers are not detected.
+ * Canonical value of one numeric token, so PT and EN spellings of the same number match while different
+ * numbers never collide (Crivo PR89-2): `1,5` = `1.5`; `1.500` = `1,500` = `1500`; `1.234,56` = `1,234.56`;
+ * `1.5` ≠ `15`. Rules: mixed separators → the last one is decimal; one separator repeated → thousands; a single
+ * separator followed by exactly 3 digits → thousands (unless the integer part is `0`), otherwise decimal.
+ * Trailing decimal zeros and leading integer zeros are dropped (`1.500,00` = `1500`).
+ */
+export function canonicalNumber(token: string): string {
+  const separators = token.match(/[.,]/g) ?? [];
+  const groups = token.split(/[.,]/);
+  let decimalAt = -1;
+  if (new Set(separators).size > 1) decimalAt = separators.length - 1;
+  else if (separators.length === 1) {
+    const [integer = "", after = ""] = groups;
+    decimalAt = after.length === 3 && integer !== "0" ? -1 : 0;
+  }
+  const integerPart = (decimalAt === -1 ? groups : groups.slice(0, decimalAt + 1)).join("");
+  const fraction =
+    decimalAt === -1
+      ? ""
+      : groups
+          .slice(decimalAt + 1)
+          .join("")
+          .replace(/0+$/, "");
+  const integer = integerPart.replace(/^0+(?=\d)/, "");
+  return fraction.length > 0 ? `${integer}.${fraction}` : integer;
+}
+
+/**
+ * Numeric tokens (integers, decimals, percentages, money, years) as canonical values. Spelled-out numbers are
+ * not detected.
  */
 export function numericTokens(text: string): string[] {
-  return (text.match(/\p{N}+(?:[.,]\p{N}+)*/gu) ?? []).map((token) => token.replace(/[.,]/g, ""));
+  return (text.normalize("NFKC").match(/\d+(?:[.,]\d+)*/g) ?? []).map(canonicalNumber);
 }
 
 /** Multiset equality of numeric tokens. */
