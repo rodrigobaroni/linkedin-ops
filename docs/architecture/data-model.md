@@ -429,6 +429,31 @@ ou audit), `generation` jsonb null (modelo e versões de prompt/engine, ADR-0005
 - `DELETE /career/cv` apaga todas as versões e o rascunho (pedido do titular); `ON DELETE CASCADE` a partir de
   `users`. As tabelas do lote de vagas (PR 3) referenciam o CV base com apagamento em cascata.
 
+### 2.10 Carreira: estado de busca por domínio (ADR-0008 §4, PR 3a)
+
+**JobFetchDomainState** (`job_fetch_domain_state`): tabela técnica do limitador e do circuit breaker do
+`job.fetch`. Colunas:
+
+- `domain` (PK): saída de `jobFetchGroupId`, ou seja, o eTLD+1 da seção ICANN em minúsculas, com `lnkd.in` →
+  `linkedin.com`. Um `CHECK` recusa URL, path, query e espaço.
+- `last_request_at`.
+- `recent_requests timestamptz[]`: janela móvel de 24 h, mantida só para domínios com cota; `CHECK` ≤ 40 itens.
+- `breaker_open_until`, `breaker_signal` (`FetchStopSignal` por `CHECK`) e `breaker_opened_at`: os três ficam
+  nulos juntos ou preenchidos juntos.
+- `updated_at`.
+
+Regras:
+
+- **Sem dado pessoal.** O estado pertence ao IP de saída, não a um usuário, por isso a tabela não tem `user_id`.
+  Não guarda URL nem conteúdo de página.
+- **Implementação.** `PrismaFetchDomainGuard` implementa a porta `FetchDomainGuard` do domínio, e o worker não
+  usa Prisma. Cada `acquire` ou `tripBreaker` é uma transação: `INSERT … ON CONFLICT DO NOTHING`, depois
+  `SELECT … FOR UPDATE` na linha do domínio, depois a decisão pura (`decideFetchSlot`). O relógio da aplicação
+  entra como parâmetro, nunca como `now()` no SQL. Assim, saltos concorrentes ao mesmo domínio são decididos
+  em série e não furam o intervalo nem a cota.
+- **Sobrevive ao restart.** É exatamente por isso que o estado fica no PostgreSQL. O rollback (`down.sql`)
+  perde breakers abertos; use `JOB_FETCH_LINKEDIN=disabled` antes.
+
 ---
 
 ## 3. State machine do conteúdo (briefing §13)

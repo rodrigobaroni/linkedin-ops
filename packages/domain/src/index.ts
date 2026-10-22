@@ -143,3 +143,4 @@ export {
   type FetchDomainPolicy,
   type FetchDomainState,
 } from "./career/fetch-domain.js";
+export { PrismaFetchDomainGuard } from "./career/prisma-fetch-domain-guard.js";
