@@ -165,11 +165,29 @@ Where each decision lives in `apps/worker` and what was decided while implementi
   `lnkd.in` is covered without touching the network) and in the guard, on any hop that lands on LinkedIn.
 - **Stop signals**:
   - 429, 999 and 403 trip the breaker of the domain that answered;
-  - a redirect to `/login`, `/authwall`, `/checkpoint` or `/uas/` trips the breaker of the redirect's
-    destination;
+  - a redirect to `/login`, `/authwall`, `/checkpoint` or `/uas/` trips the breaker only when it comes from the
+    same domain (counting `lnkd.in` as LinkedIn). A third party redirecting to LinkedIn's login fails as
+    `permanent` (paste-text) and leaves LinkedIn's breaker closed: LinkedIn was never contacted, and opening the
+    breaker would let any third-party page block every LinkedIn fetch for 24 h (QA #104, decision of the
+    Maestro);
   - a login wall or CAPTCHA page trips the breaker of the domain that served it.
 - **Retries**: network errors, the timeout and `5xx` (not 999) are `transient`. Anything else is `permanent`
   (paste-text).
+- **Hostile markup** (QA #104): parse5's cost grows quadratically with nesting depth (512 KB of `<div>` took
+  52 s), and synchronous code would block the whole worker (pg-boss heartbeats, other queues, SIGTERM), which
+  `expireInSeconds` cannot interrupt. The extraction therefore runs in a worker thread
+  (`job-page-text-runner.ts`):
+  - with a hard timeout of 5 s and memory and stack limits;
+  - behind a linear pre-scan that refuses more than 100 000 elements or a depth over 256. The pre-scan
+    over-estimates depth: unmatched end tags close nothing, `<div/>` opens, and implicitly closed elements do
+    not count;
+  - with iterative tree walks capped at depth 1 024, and a `mainText` that measures only the outermost
+    candidates, so it stays linear;
+  - any failure (limit, timeout, crash) is `unreadable` → `permanent`, so no new fetch spends quota on the same
+    page.
+
+  A redirect or error response is destroyed, never drained, and `lnkd.in.` (trailing dot) counts as the
+  shortener.
 - **§6 main text**: `src/career/job-page-text.ts`, with `parse5` as a parser only. The `JobPosting` JSON-LD
   description is preferred (decoded as HTML, never interpreted), then `main`, `article` and
   `[class*=description]`, then the body. Hidden elements, scripts and forms are dropped. A password field on a
