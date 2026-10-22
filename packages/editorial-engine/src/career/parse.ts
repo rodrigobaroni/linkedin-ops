@@ -343,12 +343,12 @@ export interface ParsedCvHumanization extends InjectionReport {
 
 /**
  * Preservation (humanizer-cv-rules.md §3.1, career-prompts.md §4): same segments in the same order (else the
- * whole output is invalid); per segment, same numbers, no entity added or removed, no new credential and no new
- * lint marker, otherwise the previous text is kept. A changed `original` segment becomes `rewritten`; `added` stays `added`.
+ * whole output is invalid); per segment, same numbers, no entity added or removed, no new credential or title
+ * from a base CV credential and no new lint marker, otherwise the previous text is kept. A changed `original` segment becomes `rewritten`; `added` stays `added`.
  */
 export function parseCvHumanizeResponse(
   raw: unknown,
-  context: { before: TailoredCvContent },
+  context: { before: TailoredCvContent; base: CvStructured },
 ): Result<ParsedCvHumanization, EngineError> {
   const parsed = CvHumanizationOutputSchema.safeParse(raw);
   if (!parsed.success) return err(schemaError(parsed.error));
@@ -366,6 +366,8 @@ export function parseCvHumanizeResponse(
   const blocks = new Map(before.map(({ segment, block }) => [segment.segmentId, block]));
   const updates = new Map(output.map((segment) => [segment.segmentId, segment]));
   const revertedSegmentIds: string[] = [];
+  const baseText = cvFullText(context.base);
+  const titles = context.base.experiences.map((experience) => experience.title);
 
   const cv = mapSegments(context.before, (segment: CvSegment): CvSegment => {
     const update = updates.get(segment.segmentId);
@@ -382,8 +384,13 @@ export function parseCvHumanizeResponse(
     const newMarker = lintText(segment.segmentId, update.text, language, block).some(
       (finding) => !oldMarkers.has(finding.entryId),
     );
-    // A credential the segment did not already hold (`Kafka associate`) is an addition (Sentinela PR #91).
-    const newCredential = newCredentials(update.text, segment.text).length > 0;
+    // A credential the segment did not already hold (`Kafka associate`), or a title made of a base CV
+    // credential's words ("data engineer" out of "Google Professional Data Engineer"), is an addition
+    // (Sentinela PR #91, S-1).
+    const oldTitles = new Set(titlesFromCredentials(segment.text, baseText, titles));
+    const newCredential =
+      newCredentials(update.text, segment.text, titles).length > 0 ||
+      titlesFromCredentials(update.text, baseText, titles).some((title) => !oldTitles.has(title));
     if (!sameNumbers(segment.text, update.text) || !entitiesKept || newMarker || newCredential) {
       revertedSegmentIds.push(segment.segmentId);
       return segment;

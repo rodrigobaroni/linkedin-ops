@@ -258,7 +258,7 @@ export function createCareerHandlers(deps: CareerHandlerDeps): CareerHandlers {
           const step = await runLlmStep(
             deps.llm,
             built,
-            (raw) => parseCvHumanizeResponse(raw, { before }),
+            (raw) => parseCvHumanizeResponse(raw, { before, base: input.base }),
             context.signal,
           );
           attempts = attempt;
