@@ -54,22 +54,6 @@ nunca valores. O `sub` do membro não entra neste documento.
 | Formação do author URN (`urn:li:person:<sub>`)        | **provado**: aceito como `author` na primeira publicação real (o `sub` é o do `userinfo`, pairwise)                                                                                                                                                     |
 | Headers de limite observados                          | nenhum `x-ratelimit*`/`retry-after` nas respostas de `userinfo` e `/rest/posts`; só `x-restli-gateway-error: true` no 403                                                                                                                               |
 
-### Cota exibida no Developer Portal (Analytics do app, consultada pelo Rodrigo em 2026-10-22, depois da publicação)
-
-O portal lista, por recurso e método, um percentual de uso e dois limites diários (do app e por membro). Registro
-sanitizado das linhas usadas pelo MVP-0:
-
-| Recurso    | Método | Uso exibido | Limite diário do app | Limite diário por membro |
-| ---------- | ------ | ----------- | -------------------- | ------------------------ |
-| `posts`    | CREATE | 0%          | 180.000              | 500                      |
-| `userinfo` | GET    | 0%          | 100.000              | 500                      |
-
-O que o portal **não** exibiu: o consumo desta publicação e das chamadas do probe (uso continuou em 0% minutos depois,
-ou seja, a contagem é agregada com atraso) e o horário de reset da janela diária. Com 500 posts por membro por dia, o
-limite de publicação da própria plataforma (3 por usuário a cada 10 min, ADR-0007) fica muito abaixo da cota.
-A lista completa do portal inclui outros recursos fora do escopo do MVP-0 (`ugcPosts`, `shares`, `images`, `videos`,
-`documents`, `reactions`, `socialActions/*`, `groupMemberships`, `groupDefinitions`, `assets`), sem uso registrado.
-
 ## Resultados — execução 2 (2026-10-21, Rodrigo, probe `07be5b1`, sem publicar)
 
 Diagnóstico do `id_token` sem nenhum valor de claim exibido:
@@ -117,6 +101,22 @@ final, reautenticação e **um único** envio. Dados lidos do banco de produçã
 | Duplicidade       | 1 linha em `publications`; nenhum reenvio                                                                                                                                   |
 | Auditoria         | `auth.login`, `auth.reauth`, `auth.session.rotate`, `integration.linkedin.connect`, `publication.succeeded`                                                                 |
 | Headers de limite | não registrados pela aplicação (o probe também não viu headers de rate limit nas chamadas de leitura)                                                                       |
+
+### Cota exibida no Developer Portal (Analytics do app, consultada pelo Rodrigo em 2026-10-22, depois da publicação)
+
+O portal lista, por recurso e método, um percentual de uso e dois limites diários (do app e por membro). Registro
+sanitizado das linhas usadas pelo MVP-0:
+
+| Recurso    | Método | Uso exibido | Limite diário do app | Limite diário por membro |
+| ---------- | ------ | ----------- | -------------------- | ------------------------ |
+| `posts`    | CREATE | 0%          | 180.000              | 500                      |
+| `userinfo` | GET    | 0%          | 100.000              | 500                      |
+
+O que o portal **não** exibiu: o consumo desta publicação e das chamadas do probe (uso continuou em 0% minutos depois,
+ou seja, a contagem é agregada com atraso) e o horário de reset da janela diária. Com 500 posts por membro por dia, o
+limite de publicação da própria plataforma (3 por usuário a cada 10 min, ADR-0007) fica muito abaixo da cota.
+A lista completa do portal inclui outros recursos fora do escopo do MVP-0 (`ugcPosts`, `shares`, `images`, `videos`,
+`documents`, `reactions`, `socialActions/*`, `groupMemberships`, `groupDefinitions`, `assets`), sem uso registrado.
 
 ## Pendências para fechar o G-01
 
