@@ -376,6 +376,57 @@ jobs:
           docker rm -f smoke-web smoke-api > /dev/null
           echo "runtime images OK: web serves HTML ($(printf '%s' "$body" | wc -c) bytes), api health $health"
 
+      - name: Runtime api image reads a CV PDF through the real upload route (unpdf + worker_thread on alpine)
+        # Crivo, PR #88: POST /career/cv with the committed fictitious CV against the runtime image, on the
+        # stack's network and database, proves that pdf.js (unpdf, pure JS) and the parsing worker_thread run
+        # in the shipped node:alpine image. Architecture: the runner's (amd64); ARM64 is proven by the deploy.
+        run: |
+          set -euo pipefail
+          set -a; . ./.env; set +a
+          network=linkedin-ops_internal
+          db_url="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
+          echo "::add-mask::$db_url"
+          # Migrations with the toolchain stage, exactly like infra/deploy/deploy-shared-host.sh does.
+          docker build -q --target build -f apps/api/Dockerfile -t linkedin-ops/api-tools:smoke . > /dev/null
+          docker run --rm --network "$network" -e DATABASE_URL="$db_url" linkedin-ops/api-tools:smoke pnpm db:migrate
+          # A throwaway owner and session (only the cookie's SHA-256 is stored, as at login).
+          user_id="$(cat /proc/sys/kernel/random/uuid)"
+          session_id="$(cat /proc/sys/kernel/random/uuid)"
+          cookie="$(openssl rand -hex 32)"
+          echo "::add-mask::$cookie"
+          secret_hash="$(printf '%s' "$cookie" | sha256sum | cut -d' ' -f1)"
+          docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -q \
+            -c "INSERT INTO users (id, email, password_hash, name, updated_at) VALUES ('$user_id', 'smoke-$user_id@example.test', 'not-a-login', 'Smoke', now())" \
+            -c "INSERT INTO sessions (id, user_id, secret_hash, expires_at) VALUES ('$session_id', '$user_id', '$secret_hash', now() + interval '1 hour')"
+          docker run -d --rm --name smoke-api-cv --network "$network" -p 127.0.0.1:3101:3001 \
+            --env-file .env -e NODE_ENV=production -e DATABASE_URL="$db_url" linkedin-ops/api:smoke-runtime
+          for _ in $(seq 1 30); do
+            if curl -fsS --max-time 5 -o /dev/null http://127.0.0.1:3101/api/v1/health; then break; fi
+            sleep 2
+          done
+          upload() { # <file> <type>: prints the HTTP status, body in $RUNNER_TEMP/cv-upload.json
+            curl -sS --max-time 60 -o "$RUNNER_TEMP/cv-upload.json" -w '%{http_code}' \
+              -H "Origin: $APP_BASE_URL" -H "X-Requested-With: linkedin-ops" -H "Cookie: __Host-session=$cookie" \
+              -F "file=@$1;type=$2" http://127.0.0.1:3101/api/v1/career/cv
+          }
+          code="$(upload apps/api/test/fixtures/cv-ficticio.pdf application/pdf)"
+          if [ "$code" != 202 ] || ! jq -e '.status == "EXTRACTING" and .draft.status == "EXTRACTING"' "$RUNNER_TEMP/cv-upload.json" > /dev/null; then
+            echo "::error::POST /career/cv on the runtime image returned $code: $(cat "$RUNNER_TEMP/cv-upload.json")"
+            docker logs smoke-api-cv 2>&1 | tail -n 50
+            exit 1
+          fi
+          draft_id="$(jq -r '.id' "$RUNNER_TEMP/cv-upload.json")"
+          # The text really came out of the PDF (inside the parsing thread of the runtime image).
+          found="$(docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tA \
+            -c "SELECT position('Universidade Imaginária' in extracted_text) > 0 FROM cv_bases WHERE id = '$draft_id'")"
+          if [ "$found" != t ]; then echo "::error::the stored draft does not hold the fictitious CV text"; exit 1; fi
+          # And a non-PDF is refused by its signature.
+          printf 'PK\003\004 not a pdf' > "$RUNNER_TEMP/not-a-pdf.pdf"
+          code="$(upload "$RUNNER_TEMP/not-a-pdf.pdf" application/pdf)"
+          if [ "$code" != 415 ]; then echo "::error::a non-PDF upload returned $code, expected 415"; exit 1; fi
+          docker rm -f smoke-api-cv > /dev/null
+          echo "runtime api read the fictitious CV through POST /career/cv (draft $draft_id); non-PDF refused (415)"
+
       - name: Build the dev images and start web, api and caddy (dev combination)
         run: |
           set -euo pipefail

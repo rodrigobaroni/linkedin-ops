@@ -14,6 +14,11 @@ versioning: internal SemVer (see `README.md`).
   `matchAssessment`, before additions), plus model outputs `CvExtractionOutput`, `JobExtractionOutput`,
   `CvTailoringOutput` and `CvHumanizationOutput` (Pena's field names) registered in `STRUCTURED_OUTPUTS`.
   `PromptId` gains `cv-extract`, `job-extract`, `cv-tailor`, `cv-humanize`. All career objects are `strictObject`.
+- CV base (career PR 2): routes `career.cv.get`, `career.cv.upload` (multipart, `202 CvUploadAccepted` extending
+  `AsyncAccepted`, rate limited), `career.cv.confirm` and `career.cv.delete` (elevated, OWNER only); resources
+  `CvDraft`, `CvBase`, `CvBaseState`, `CvUploadAccepted`, `CvConfirmInput` and `CV_UPLOAD_LIMITS`; enums
+  `CvDraftStatus` (`EXTRACTING | READY | FAILED`) and `CvExtractionFailure` (`EXTRACTION_FAILED | TIMED_OUT`);
+  `ErrorCode` gains `CV_PDF_UNREADABLE` (422) and `CV_DRAFT_NOT_READY` (409) (contracts.md §2.13, §4).
 - Queues `cv.extract` (`{ cvBaseId }`, retry 2 with backoff), `job.fetch` (`{ jobPostingId }`, retry 1 after 60 s,
   ADR-0008 §4) and `cv.tailor` (`{ jobPostingId }`, retry 2 with backoff). Payloads carry ids only.
 - `openapi/document.ts` (`buildOpenApiDocument`, `serializeOpenApiDocument`): OpenAPI 3.0.3 generated from `routes/v1.ts`

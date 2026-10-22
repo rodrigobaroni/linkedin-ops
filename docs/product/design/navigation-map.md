@@ -43,6 +43,9 @@ LinkedIn Ops
 │   │   └── Editar entrada       /story-bank/[storyId]
 │   └── Voice Profile            /voice-profile
 │       └── Versões              /voice-profile?painel=versoes
+├── Carreira
+│   ├── Meu CV                   /carreira/cv
+│   └── Vagas                    /carreira/vagas
 ├── Fontes e watchlists          /fontes
 ├── Analytics                    /analytics
 ├── Notificações                 /notificacoes
@@ -66,10 +69,11 @@ Barra lateral fixa de 256 px, recolhível para 72 px. Ordem:
 4. Calendário
 5. Histórico
 6. separador “Memória editorial”: Story Bank, Voice Profile
-7. Fontes
-8. Analytics
-9. Notificações — badge apenas para não lidas
-10. Configurações
+7. separador “Carreira”: Meu CV, Vagas
+8. Fontes
+9. Analytics
+10. Notificações — badge apenas para não lidas
+11. Configurações
 
 No rodapé da barra lateral:
 
@@ -88,7 +92,11 @@ Barra inferior com quatro destinos e rótulos sempre visíveis:
 - Calendário;
 - Mais.
 
-“Mais” abre um drawer com Estúdio, Histórico, Story Bank, Voice Profile, Fontes, Analytics, Notificações e Configurações. O topo mostra título, voltar quando aplicável e sino de notificações. O modo de autonomia aparece como linha persistente no drawer e como badge nas telas em que altera o comportamento.
+“Mais” abre um drawer com Estúdio, Histórico, Story Bank, Voice Profile, Fontes, Analytics, Notificações e Configurações, agrupados como na barra lateral; a seção “Carreira” traz Meu CV e Vagas, com alvos mínimos de 44 × 44 px. O topo mostra título, voltar quando aplicável e sino de notificações. O modo de autonomia aparece como linha persistente no drawer e como badge nas telas em que altera o comportamento.
+
+### Carreira
+
+**Carreira** — grupo autenticado do shell para preparar candidaturas. **Meu CV** (`/carreira/cv`) recebe, estrutura, permite revisar e confirmar o único CV base ativo. **Vagas** (`/carreira/vagas`) recebe de 1 a 20 links, acompanha a análise e abre o relatório de aderência e o PDF adaptado. Sem CV base confirmado, Vagas orienta o usuário a concluir Meu CV.
 
 ### Tablet (768–1023 px)
 
@@ -108,6 +116,8 @@ Usa barra lateral recolhida (ícone + tooltip) e o mesmo conteúdo responsivo do
 | `/historico/[contentId]` | Explicar o que ocorreu, quando e por quê | `Abrir versão publicada` | Histórico/alerta | Estúdio somente quando recuperável |
 | `/story-bank` | Gerenciar fatos e histórias autorizados | `Nova entrada` | Memória/Estúdio | entrada salva/versionada |
 | `/voice-profile` | Definir tom, estrutura e limites de voz | `Salvar nova versão` | Memória/onboarding | perfil vigente |
+| `/carreira/cv` | Enviar, revisar e confirmar o CV base | `Confirmar CV base` | sidebar/Vagas sem CV | CV base confirmado |
+| `/carreira/vagas` | Analisar vagas contra o CV base | `Analisar vagas` | sidebar/Meu CV | relatório de aderência e PDF adaptado |
 | `/fontes` | Configurar feeds, domínios e watchlists | `Adicionar fonte` | sidebar/erro de curadoria | fonte validada e ativa |
 | `/analytics` | Entender cadência e sinais disponíveis | `Ver recomendação semanal` | sidebar | decisão editorial; sem automação implícita |
 | `/notificacoes` | Ver alertas internos e recuperar falhas | `Abrir item` | sino/sidebar | tela relacionada |

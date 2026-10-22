@@ -52,6 +52,10 @@ catalog:
   jose: 6.2.12
   # Durable jobs (ADR-0002, Career PR 1): pg-boss pinned exactly (two-week soak rule; 12.37.0 of 2026-10-05).
   pg-boss: 12.37.0
+  # CV base upload (career module, PR 2): multipart parsing on the one route that declares it, and PDF text
+  # extraction in pure JS (pdf.js serverless build, no native binary; `@napi-rs/canvas` peer stays absent).
+  "@fastify/multipart": 10.1.2
+  unpdf: 1.8.1
 
 # pnpm 10 blocks install scripts by default. Only these packages may run them (T-005): the Prisma CLI and
 # its schema engine download, argon2's native binding, and esbuild (used by tsx and Vitest).

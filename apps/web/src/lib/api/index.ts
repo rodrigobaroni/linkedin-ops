@@ -26,3 +26,20 @@ export {
   type PublicationsApi,
   type PublishNowInput,
 } from "./publications";
+export {
+  CAREER_CV_QUERY_KEY,
+  CV_POLL,
+  CV_UPLOAD_LIMITS,
+  checkCvFile,
+  createCareerCvApi,
+  cvPollDelayMs,
+  type CareerCvApi,
+  type CvBase,
+  type CvBaseState,
+  type CvConfirmInput,
+  type CvDraft,
+  type CvDraftStatus,
+  type CvExtractionFailure,
+  type CvFileProblem,
+  type CvUploadAccepted,
+} from "./career-cv";

@@ -83,3 +83,13 @@ export {
   type UserProfile,
   type UserProfiles,
 } from "./auth/users.js";
+export {
+  PrismaCvBases,
+  CvDraftNotReadyError,
+  CV_EXTRACTION_STALE_MS,
+  type CvAuditMeta,
+  type CvBaseRecord,
+  type CvBaseState,
+  type CvContentParser,
+  type CvDraftRecord,
+} from "./career/cv-bases.js";

@@ -14,8 +14,11 @@ export const CONTRACT_ROUTE_KEY = "linkedin-ops:contract-route";
 /** Explicit auth level for the few routes outside the registry (`/openapi.json`, `/docs`). */
 export const ROUTE_AUTH_KEY = "linkedin-ops:route-auth";
 
-/** Tags whose responses must never be cached by the browser or an intermediary (ADR-0007, Sentinela). */
-export const NO_STORE_TAGS: ReadonlySet<string> = new Set(["auth"]);
+/**
+ * Tags whose responses must never be cached by the browser or an intermediary (ADR-0007, Sentinela):
+ * session data, and the owner's CV (personal data).
+ */
+export const NO_STORE_TAGS: ReadonlySet<string> = new Set(["auth", "career"]);
 
 const METHODS: Record<RouteDefinition["method"], RequestMethod> = {
   GET: RequestMethod.GET,

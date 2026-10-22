@@ -33,6 +33,11 @@ export type RequestOptions<Route extends RouteDefinition> = {
   params?: Record<string, string>;
   query?: Record<string, string | number | boolean | undefined>;
   body?: Route["body"] extends z.ZodType ? z.input<Route["body"]> : never;
+  /**
+   * Body of a route declared `requestContentType: "multipart/form-data"` (the only kind that may carry one).
+   * The browser sets the `Content-Type` with its boundary; the N4 headers are still sent.
+   */
+  formData?: Route["requestContentType"] extends "multipart/form-data" ? FormData : never;
   /** Send `X-CSRF-Token` even when the route is not marked `elevated` (defensive callers). */
   csrf?: boolean;
   /** `Idempotency-Key` header (contracts.md §1): one UUID per user intent, reused on retries of it. */
@@ -81,8 +86,8 @@ function resolveUrl(path: string): string {
 
 /**
  * Typed `fetch` over the route registry (`routesV1`). Every call sends the session cookie
- * (`credentials: "include"`); every mutation sends `Content-Type: application/json` and
- * `X-Requested-With: linkedin-ops` (ADR-0007 N4); `elevated` routes add `X-CSRF-Token`. The token
+ * (`credentials: "include"`); every mutation sends `Content-Type: application/json` (or, on a route declared
+ * multipart, the browser's `multipart/form-data` boundary) and `X-Requested-With: linkedin-ops` (ADR-0007 N4); `elevated` routes add `X-CSRF-Token`. The token
  * returned in the `X-CSRF-Token` response header (session rotation, N2) is stored before the body is
  * parsed. On `403 CSRF_REJECTED` the token is refreshed via `GET /auth/me` and the call is retried once.
  */
@@ -99,9 +104,13 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       `${basePath}${buildPath(route.path, requestOptions.params)}${buildQuery(requestOptions.query)}`,
     );
     const isMutation = MUTATION_METHODS.has(route.method);
+    const isMultipart = route.requestContentType === "multipart/form-data";
+    if (isMultipart && !(requestOptions.formData instanceof FormData)) {
+      throw new Error(`${route.method} ${route.path} is multipart: pass \`formData\``);
+    }
     const headers = new Headers({ Accept: JSON_CONTENT_TYPE });
     if (isMutation) {
-      headers.set("Content-Type", JSON_CONTENT_TYPE);
+      if (!isMultipart) headers.set("Content-Type", JSON_CONTENT_TYPE);
       headers.set(REQUESTED_WITH_HEADER.name, REQUESTED_WITH_HEADER.value);
     }
     if (route.auth === "elevated" || requestOptions.csrf) {
@@ -119,8 +128,12 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         headers,
         credentials: "include",
         cache: "no-store",
-        // Mutations always carry a JSON body (possibly `{}`) so the Content-Type check is meaningful.
-        body: isMutation ? JSON.stringify(requestOptions.body ?? {}) : undefined,
+        // Mutations always carry a body (JSON, possibly `{}`) so the Content-Type check is meaningful.
+        body: isMultipart
+          ? requestOptions.formData
+          : isMutation
+            ? JSON.stringify(requestOptions.body ?? {})
+            : undefined,
         signal: requestOptions.signal,
       });
     } catch (cause) {

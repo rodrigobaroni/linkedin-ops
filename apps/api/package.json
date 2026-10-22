@@ -19,6 +19,7 @@
   "dependencies": {
     "@fastify/cookie": "catalog:",
     "@fastify/helmet": "catalog:",
+    "@fastify/multipart": "catalog:",
     "@fastify/static": "catalog:",
     "@linkedin-ops/contracts": "workspace:*",
     "@linkedin-ops/domain": "workspace:*",
@@ -33,6 +34,7 @@
     "reflect-metadata": "catalog:",
     "rxjs": "catalog:",
     "swagger-ui-dist": "catalog:",
+    "unpdf": "catalog:",
     "uuid": "catalog:",
     "zod": "catalog:"
   },

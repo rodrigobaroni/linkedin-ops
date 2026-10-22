@@ -31,6 +31,11 @@ const IMPLEMENTED: readonly RouteKey[] = [
   "publications.publishNow",
   "publications.list",
   "publications.get",
+  // Career module PR 2 (CV base)
+  "career.cv.get",
+  "career.cv.upload",
+  "career.cv.confirm",
+  "career.cv.delete",
 ];
 
 type ModuleRef = Type<unknown> | DynamicModule | Promise<DynamicModule>;

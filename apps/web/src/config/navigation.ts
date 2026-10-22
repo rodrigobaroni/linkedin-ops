@@ -4,6 +4,7 @@ import {
   BellIcon,
   BookOpenIcon,
   CalendarDaysIcon,
+  FileTextIcon,
   HistoryIcon,
   HomeIcon,
   type LucideIcon,
@@ -15,14 +16,22 @@ import {
   SettingsIcon,
   SparklesIcon,
 } from "lucide-react";
+import { messages } from "@/i18n/pt-br";
 
 /**
  * Navigation groups mirror docs/product/design/navigation-map.md ("Navegação global"): primary
- * destinations, the "Memória editorial" group, then the secondary ones. Rendering follows `navGroups`.
+ * destinations, the "Memória editorial" group, the "Carreira" group (CV module, spec 2026-10-22), then
+ * the secondary ones. Rendering follows `navGroups`.
  */
-export type NavGroup = "primary" | "editorialMemory" | "secondary";
+export type NavGroup = "primary" | "editorialMemory" | "career" | "secondary";
 
-export const navGroups: readonly NavGroup[] = ["primary", "editorialMemory", "secondary"];
+export const navGroups: readonly NavGroup[] = ["primary", "editorialMemory", "career", "secondary"];
+
+/** Visible group headings (sidebar and the mobile "Mais" drawer); groups without one have none. */
+export const navGroupHeadings: Partial<Record<NavGroup, string>> = {
+  editorialMemory: messages.nav.editorialMemory,
+  career: messages.nav.career,
+};
 
 export type NavItem = {
   href: Route;
@@ -41,6 +50,7 @@ export const navItems: readonly NavItem[] = [
   { href: "/historico", label: "Histórico", icon: HistoryIcon, group: "primary" },
   { href: "/story-bank", label: "Story Bank", icon: BookOpenIcon, group: "editorialMemory" },
   { href: "/voice-profile", label: "Voice Profile", icon: MicVocalIcon, group: "editorialMemory" },
+  { href: "/carreira/cv", label: "Meu CV", icon: FileTextIcon, group: "career" },
   { href: "/fontes", label: "Fontes", icon: RssIcon, group: "secondary" },
   { href: "/analytics", label: "Analytics", icon: BarChart3Icon, group: "secondary" },
   { href: "/notificacoes", label: "Notificações", icon: BellIcon, group: "secondary" },

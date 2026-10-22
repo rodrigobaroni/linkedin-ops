@@ -25,6 +25,7 @@ erDiagram
   User ||--o{ Session : "has"
   User ||--o| AutonomySettings : "has"
   User ||--o{ VoiceProfile : "has"
+  User ||--o{ CvBase : "has"
   User ||--o{ StoryBankEntry : "owns"
   User ||--o{ ContentPillar : "owns"
   User ||--o{ Source : "owns"
@@ -403,6 +404,27 @@ expires_at > now() RETURNING …`) antes de qualquer chamada externa, nos caminh
 `key` uuid, `request_hash` (sha256 do corpo canônico), `response_status`, `response_body`, `response_location`,
 `created_at`, `completed_at`, `expires_at` (`created_at` + 24 h). Unique `(user_id, route, key)`; a linha é
 reservada na mesma transação do efeito, por isso chamadas simultâneas com a mesma key produzem um único efeito.
+
+### 2.9 Carreira: CV base (spec `2026-10-22-cv-tailoring-design.md`, PR 2)
+
+**CvBase** (`cv_bases`) — `id`, `user_id`, `version` int ≥ 1 (unique `(user_id, version)`), `status`
+{`EXTRACTING`, `READY`, `FAILED`}, `failure_reason` {`EXTRACTION_FAILED`, `TIMED_OUT`} null, `content` jsonb null
+(`CvStructured` dos contracts, validado na escrita e na leitura; objeto JSON ≤ 256 KiB), `extracted_text` text null
+(≤ 60 000 caracteres), `is_active` bool, `confirmed_at` null (= rascunho), `created_at`, `updated_at`.
+
+- **Dado pessoal.** O PDF enviado nunca é gravado: a API extrai só o texto, zera o buffer e grava o rascunho
+  `EXTRACTING` com `extracted_text`. O job `cv.extract` recebe só `cvBaseId`; ao terminar, o texto é apagado e o
+  rascunho passa a `READY` (com `content`) ou `FAILED`. Conteúdo do CV nunca vai para logs, `audit_events`
+  (só ids, versão, status) ou Problem Details.
+- **Cada status com o seu payload** (`CHECK`): `EXTRACTING` ⇒ só `extracted_text`; `READY` ⇒ só `content`;
+  `FAILED` ⇒ só `failure_reason`. Só versão `READY` confirmada pode estar ativa.
+- **No máximo um rascunho e uma versão ativa por usuário** (unique parciais `(user_id) WHERE confirmed_at IS NULL`
+  e `(user_id) WHERE is_active`). Um upload novo substitui o rascunho pendente; confirmar ativa o rascunho e
+  desativa a versão anterior na mesma transação (lock na linha de `users`).
+- Rascunho `EXTRACTING` sem resultado depois de todas as tentativas possíveis do job (`CV_EXTRACTION_STALE_MS`)
+  vira `FAILED`/`TIMED_OUT` na leitura.
+- `DELETE /career/cv` apaga todas as versões e o rascunho (pedido do titular); `ON DELETE CASCADE` a partir de
+  `users`. As tabelas do lote de vagas (PR 3) referenciam o CV base com apagamento em cascata.
 
 ---
 

@@ -79,6 +79,7 @@ describe("routes/v1 registry", () => {
       "settings.autonomy.update",
       "integrations.linkedin.connect",
       "integrations.linkedin.disconnect",
+      "career.cv.delete",
     ]) {
       expect((routesV1 as Record<string, RouteDefinition>)[key]?.auth, key).toBe("elevated");
     }
@@ -125,6 +126,7 @@ describe("routes/v1 registry", () => {
       "media",
       "notifications",
       "audit",
+      "career",
     ]) {
       expect(tags.has(tag), tag).toBe(true);
     }
@@ -138,6 +140,16 @@ describe("routes/v1 registry", () => {
       expect(Object.keys(properties), key).toEqual(
         expect.arrayContaining(["id", "status", "jobId"]),
       );
+    }
+  });
+
+  it("multipart is declared only by the upload routes, which carry no JSON body schema", () => {
+    const multipart = entries
+      .filter(([, route]) => route.requestContentType === "multipart/form-data")
+      .map(([key]) => key);
+    expect(multipart.sort()).toEqual(["career.cv.upload", "media.upload"]);
+    for (const key of multipart) {
+      expect((routesV1 as Record<string, RouteDefinition>)[key]?.body, key).toBeUndefined();
     }
   });
 

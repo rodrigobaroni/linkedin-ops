@@ -2,9 +2,11 @@ import { createRequire } from "node:module";
 import { dirname } from "node:path";
 import fastifyCookie from "@fastify/cookie";
 import fastifyHelmet from "@fastify/helmet";
+import fastifyMultipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
 import { NestFactory } from "@nestjs/core";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
+import { CV_UPLOAD_LIMITS } from "@linkedin-ops/contracts";
 import type { RuntimeEnv } from "@linkedin-ops/domain";
 import type { FastifyInstance } from "fastify";
 import type { Logger } from "pino";
@@ -14,8 +16,22 @@ import { PinoNestLogger } from "./logging/nest-logger.js";
 import { DOCS_ASSETS_PREFIX } from "./openapi/docs.controller.js";
 
 export const API_PREFIX = "api/v1";
-/** 1 MiB: JSON payloads only; media uploads (multipart) get their own limit in T-0xx. */
+/** 1 MiB: JSON payloads only; multipart uploads get their own limits (`MULTIPART_LIMITS`). */
 export const BODY_LIMIT_BYTES = 1_048_576;
+
+/**
+ * Multipart parsing (@fastify/multipart) for the upload routes the registry declares; the guard rejects a
+ * multipart body anywhere else before a handler could read it. One file part, no other field, kept in
+ * memory and capped at the CV limit (the only upload route so far).
+ */
+export const MULTIPART_LIMITS = {
+  fileSize: CV_UPLOAD_LIMITS.maxBytes,
+  files: 1,
+  fields: 0,
+  parts: 1,
+  fieldNameSize: 32,
+  headerPairs: 20,
+} as const;
 
 export interface CreateAppOptions {
   env: RuntimeEnv;
@@ -71,6 +87,10 @@ export async function configureApp(
   await fastify.register(fastifyHelmet, {
     contentSecurityPolicy: { directives: { defaultSrc: ["'none'"], frameAncestors: ["'none'"] } },
     crossOriginResourcePolicy: { policy: "same-origin" },
+  });
+  await fastify.register(fastifyMultipart, {
+    limits: MULTIPART_LIMITS,
+    throwFileSizeLimit: true,
   });
   fastify.addHook("onSend", async (request, reply) => {
     reply.header(CORRELATION_ID_HEADER, request.id);
