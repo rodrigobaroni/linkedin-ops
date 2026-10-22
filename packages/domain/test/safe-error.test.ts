@@ -1,3 +1,4 @@
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import {
   ERROR_MESSAGE_OMITTED,
@@ -6,6 +7,10 @@ import {
   MAX_ERROR_SEARCH_DEPTH,
   serializeErrorForLog,
   serializeErrorsDeep,
+  isErrorLike,
+  LOG_REDACTED,
+  safeLogArguments,
+  scrubLogObject,
 } from "../src/logging/safe-error.js";
 import {
   DatabaseError,
@@ -93,5 +98,40 @@ describe("serializeErrorsDeep (#102)", () => {
     // An already reduced error passes through unchanged (the serializers are idempotent).
     const reduced = serializeErrorForLog(new DatabaseError());
     expect(serializeErrorsDeep(reduced)).toEqual(reduced);
+  });
+});
+
+describe("#102 follow-up: other realms, class instances, log arguments, credentials", () => {
+  it("recognizes errors of another realm", () => {
+    const foreign = runInNewContext("new RangeError('x')") as unknown;
+    expect(foreign instanceof Error).toBe(false);
+    expect(isErrorLike(foreign)).toBe(true);
+    expect(isErrorLike({ name: "Error", message: "not an error" })).toBe(false);
+  });
+
+  it("descends into class instances", () => {
+    class Holder {
+      readonly inner = { err: new DatabaseError() };
+    }
+    const out = JSON.stringify(serializeErrorsDeep({ holder: new Holder() }));
+    expect(out).toContain('"type":"DatabaseError"');
+    expect(out).not.toContain(ROW_CANARY);
+  });
+
+  it("injects the scrubbed message when an error is logged without one", () => {
+    const error = new PrismaClientKnownRequestError();
+    const scrubbed = serializeErrorForLog(error).message;
+    expect(safeLogArguments([error])).toEqual([{ err: error }, scrubbed]);
+    expect(safeLogArguments([{ err: error, n: 1 }])).toEqual([{ err: error, n: 1 }, scrubbed]);
+    expect(safeLogArguments([{ error }])).toEqual([{ error }, scrubbed]);
+    expect(safeLogArguments([{ err: error }, "explicit"])).toEqual([{ err: error }, "explicit"]);
+    expect(safeLogArguments(["plain message"])).toEqual(["plain message"]);
+    expect(safeLogArguments([{ n: 1 }])).toEqual([{ n: 1 }]);
+  });
+
+  it("scrubLogObject also redacts credential-like keys at any depth", () => {
+    expect(
+      scrubLogObject({ a: { b: { password: "x", clientSecret: "y" } }, inputTokens: 3 }),
+    ).toEqual({ a: { b: { password: LOG_REDACTED, clientSecret: LOG_REDACTED } }, inputTokens: 3 });
   });
 });

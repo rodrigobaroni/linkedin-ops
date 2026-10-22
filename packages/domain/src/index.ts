@@ -117,5 +117,9 @@ export {
   scrubErrorText,
   serializeErrorForLog,
   serializeErrorsDeep,
+  isErrorLike,
+  LOG_REDACTED,
+  safeLogArguments,
+  scrubLogObject,
   type SafeLoggedError,
 } from "./logging/safe-error.js";

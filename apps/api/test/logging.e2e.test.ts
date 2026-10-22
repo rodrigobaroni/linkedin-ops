@@ -16,6 +16,7 @@ import {
   type TestApp,
 } from "./helpers.js";
 import { DatabaseError, PrismaClientKnownRequestError, ROW_CANARY } from "./fixtures/db-errors.js";
+import { PinoNestLogger } from "../src/logging/nest-logger.js";
 
 describe("Pino redaction and auth bodies never logged", () => {
   let app: TestApp;
@@ -148,5 +149,42 @@ describe("Pino redaction and auth bodies never logged", () => {
     expect(text).not.toContain("rodrigo@example.test");
     expect(text).not.toContain('"headers"');
     expect(text).not.toContain('"body"');
+  });
+
+  it("an error logged without a message never puts its raw message in msg (#102 follow-up)", () => {
+    const logs = new LogCapture();
+    const logger = createLogger({ level: "info", pretty: false, stream: logs.stream });
+    const invalidInput = Object.assign(
+      new Error(`invalid input syntax for type uuid: "${ROW_CANARY}"`),
+      { code: "22P02" },
+    );
+    logger.error(new PrismaClientKnownRequestError());
+    logger.error({ err: invalidInput });
+    logger.warn({ error: new DatabaseError(), step: "x" });
+    expect(logs.lines.map((line) => line["msg"])).toEqual([
+      'new row violates check constraint "x". [row omitted]',
+      "invalid input syntax for type uuid: [value omitted]",
+      'duplicate key value violates unique constraint "users_email_key"\n[row omitted]',
+    ]);
+    expect(logs.text).not.toContain(ROW_CANARY);
+  });
+
+  it("Nest's own logger scrubs messages, errors and stack traces (#102 follow-up)", () => {
+    const logs = new LogCapture();
+    const nest = new PinoNestLogger(
+      createLogger({ level: "info", pretty: false, stream: logs.stream }),
+    );
+    nest.error(new PrismaClientKnownRequestError(), undefined, "ExceptionsHandler");
+    nest.error(
+      `Failing row contains (${ROW_CANARY}).`,
+      `Error: boom\nDETAIL: Key (email)=(${ROW_CANARY}@x.test) already exists.\n    at x (y.js:1:1)`,
+      "ExceptionsHandler",
+    );
+    nest.warn(`invalid input syntax for type uuid: "${ROW_CANARY}"`, "RouterExplorer");
+    nest.log(new DatabaseError(), "InstanceLoader");
+    expect(logs.lines).toHaveLength(4);
+    expect(logs.lines[0]?.["err"]).toMatchObject({ type: "PrismaClientKnownRequestError" });
+    expect(logs.lines[1]?.["trace"]).toContain("at x (y.js:1:1)");
+    expect(logs.text).not.toContain(ROW_CANARY);
   });
 });
