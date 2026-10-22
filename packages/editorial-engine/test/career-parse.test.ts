@@ -2,6 +2,7 @@ import type { CvStructured } from "@linkedin-ops/contracts";
 import { describe, expect, it } from "vitest";
 import {
   buildMatchReport,
+  inventedRoleTitles,
   parseCvExtractResponse,
   parseCvTailorResponse,
   parseJobExtractResponse,
@@ -712,5 +713,47 @@ describe("a role introducer never presents an invented title (issue #93, Pena §
     expect(issues(run(own, { added: "Atuei como tech lead do time de dados." }))).toContain(
       "seg-3: hard limit, invented role title",
     );
+  });
+});
+
+describe("inventedRoleTitles (issue #93, Codex review)", () => {
+  it.each([
+    ["Worked as a founder of a payments startup.", ["Software Engineer"], "founder"],
+    ["Atuei como mentora do time.", ["Engenheira de software"], "mentora"],
+    [
+      "Led delivery after being promoted to engineering manager.",
+      ["Software Engineer"],
+      "engineering manager",
+    ],
+    ["Me tornei tech lead em 2023.", ["Engenheira de software"], "tech lead"],
+    [
+      "Atuei como coordenadora de engenharia de dados.",
+      ["Coordenadora de Engenharia de Software"],
+      "coordenadora de engenharia de dados",
+    ],
+    ["Atuei como engenheiro do time de dados.", ["Engenheiro de Dados"], "engenheiro do time"],
+    [
+      "Worked as engineer, architect, and product manager.",
+      ["Engineer", "Architect"],
+      "product manager",
+    ],
+    ["Worked as an engineering manager and tech lead.", ["Engineering Manager"], "tech lead"],
+  ])("negative: '%s' with titles %j names '%s'", (text, titles, role) => {
+    expect(inventedRoleTitles(text, titles).some((found) => found.startsWith(role))).toBe(true);
+  });
+
+  it.each([
+    ["Atuei como engenheiro de dados do time de pagamentos.", ["Engenheiro de Dados"]],
+    [
+      "Atuei como coordenadora de engenharia de software.",
+      ["Coordenadora de Engenharia de Software"],
+    ],
+    ["Atuei como Engenheira de Software Sênior.", ["Engenheira de software sênior"]],
+    ["Became an AWS Certified Solutions Architect in 2023.", ["Software Engineer"]],
+    ["Colaborei com design, bem como com o gerente de produto.", ["Engenheira de software"]],
+    ["Partnered with design as well as the product manager.", ["Software Engineer"]],
+    ["Partnered with stakeholders such as the engineering manager.", ["Software Engineer"]],
+  ])("positive: '%s' with titles %j", (text, titles) => {
+    expect(inventedRoleTitles(text, titles)).toEqual([]);
   });
 });
