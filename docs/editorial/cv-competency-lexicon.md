@@ -28,9 +28,13 @@ A `denyTerms` também vale **em tempo de execução**: cada trecho é comparado 
 sem acento, e um termo encontrado é rejeitado (salvo se já estiver no CV base). Cada grupo declara como casa:
 `any-case` para nomes distintivos, rejeitados mesmo em minúscula (`nubank`, `itaú`, `magazine luiza`), e
 `capitalized` para nomes que também são palavras comuns (`Via`, `Rede`, `Meta`, `Spring`), rejeitados só quando
-escritos como nome. Na abertura da frase, só ficam isentos numa construção comum verificável, por lista explícita
-e testada: seguidos de preposição ou artigo ("Rede de pipelines…", "Meta de vendas…", "Via a API…") ou `Via`
-seguido de termo do léxico ("Via API…"). Fora disso, na abertura também são nome ("Rede entregou…" reprova).
+escritos como nome. Na abertura da frase, só ficam isentos nas construções fechadas e de alta confiança de uma
+tabela **por termo** (`COMMON_OPENING_CONSTRUCTIONS`, testada): `Meta` e `Rede` seguidos de `de`, `da` ou `do`
+("Meta de latência…", "Rede de pipelines…") e `Via` seguido de artigo ou de termo do léxico ("Via a API…",
+"Via Python…"). Qualquer outra combinação falha fechado: "Meta em 2023…", "Delta para clientes…" e "Rede para
+varejo…" reprovam, porque afirmariam um empregador inexistente; a regeneração é o custo aceito. `Delta` não tem
+isenção de abertura ("Delta of the…" foi removido por não ser de alta confiança); `Delta Lake` passa como termo
+citado do léxico.
 Termos da lista citados pela vaga (num requisito), em qualquer grafia e em qualquer grupo, contam como nomes
 usados pela vaga e são rejeitados na saída em qualquer grafia e posição (`rede` citado em minúscula pela vaga
 reprova `rede` na saída). Efeito colateral aceito: se a vaga usa a palavra comum no sentido comum ("rede de

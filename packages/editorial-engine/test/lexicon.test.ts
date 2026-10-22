@@ -1,7 +1,7 @@
 import type { JobPostingExtracted } from "@linkedin-ops/contracts";
 import { describe, expect, it } from "vitest";
 import {
-  COMMON_OPENING_FOLLOWERS,
+  COMMON_OPENING_CONSTRUCTIONS,
   CV_COMPETENCY_LEXICON,
   createEntityGuard,
   parseCvTailorResponse,
@@ -284,42 +284,25 @@ describe("R2 exempts only verifiable common constructions at the opening (Sentin
     expect(g().newEntities(text, ["req-9"])).toEqual([expected]);
   });
 
-  it("the explicit list of common constructions is pinned", () => {
-    expect([...COMMON_OPENING_FOLLOWERS].sort()).toEqual(
-      [
-        "de",
-        "da",
-        "do",
-        "das",
-        "dos",
-        "para",
-        "por",
-        "pelo",
-        "pela",
-        "em",
-        "no",
-        "na",
-        "nos",
-        "nas",
-        "com",
-        "a",
-        "o",
-        "as",
-        "os",
-        "um",
-        "uma",
-        "ao",
-        "aos",
-        "of",
-        "for",
-        "to",
-        "the",
-        "an",
-        "in",
-        "on",
-        "between",
-      ].sort(),
-    );
+  it.each([
+    ["Meta em 2023, liderei projetos de dados.", "meta"],
+    ["Delta para clientes, entreguei pipelines Python.", "delta"],
+    ["Rede para varejo, liderei squads.", "rede"],
+    ["Meta in 2023, I led data projects.", "meta"],
+  ])("negative canary (generic preposition): %s names an employer", (text, expected) => {
+    expect(g().newEntities(text, ["req-9"])).toContain(expected);
+  });
+
+  it("the closed table of constructions per term is pinned", () => {
+    expect(COMMON_OPENING_CONSTRUCTIONS).toEqual({
+      meta: { followers: ["de", "da", "do"], lexiconTerm: false },
+      rede: { followers: ["de", "da", "do"], lexiconTerm: false },
+      via: { followers: ["a", "o", "as", "os"], lexiconTerm: true },
+    });
+  });
+
+  it("Delta has no opening exemption (removed: 'Delta of the…' is not high-confidence)", () => {
+    expect(g().newEntities("Delta of the Python models measured.", ["req-9"])).toEqual(["delta"]);
   });
 
   it.each([
@@ -328,7 +311,6 @@ describe("R2 exempts only verifiable common constructions at the opening (Sentin
     "Via a API, integrei os sistemas com Python.",
     "Meta de latência cumprida com Python.",
     "Rede de pipelines em Python.",
-    "Delta of the Python models measured.",
   ])("positive: %s is a common construction", (text) => {
     const cited = createEntityGuard(baseCv, postingWith("Python, API e REST"));
     expect(cited.newEntities(text, ["req-9"])).toEqual([]);

@@ -265,8 +265,8 @@ const DENY_FORMS: ReadonlyArray<{ words: readonly string[]; capitalizedOnly: boo
 /**
  * Deny-term phrases found in analysed tokens: `any-case` terms in any spelling and position (`nubank`),
  * `capitalized` terms only when written as a name (`Rede`, never the common word `rede`). At a sentence opening a
- * `capitalized` term is a name too, unless it is a verifiable common construction (`commonOpening`: "Rede de
- * pipelines…", "Via API…"); "Rede delivered…" is a made-up name (Sentinela, PR #89). `anyCase` ignores the
+ * `capitalized` term is a name too, unless it is one of its closed constructions (`COMMON_OPENING_CONSTRUCTIONS`:
+ * "Rede de pipelines…", "Via API…"); "Rede delivered…" or "Meta em 2023…" is a made-up name (Sentinela, PR #89). `anyCase` ignores the
  * `capitalized` mode: a deny term the posting itself cites is a name of the posting in any spelling (Crivo).
  */
 function denyMatches(
@@ -300,49 +300,21 @@ const COMMON_WORD_DENY = new Set(
 );
 
 /**
- * Words that, right after a sentence-opening `capitalized` deny term, show it is the common noun or preposition
- * (PT/EN prepositions and articles): "Rede de pipelines", "Meta de latência", "Via a API", "Delta of the model".
- * Closed, tested list (Sentinela, PR #89).
+ * Closed, high-confidence constructions per term in which a sentence-opening `capitalized` deny term is the
+ * common word, not the company (Sentinela, PR #89): "Meta de latência", "Rede de pipelines", "Via a API",
+ * "Via Python". Any other combination fails closed ("Meta em 2023…", "Delta para clientes…", "Rede para
+ * varejo…"): a regeneration is acceptable, an invented employer is not. `Delta` has no entry: "Delta Lake" passes
+ * as a cited lexicon term, never as an opening exemption.
  */
-export const COMMON_OPENING_FOLLOWERS: ReadonlySet<string> = new Set([
-  "de",
-  "da",
-  "do",
-  "das",
-  "dos",
-  "para",
-  "por",
-  "pelo",
-  "pela",
-  "em",
-  "no",
-  "na",
-  "nos",
-  "nas",
-  "com",
-  "a",
-  "o",
-  "as",
-  "os",
-  "um",
-  "uma",
-  "ao",
-  "aos",
-  "of",
-  "for",
-  "to",
-  "the",
-  "an",
-  "in",
-  "on",
-  "between",
-]);
+export const COMMON_OPENING_CONSTRUCTIONS: Readonly<
+  Record<string, { followers: readonly string[]; lexiconTerm: boolean }>
+> = {
+  meta: { followers: ["de", "da", "do"], lexiconTerm: false },
+  rede: { followers: ["de", "da", "do"], lexiconTerm: false },
+  via: { followers: ["a", "o", "as", "os"], lexiconTerm: true },
+};
 
-/**
- * A sentence-opening `capitalized` deny term used as a common word: followed by a preposition/article
- * (`COMMON_OPENING_FOLLOWERS`), or `Via` followed by a lexicon term ("Via API…", "Via Python…"). Anything else at
- * the opening ("Rede delivered…", "Delta entregou…") is a name.
- */
+/** A sentence-opening `capitalized` deny term in one of its `COMMON_OPENING_CONSTRUCTIONS`. */
 function commonOpening(
   analysed: readonly Token[],
   index: number,
@@ -352,8 +324,12 @@ function commonOpening(
   const next = analysed[index + 1];
   if (token?.opening !== true || !COMMON_WORD_DENY.has(token.word) || next === undefined)
     return false;
-  if (COMMON_OPENING_FOLLOWERS.has(next.word)) return true;
-  return token.word === "via" && covered[index + 1] !== undefined;
+  const construction = COMMON_OPENING_CONSTRUCTIONS[token.word];
+  if (construction === undefined) return false;
+  return (
+    construction.followers.includes(next.word) ||
+    (construction.lexiconTerm && covered[index + 1] !== undefined)
+  );
 }
 
 /** Lexicon entries named anywhere in a text. */
