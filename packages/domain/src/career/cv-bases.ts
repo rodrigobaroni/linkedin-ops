@@ -5,6 +5,7 @@ import { newId } from "../ids.js";
 
 type Transaction = Parameters<Parameters<PrismaClient["$transaction"]>[0]>[0];
 type CvBaseRow = Awaited<ReturnType<PrismaClient["cvBase"]["findUniqueOrThrow"]>>;
+type StaleDraft = Pick<CvBaseRow, "id" | "userId" | "version">;
 
 const CV_EXTRACT_QUEUE = QUEUES["cv.extract"];
 
@@ -238,37 +239,61 @@ export class PrismaCvBases<C> {
     });
   }
 
+  /**
+   * Periodic sweep (Sentinela S-2), independent of reads: every draft still `EXTRACTING` past
+   * `CV_EXTRACTION_STALE_MS` becomes `FAILED`/`TIMED_OUT` and its PDF text is erased. Rows locked by a
+   * concurrent writer are skipped (next sweep). Returns how many drafts were settled.
+   */
+  async settleStaleExtractions(batchSize = 100): Promise<number> {
+    const cutoff = new Date(this.now().getTime() - CV_EXTRACTION_STALE_MS);
+    return this.prisma.$transaction(async (tx) => {
+      // The cutoff is bound from the application clock (never SQL `now()`).
+      const stale = await tx.$queryRaw<StaleDraft[]>`
+        SELECT "id", "user_id" AS "userId", "version" FROM "cv_bases"
+        WHERE "status" = 'EXTRACTING' AND "updated_at" < ${cutoff}
+        ORDER BY "updated_at" LIMIT ${batchSize}
+        FOR UPDATE SKIP LOCKED`;
+      let settled = 0;
+      for (const draft of stale) {
+        if (await this.settleOne(tx, draft, cutoff)) settled += 1;
+      }
+      return settled;
+    });
+  }
+
   private async settleStale(row: CvBaseRow): Promise<CvBaseRow> {
     const cutoff = new Date(this.now().getTime() - CV_EXTRACTION_STALE_MS);
     if (row.status !== "EXTRACTING" || row.updatedAt >= cutoff) return row;
-    const settled = await this.prisma.$transaction(async (tx) => {
-      const { count } = await tx.cvBase.updateMany({
-        where: { id: row.id, status: "EXTRACTING", updatedAt: { lt: cutoff } },
-        data: {
-          status: "FAILED",
-          failureReason: "TIMED_OUT",
-          extractedText: null,
-          updatedAt: this.now(),
-        },
-      });
-      if (count === 0) return false;
-      await tx.auditEvent.create({
-        data: {
-          id: newId(),
-          userId: row.userId,
-          actorType: "SYSTEM",
-          action: "cv_base.extraction_failed",
-          entityType: "cv_base",
-          entityId: row.id,
-          before: { status: "EXTRACTING" },
-          after: { status: "FAILED", version: row.version, failureReason: "TIMED_OUT" },
-          correlationId: `cv_base:${row.id}`,
-        },
-      });
-      return true;
+    await this.prisma.$transaction((tx) => this.settleOne(tx, row, cutoff));
+    return (await this.prisma.cvBase.findUnique({ where: { id: row.id } })) ?? row;
+  }
+
+  /** Conditional: a draft that left `EXTRACTING` or was touched after `cutoff` is left alone. */
+  private async settleOne(tx: Transaction, draft: StaleDraft, cutoff: Date): Promise<boolean> {
+    const { count } = await tx.cvBase.updateMany({
+      where: { id: draft.id, status: "EXTRACTING", updatedAt: { lt: cutoff } },
+      data: {
+        status: "FAILED",
+        failureReason: "TIMED_OUT",
+        extractedText: null,
+        updatedAt: this.now(),
+      },
     });
-    if (!settled) return (await this.prisma.cvBase.findUnique({ where: { id: row.id } })) ?? row;
-    return this.prisma.cvBase.findUniqueOrThrow({ where: { id: row.id } });
+    if (count === 0) return false;
+    await tx.auditEvent.create({
+      data: {
+        id: newId(),
+        userId: draft.userId,
+        actorType: "SYSTEM",
+        action: "cv_base.extraction_failed",
+        entityType: "cv_base",
+        entityId: draft.id,
+        before: { status: "EXTRACTING" },
+        after: { status: "FAILED", version: draft.version, failureReason: "TIMED_OUT" },
+        correlationId: `cv_base:${draft.id}`,
+      },
+    });
+    return true;
   }
 
   private toDraft(row: CvBaseRow): CvDraftRecord<C> {

@@ -42,6 +42,7 @@ import { AppModule } from "../src/app.module.js";
 import { configureApp, createFastifyAdapter } from "../src/app.factory.js";
 import { CAREER_RATE_LIMITS } from "../src/career/cv-base.service.js";
 import { CV_EXTRACT_QUEUE, type CvExtractQueue } from "../src/career/cv-extract.queue.js";
+import { CvExtractionSweeper } from "../src/career/cv-extraction.sweeper.js";
 import { REQUESTED_WITH_VALUE } from "../src/common/route-access.guard.js";
 import { createLogger } from "../src/logging/logger.js";
 import { fictitiousCvStructured } from "./fixtures/cv-structured.js";
@@ -307,6 +308,43 @@ describe("GET /career/cv", () => {
         actor: { type: "WORKER", jobId: "late" },
       }),
     ).toBe(false);
+  });
+});
+
+describe("CvExtractionSweeper (Sentinela S-2)", () => {
+  it("settles stale EXTRACTING drafts of every user and erases their text, without any read", async () => {
+    const [first, second, fresh] = [await newActor(), await newActor(), await newActor()];
+    const stale = new Date(Date.now() - CV_EXTRACTION_STALE_MS - 1000);
+    const staleIds: string[] = [];
+    for (const actor of [first, second]) {
+      const { body } = await upload(actor).expect(202);
+      staleIds.push(body.id as string);
+      await prisma.cvBase.update({ where: { id: body.id as string }, data: { updatedAt: stale } });
+    }
+    const pending = (await upload(fresh).expect(202)).body.id as string;
+
+    expect(await app.get(CvExtractionSweeper).sweep()).toBeGreaterThanOrEqual(2);
+
+    const rows = await prisma.cvBase.findMany({ where: { id: { in: [...staleIds, pending] } } });
+    for (const id of staleIds) {
+      expect(rows.find((row) => row.id === id)).toMatchObject({
+        status: "FAILED",
+        failureReason: "TIMED_OUT",
+        extractedText: null,
+      });
+    }
+    expect(rows.find((row) => row.id === pending)).toMatchObject({ status: "EXTRACTING" });
+    expect(
+      await prisma.auditEvent.count({
+        where: {
+          entityId: { in: staleIds },
+          action: "cv_base.extraction_failed",
+          actorType: "SYSTEM",
+        },
+      }),
+    ).toBe(2);
+    // Nothing left to settle on the next pass (the fresh draft is not stale).
+    expect(await app.get(CvExtractionSweeper).sweep()).toBe(0);
   });
 });
 

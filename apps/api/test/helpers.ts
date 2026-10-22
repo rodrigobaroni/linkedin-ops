@@ -9,6 +9,7 @@ import type { FastifyInstance } from "fastify";
 import supertest from "supertest";
 import { AppModule } from "../src/app.module.js";
 import { configureApp, createFastifyAdapter } from "../src/app.factory.js";
+import { CV_SWEEP_OPTIONS } from "../src/career/cv-extraction.sweeper.js";
 import { REQUESTED_WITH_VALUE } from "../src/common/route-access.guard.js";
 import { READINESS_PROBES, type ReadinessProbe } from "../src/health/readiness.probes.js";
 import { createLogger } from "../src/logging/logger.js";
@@ -98,7 +99,10 @@ export async function createTestApp(options: CreateTestAppOptions = {}): Promise
     .overrideProvider(SESSION_SERVICE)
     .useValue(sessions)
     .overrideProvider(USER_PROFILES)
-    .useValue(sessions);
+    .useValue(sessions)
+    // The CV extraction sweep needs the database this suite does not have.
+    .overrideProvider(CV_SWEEP_OPTIONS)
+    .useValue({ intervalMs: null });
   if (options.probes) builder = builder.overrideProvider(READINESS_PROBES).useValue(options.probes);
   for (const [token, value] of options.overrides ?? []) {
     builder = builder.overrideProvider(token).useValue(value);

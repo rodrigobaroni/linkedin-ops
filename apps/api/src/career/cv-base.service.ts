@@ -109,6 +109,10 @@ export class CvBaseService {
     }
 
     const meta = userMeta(session, correlationId);
+    // TODO(career PR 1): enqueue `cv.extract` in the same transaction as the draft (pg-boss accepts the
+    // transaction's connection) or through an outbox, so the PDF text is never committed without its job;
+    // the worker must call `failExtraction` on the job's terminal failure. Until then the text can outlive a
+    // lost job only until `CvExtractionSweeper` settles the draft (Sentinela S-2).
     const draft = await this.cvBases.startDraft(session.userId, text, meta);
     let jobId: string;
     try {
