@@ -88,6 +88,7 @@ export {
   CvDraftNotReadyError,
   CvInjectionUnacknowledgedError,
   CV_EXTRACTION_STALE_MS,
+  CV_EXTRACTION_SWEEP_BATCH,
   CV_INJECTION_EVIDENCE_MAX_CHARS,
   type CvAuditMeta,
   type CvBaseRecord,
