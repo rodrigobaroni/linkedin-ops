@@ -77,7 +77,11 @@ async function main(): Promise<void> {
     onStopped: () => prisma.$disconnect(),
   });
   logger.info(
-    { nodeEnv: env.nodeEnv, openai: env.openai !== null, retentionPurge: env.retentionPurge },
+    {
+      nodeEnv: env.nodeEnv,
+      llmProvider: env.anthropic !== null ? "anthropic" : env.openai !== null ? "openai" : null,
+      retentionPurge: env.retentionPurge,
+    },
     "worker started",
   );
 }

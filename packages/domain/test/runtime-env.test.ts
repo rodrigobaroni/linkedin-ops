@@ -465,9 +465,30 @@ describe("validateWorkerEnv (Career; ADR-0002, ADR-0008, Sentinela PR #89)", () 
       logLevel: "info",
       databaseUrl: DB_URL,
       openai: { apiKey: OPENAI_KEY, model: "gpt-5.1-mini" },
+      anthropic: null,
       jobFetchLinkedIn: "enabled",
       retentionPurge: "dry-run",
     });
+  });
+
+  it("ANTHROPIC_API_KEY alone satisfies production; the model defaults to Claude Opus 5.5 (ADR-0011)", () => {
+    const env = validateWorkerEnv({ ...WORKER_PRODUCTION, ANTHROPIC_API_KEY: OPENAI_KEY });
+    expect(env.anthropic).toEqual({ apiKey: OPENAI_KEY, model: "claude-opus-5-5" });
+    expect(env.openai).toBeNull();
+    expect(
+      validateWorkerEnv({
+        ...WORKER_PRODUCTION,
+        ANTHROPIC_API_KEY: OPENAI_KEY,
+        ANTHROPIC_MODEL: "claude-sonnet-5-5",
+      }).anthropic?.model,
+    ).toBe("claude-sonnet-5-5");
+  });
+
+  it("refuses ANTHROPIC_MODEL without a key and production without any provider", () => {
+    expect(() =>
+      validateWorkerEnv({ ...WORKER_PRODUCTION, ANTHROPIC_MODEL: "claude-opus-5-5" }),
+    ).toThrow(/ANTHROPIC_MODEL is set but ANTHROPIC_API_KEY is not/);
+    expect(() => validateWorkerEnv(WORKER_PRODUCTION)).toThrow(/OPENAI_API_KEY is required/);
   });
 
   it("RETENTION_PURGE defaults to dry-run and accepts only dry-run|enabled (T-063)", () => {
@@ -490,6 +511,7 @@ describe("validateWorkerEnv (Career; ADR-0002, ADR-0008, Sentinela PR #89)", () 
     });
     expect(JSON.stringify(env)).not.toMatch(/canary-linkedin-secret|SESSION|ENCRYPTION/);
     expect(Object.keys(env).sort()).toEqual([
+      "anthropic",
       "databaseUrl",
       "jobFetchLinkedIn",
       "logLevel",

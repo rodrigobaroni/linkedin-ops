@@ -14,6 +14,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "catalog:",
     "@linkedin-ops/contracts": "workspace:*",
     "@linkedin-ops/domain": "workspace:*",
     "@linkedin-ops/editorial-engine": "workspace:*",
@@ -24,10 +25,10 @@
   },
   "devDependencies": {
     "@linkedin-ops/config": "workspace:*",
+    "@testcontainers/postgresql": "catalog:",
     "@types/node": "catalog:",
     "eslint": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:",
-    "@testcontainers/postgresql": "catalog:"
+    "vitest": "catalog:"
   }
 }
