@@ -105,6 +105,9 @@ catalogs:
     swagger-ui-dist:
       specifier: ^5.34.0
       version: 5.34.0
+    tldts:
+      specifier: 7.4.18
+      version: 7.4.18
     tsx:
       specifier: ^4.21.0
       version: 4.23.15
@@ -461,6 +464,9 @@ importers:
       pg:
         specifier: 'catalog:'
         version: 8.23.1
+      tldts:
+        specifier: 'catalog:'
+        version: 7.4.18
       uuid:
         specifier: 'catalog:'
         version: 14.0.3

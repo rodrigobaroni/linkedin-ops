@@ -98,3 +98,48 @@ export interface JobPostingStore {
   ): Promise<void>;
   markFailed(jobPostingId: string, reason: CareerFailureReason): Promise<void>;
 }
+
+/**
+ * Stop signals of ADR-0008 §4; each one opens the domain's breaker. `login_redirect` = a redirect to `/login`,
+ * `/authwall`, `/checkpoint` or `/uas/`; `login_wall` = a page recognized as a login wall or CAPTCHA.
+ */
+export type FetchStopSignal =
+  "http_429" | "http_999" | "http_403" | "login_redirect" | "login_wall";
+
+/**
+ * Outcome of `FetchDomainGuard.acquire`. What `job.fetch` does with each one (Maestro, 2026-10-22):
+ * - `granted`: send the request now (it is already counted);
+ * - `wait`: reschedule the job with `startAfter = retryAt`, never sleep holding a slot and never fail + retry
+ *   (that would spend the network retry of ADR-0008 §4);
+ * - `quota_exhausted`, `breaker_open`, `disabled`: fail closed with `fetch_blocked`, with no automatic retry
+ *   and no hidden backlog. `retryAt`/`until` goes into the reason shown to Rodrigo ("tente de novo depois
+ *   de…"), next to the paste-text option; `disabled` offers paste-text only.
+ */
+export type FetchSlot =
+  | { outcome: "granted" }
+  /** The minimum interval since the domain's last request has not passed yet. */
+  | { outcome: "wait"; retryAt: Date }
+  /** The rolling 24 h quota is used up; `retryAt` = oldest request in the window + 24 h. */
+  | { outcome: "quota_exhausted"; retryAt: Date }
+  | { outcome: "breaker_open"; until: Date; signal: FetchStopSignal }
+  /** Kill switch `JOB_FETCH_LINKEDIN=disabled` and the domain is `linkedin.com`. */
+  | { outcome: "disabled" };
+
+/**
+ * Per-domain limiter, circuit breaker and LinkedIn kill switch of `job.fetch` (ADR-0008 §4). It only keeps
+ * and reads the state; the per-hop policy (which URL, which path, what a response means) belongs to the
+ * fetcher. `domain` is `jobFetchGroupId(url)` of the hop's DESTINATION, on the first request and on every
+ * redirect alike, so `lnkd.in` and third-party redirects stay under the rules of the site they land on. A bare
+ * host is accepted too and normalized the same way.
+ */
+export interface FetchDomainGuard {
+  /**
+   * One call per hop, right before sending it. Atomically checks, in order, the kill switch, the breaker, the
+   * rolling 24 h quota and the minimum interval; when all allow it, records the request and returns `granted`,
+   * otherwise changes nothing. The request counts when reserved, not when answered: one that then fails on
+   * the network still counts.
+   */
+  acquire(domain: string): Promise<FetchSlot>;
+  /** A stop signal: opens the breaker for 24 h from now; an already later end wins. Idempotent. */
+  tripBreaker(domain: string, signal: FetchStopSignal): Promise<{ openUntil: Date }>;
+}
