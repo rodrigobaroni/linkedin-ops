@@ -2,7 +2,12 @@ import { Badge, type BadgeProps, cn } from "@linkedin-ops/ui";
 import { CircleAlertIcon, CircleCheckIcon, LoaderCircleIcon, SearchIcon } from "lucide-react";
 import type { ComponentType } from "react";
 import { messages } from "@/i18n/pt-br";
-import { type JobPostingStatus, type JobPostingSummary, jobDomain } from "@/lib/api";
+import {
+  type JobPostingBlockedDetail,
+  type JobPostingStatus,
+  type JobPostingSummary,
+  jobDomain,
+} from "@/lib/api";
 
 const copy = messages.career.jobs;
 
@@ -30,24 +35,47 @@ export function JobStatusBadge({ status }: { status: JobPostingStatus }) {
   );
 }
 
-/** What names a posting on screen: its title, else the link's domain (never the link as a link). */
+/**
+ * What names a posting on screen: its title, else the link's domain (never the link as a link), else
+ * "Vaga sem título" (a blank title or a link without a host still gets an accessible name).
+ */
 export function jobName(posting: Pick<JobPostingSummary, "title" | "url">): string {
-  return posting.title ?? jobDomain(posting.url);
+  return posting.title?.trim() || jobDomain(posting.url).trim() || copy.detail.untitled;
 }
 
+/** `retryAt` as date and time in São Paulo, the owner's reference (blocked fetches, issue #112). */
+export function formatRetryAt(iso: string): string {
+  return new Intl.DateTimeFormat("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "short",
+    timeZone: BLOCKED_RETRY_TIME_ZONE,
+  }).format(new Date(iso));
+}
+
+export const BLOCKED_RETRY_TIME_ZONE = "America/Sao_Paulo";
+
 /**
- * Safe reason of a `FAILED` posting. `FETCH_BLOCKED` covers LinkedIn switched off, its daily quota and an open
- * breaker alike (the contract does not tell them apart), so the text depends only on the source.
+ * Safe reason of a `FAILED` posting. For `FETCH_BLOCKED`, the detail's `blockedDetail` (issue #112) says what
+ * blocked it and when to try again; without it (the list, a LinkedIn link created blocked in the batch, or a
+ * posting from before #112) one sentence per source covers every case.
  */
 export function failureReasonText(
-  posting: Pick<JobPostingSummary, "failureReason" | "source">,
+  posting: Pick<JobPostingSummary, "failureReason" | "source"> & {
+    blockedDetail?: JobPostingBlockedDetail | null;
+  },
 ): string {
   const reasons = copy.failure.reasons;
   switch (posting.failureReason) {
-    case "FETCH_BLOCKED":
+    case "FETCH_BLOCKED": {
+      const detail = posting.blockedDetail;
+      if (detail) {
+        const at = detail.retryAt ? formatRetryAt(detail.retryAt) : null;
+        return copy.failure.blocked[detail.kind](at);
+      }
       return posting.source === "LINKEDIN"
         ? reasons.FETCH_BLOCKED_LINKEDIN
         : reasons.FETCH_BLOCKED_OTHER;
+    }
     case "NOT_A_JOB":
     case "AI":
     case "TIMED_OUT":

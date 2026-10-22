@@ -24,7 +24,12 @@ import { JobReport } from "./job-report";
 import { PdfDownload } from "./pdf-download";
 import { JobStatusBadge, failureReasonText, jobName } from "./job-status";
 import { useCareerCv } from "./use-career-cv";
-import { useCareerJob, useCareerJobsApi, useInvalidateJobs } from "./use-career-jobs";
+import {
+  isPostingMissing,
+  useCareerJob,
+  useCareerJobsApi,
+  useInvalidateJobs,
+} from "./use-career-jobs";
 
 const jobsCopy = messages.career.jobs;
 const copy = jobsCopy.detail;
@@ -80,7 +85,7 @@ export function CareerJobDetailScreen({ id, pollInitialMs }: CareerJobDetailScre
   let main: ReactNode;
   if (job.isPending) {
     main = <LoadingState label={copy.loading} blocks={3} />;
-  } else if (isApiProblem(job.error, "NOT_FOUND") && !posting) {
+  } else if (isPostingMissing(job.error) && !posting) {
     title = copy.notFound;
     main = (
       <EmptyState
@@ -102,7 +107,7 @@ export function CareerJobDetailScreen({ id, pollInitialMs }: CareerJobDetailScre
       />
     );
   } else {
-    title = posting.title ?? jobDomain(posting.url);
+    title = jobName(posting);
     const active = cv.data?.active ?? null;
     const baseCv =
       posting.tailoring && active?.id === posting.tailoring.cvBaseId ? active.content : null;
@@ -118,6 +123,7 @@ export function CareerJobDetailScreen({ id, pollInitialMs }: CareerJobDetailScre
               posting={posting}
               layout="detail"
               onNotice={showNotice}
+              retryable={posting.blockedDetail?.kind !== "DISABLED"}
               onRemoved={() => router.push("/carreira/vagas")}
             />
           </div>

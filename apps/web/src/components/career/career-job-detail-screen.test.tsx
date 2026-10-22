@@ -271,6 +271,61 @@ describe("CareerJobDetailScreen", () => {
     });
   });
 
+  describe("blocked fetch (blockedDetail, issue #112)", () => {
+    function blocked(
+      detail: { kind: "DISABLED" | "QUOTA" | "BREAKER"; retryAt: string | null } | null,
+    ) {
+      const job = mockJob("https://www.linkedin.com/jobs/view/7", "FAILED", {
+        kind: "failed",
+        reason: "FETCH_BLOCKED",
+        at: "FETCHING",
+        ...(detail ? { blocked: detail } : {}),
+      });
+      return job.id;
+    }
+
+    it("DISABLED: its sentence, paste text only (no 'Reprocessar')", async () => {
+      await renderDetail(blocked({ kind: "DISABLED", retryAt: null }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        jobsCopy.failure.blocked.DISABLED(null),
+      );
+      expect(screen.getByRole("button", { name: jobsCopy.actions.pasteText })).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: jobsCopy.actions.retry }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("QUOTA and BREAKER: their sentence with the time in São Paulo", async () => {
+      // 15:30 UTC is 12:30 in São Paulo (UTC−3, no DST since 2019).
+      await renderDetail(blocked({ kind: "QUOTA", retryAt: "2026-10-22T15:30:00.000Z" }));
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent(jobsCopy.failure.blocked.QUOTA("22/10/2026, 12:30"));
+      expect(screen.getByRole("button", { name: jobsCopy.actions.retry })).toBeInTheDocument();
+    });
+
+    it("BREAKER: its sentence with the time in São Paulo", async () => {
+      await renderDetail(blocked({ kind: "BREAKER", retryAt: "2026-10-23T02:05:00.000Z" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        jobsCopy.failure.blocked.BREAKER("22/10/2026, 23:05"),
+      );
+    });
+
+    it("null (a LinkedIn link created blocked in the batch): the per-source fallback", async () => {
+      await renderDetail(blocked(null));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        jobsCopy.failure.reasons.FETCH_BLOCKED_LINKEDIN,
+      );
+      expect(screen.getByRole("button", { name: jobsCopy.actions.retry })).toBeInTheDocument();
+    });
+  });
+
+  it("an id that is not a UUID (400 VALIDATION_FAILED): 'Vaga não encontrada'", async () => {
+    await renderDetail("nao-e-uuid");
+    expect(
+      await screen.findByRole("heading", { level: 1, name: copy.notFound }),
+    ).toBeInTheDocument();
+  });
+
   it("unknown posting: 'Vaga não encontrada'", async () => {
     await renderDetail(crypto.randomUUID());
     expect(

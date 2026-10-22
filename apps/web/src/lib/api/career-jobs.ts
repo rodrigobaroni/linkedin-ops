@@ -12,6 +12,8 @@ import type { ApiClient, BinaryBody } from "./http";
 
 export type {
   JobPostingAccepted,
+  JobPostingBlockedDetail,
+  JobPostingBlockedKind,
   JobPostingDetail,
   JobPostingFailure,
   JobPostingSourceKind,

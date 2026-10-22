@@ -42,6 +42,11 @@ export type JobActionsProps = {
   /** `list`: primary action + "Mais ações" menu; `detail`: every action as a button (no report link). */
   layout: "list" | "detail";
   onNotice: (notice: JobNotice) => void;
+  /**
+   * Offer "Reprocessar" once settled (default). The detail turns it off when the fetch is switched off
+   * (`blockedDetail.kind === "DISABLED"`): retrying cannot work, only pasting the text does.
+   */
+  retryable?: boolean;
   /** After a successful delete (the detail navigates back to the list). */
   onRemoved?: () => void;
 };
@@ -53,7 +58,13 @@ export type JobActionsProps = {
  * as a notice. Focus returns to the control that opened a dialog, menu included (WebKit does not focus a
  * clicked button, so it is set explicitly).
  */
-export function JobActions({ posting, layout, onNotice, onRemoved }: JobActionsProps) {
+export function JobActions({
+  posting,
+  layout,
+  onNotice,
+  retryable = true,
+  onRemoved,
+}: JobActionsProps) {
   const api = useCareerJobsApi();
   const invalidate = useInvalidateJobs();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -170,7 +181,7 @@ export function JobActions({ posting, layout, onNotice, onRemoved }: JobActionsP
             {copy.actions.pasteText}
           </Button>
         ) : null}
-        {!processing ? (
+        {!processing && retryable ? (
           <Button
             ref={retryButtonRef}
             variant="outline"
@@ -232,7 +243,7 @@ export function JobActions({ posting, layout, onNotice, onRemoved }: JobActionsP
           </Button>
         </PopoverTrigger>
         <PopoverContent align="end" className="flex w-56 flex-col gap-1 p-1">
-          {!processing ? (
+          {!processing && retryable ? (
             <Button
               variant="ghost"
               className="justify-start max-md:h-11"
@@ -272,7 +283,9 @@ const PasteFormSchema = z.object({
     .string()
     .trim()
     .min(JOB_POSTING_LIMITS.minTextChars, copy.paste.tooShort)
-    .max(JOB_POSTING_LIMITS.maxTextChars, copy.paste.tooLong),
+    .max(JOB_POSTING_LIMITS.maxTextChars, copy.paste.tooLong)
+    // The contract refuses NUL characters (`JobPostingTextInputSchema`); say so before sending.
+    .refine((value) => !value.includes("\u0000"), copy.paste.invalidChars),
 });
 type PasteFormValues = z.input<typeof PasteFormSchema>;
 

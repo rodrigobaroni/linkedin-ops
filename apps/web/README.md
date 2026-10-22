@@ -63,7 +63,9 @@ In `dev:mock` the PDF's file name picks a failure: `ilegivel` (`422 CV_PDF_UNREA
 `routesV1["career.batches.*" | "career.jobs.*"]`: a batch answers `202`, each distinct link goes `FETCHING` →
 `ANALYZING` → `READY` (a fixed, fictitious match report and tailored CV) about 4 s per step, and the screens
 poll meanwhile. Repeated links are merged; a LinkedIn link that is not `/jobs/view/<id>` is created
-`FAILED`/`FETCH_BLOCKED`. A word in the link picks the outcome: `bloqueado` (`FETCH_BLOCKED`), `site-fora`
+`FAILED`/`FETCH_BLOCKED` with no `blockedDetail`. Like the API, mutations need `X-Requested-With` and a non-UUID
+`{id}` answers `400 VALIDATION_FAILED`. A word in the link picks the outcome: `bloqueado` (`FETCH_BLOCKED` with `blockedDetail` `BREAKER`; `bloqueado-cota` →
+`QUOTA`, `bloqueado-desligado` → `DISABLED`), `site-fora`
 (`FETCH`), `nao-vaga` (`NOT_A_JOB`), `ia-fora` (`AI`), `parado` (`TIMED_OUT`), `cv-antigo` (ready, generated
 with the previous CV), `injecao` (ready, posting flagged as prompt injection), `cv-mudou` ("Baixar PDF" refused
 with `409 TAILORED_CV_STALE`) or `longo` (the whole batch refused with `422 JOB_POSTING_URL_REJECTED`). A ready

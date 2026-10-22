@@ -249,6 +249,20 @@ describe("CareerJobsScreen", () => {
       expect(stored?.detail.status).toBe("FETCHING");
     });
 
+    it("paste text: a NUL character is refused before sending, with its own message", async () => {
+      const failed = mockJob("https://empresa.com/vaga", "FAILED");
+      const user = await renderJobs();
+      const row = await screen.findByRole("article", { name: "empresa.com" });
+      await user.click(within(row).getByRole("button", { name: /Colar texto da vaga/ }));
+      const dialog = await screen.findByRole("dialog", { name: copy.paste.title });
+      await user.click(within(dialog).getByRole("textbox", { name: copy.paste.label }));
+      await user.paste(`${" Requisitos: TypeScript.".repeat(12)}\u0000`);
+      await user.click(within(dialog).getByRole("button", { name: copy.paste.submit }));
+      expect(await within(dialog).findByText(copy.paste.invalidChars)).toBeInTheDocument();
+      const stored = mockJobsState().jobs.find((job) => job.detail.id === failed.id);
+      expect(stored?.detail.status).toBe("FAILED");
+    });
+
     it("paste text: Escape closes the dialog and focus returns to the trigger", async () => {
       mockJob("https://empresa.com/vaga", "FAILED");
       const user = await renderJobs();

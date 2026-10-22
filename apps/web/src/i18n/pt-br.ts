@@ -315,6 +315,19 @@ export const messages = {
       source: { LINKEDIN: "LinkedIn", OTHER: "Site da empresa", PASTED: "Texto colado" },
       failure: {
         title: "Não foi possível processar esta vaga.",
+        /** `blockedDetail.kind` (issue #112); `at` is São Paulo time, `null` when unknown. Aurora reviews. */
+        blocked: {
+          DISABLED: (_at: string | null) =>
+            "A busca automática no LinkedIn está desligada. Cole o texto da vaga para continuar.",
+          QUOTA: (at: string | null) =>
+            at
+              ? `O limite diário de buscas automáticas neste site foi atingido. Você pode reprocessar a partir de ${at} (horário de Brasília) ou colar o texto da vaga agora.`
+              : "O limite diário de buscas automáticas neste site foi atingido. Reprocesse mais tarde ou cole o texto da vaga agora.",
+          BREAKER: (at: string | null) =>
+            at
+              ? `O site bloqueou temporariamente a busca automática. Você pode reprocessar a partir de ${at} (horário de Brasília) ou colar o texto da vaga agora.`
+              : "O site bloqueou temporariamente a busca automática. Reprocesse mais tarde ou cole o texto da vaga agora.",
+        },
         /** Safe reason by `failureReason` (FETCH_BLOCKED by source); Maestro's copy, Aurora reviews. */
         reasons: {
           FETCH: "A página da vaga não abriu. Tente reprocessar ou cole o texto da vaga.",
@@ -355,6 +368,8 @@ export const messages = {
         counter: (n: number) => `${n.toLocaleString("pt-BR")} de 20.000 caracteres`,
         tooShort: "Cole pelo menos 200 caracteres da vaga.",
         tooLong: "O texto pode ter até 20.000 caracteres.",
+        invalidChars:
+          "O texto tem caracteres inválidos. Copie a descrição de novo a partir da página da vaga.",
         cancel: "Cancelar",
         submit: "Salvar e reprocessar",
         submitting: "Salvando…",

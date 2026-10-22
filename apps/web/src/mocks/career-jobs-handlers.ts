@@ -1,6 +1,7 @@
 import {
   API_V1_BASE_PATH,
   type JobPostingAccepted,
+  type JobPostingBlockedDetail,
   type JobPostingDetail,
   type JobPostingFailure,
   type JobPostingSummary,
@@ -10,8 +11,10 @@ import {
   type Page,
   type ProblemDetails,
   PROBLEM_CONTENT_TYPE,
+  REQUESTED_WITH_HEADER,
   type TailoringBatchAccepted,
   TailoringBatchInputSchema,
+  UuidSchema,
   problemTypeFor,
 } from "@linkedin-ops/contracts";
 import { HttpResponse, delay, http } from "msw";
@@ -27,7 +30,8 @@ import { mockCareerState } from "./career-handlers";
  * by normalized URL, a LinkedIn link that is not a job view created `FAILED`/`FETCH_BLOCKED` without a job,
  * reprocessing a posting still processing → `409`, reprocessing that blocked link → `422` (paste the text).
  *
- * In `pnpm dev:mock` a word in the link decides the outcome: `bloqueado` → `FETCH_BLOCKED`, `site-fora` →
+ * In `pnpm dev:mock` a word in the link decides the outcome: `bloqueado` → `FETCH_BLOCKED` (with `blockedDetail`
+ * `BREAKER`; `bloqueado-cota` → `QUOTA`, `bloqueado-desligado` → `DISABLED`), `site-fora` →
  * `FETCH`, `nao-vaga` → `NOT_A_JOB`, `ia-fora` → `AI`, `parado` → `TIMED_OUT`, `cv-antigo` → ready but generated
  * with the previous CV, `injecao` → ready with a posting flagged as possible prompt injection, `longo` → the
  * whole batch refused with `422 JOB_POSTING_URL_REJECTED` (position only), `cv-mudou` → the PDF refused with
@@ -35,7 +39,13 @@ import { mockCareerState } from "./career-handlers";
  */
 type Outcome =
   | { kind: "ready"; previousCv?: boolean; injection?: boolean }
-  | { kind: "failed"; reason: JobPostingFailure; at: "FETCHING" | "ANALYZING" };
+  | {
+      kind: "failed";
+      reason: JobPostingFailure;
+      at: "FETCHING" | "ANALYZING";
+      /** Why the worker blocked it (issue #112); only with `FETCH_BLOCKED`. */
+      blocked?: JobPostingBlockedDetail;
+    };
 
 type MockJob = {
   detail: JobPostingDetail;
@@ -268,7 +278,13 @@ function step(job: MockJob, force = false): void {
   const now = new Date().toISOString();
   job.stepEndsAt = Date.now() + state.stepMs;
   if (outcome.kind === "failed" && outcome.at === detail.status) {
-    job.detail = { ...detail, status: "FAILED", failureReason: outcome.reason, updatedAt: now };
+    job.detail = {
+      ...detail,
+      status: "FAILED",
+      failureReason: outcome.reason,
+      blockedDetail: outcome.reason === "FETCH_BLOCKED" ? (outcome.blocked ?? null) : null,
+      updatedAt: now,
+    };
     return;
   }
   if (detail.status === "FETCHING") {
@@ -322,8 +338,17 @@ function settleAll(): void {
 
 function outcomeFor(url: string): Outcome {
   const text = url.toLowerCase();
-  if (text.includes("bloqueado"))
-    return { kind: "failed", reason: "FETCH_BLOCKED", at: "FETCHING" };
+  if (text.includes("bloqueado")) {
+    const kind: JobPostingBlockedDetail["kind"] = text.includes("desligado")
+      ? "DISABLED"
+      : text.includes("cota")
+        ? "QUOTA"
+        : "BREAKER";
+    const hours = kind === "QUOTA" ? 6 : 24;
+    const retryAt =
+      kind === "DISABLED" ? null : new Date(Date.now() + hours * 3_600_000).toISOString();
+    return { kind: "failed", reason: "FETCH_BLOCKED", at: "FETCHING", blocked: { kind, retryAt } };
+  }
   if (text.includes("site-fora")) return { kind: "failed", reason: "FETCH", at: "FETCHING" };
   if (text.includes("nao-vaga")) return { kind: "failed", reason: "NOT_A_JOB", at: "FETCHING" };
   if (text.includes("ia-fora")) return { kind: "failed", reason: "AI", at: "ANALYZING" };
@@ -387,6 +412,8 @@ function newDetail(batchId: string, url: string, blocked: boolean): JobPostingDe
     injectionEvidence: null,
     fetchedAt: null,
     tailoring: null,
+    // Created blocked in the batch (a LinkedIn link that is not a job view): no worker, no detail.
+    blockedDetail: null,
   };
 }
 
@@ -410,6 +437,25 @@ export function mockJob(
 
 function url(path: string): string {
   return `${API_V1_BASE_PATH}${path}`;
+}
+
+/**
+ * Like the API: a session on every route, the N4 header on every mutation (as `career-handlers.ts` does) and
+ * `400 VALIDATION_FAILED` for an `{id}` that is not a UUID (the route's `IdParamsSchema`).
+ */
+function guard(request: Request, cookies: Record<string, string>, id?: string) {
+  const rejection = requireSession(cookies);
+  if (rejection) return rejection;
+  if (
+    request.method !== "GET" &&
+    request.headers.get(REQUESTED_WITH_HEADER.name) !== REQUESTED_WITH_HEADER.value
+  ) {
+    return problemResponse("CSRF_REJECTED");
+  }
+  if (id !== undefined && !UuidSchema.safeParse(id).success) {
+    return validationProblem([{ path: ["id"], message: "Invalid UUID" }]);
+  }
+  return null;
 }
 
 function find(id: string): MockJob | undefined {
@@ -448,6 +494,7 @@ function restart(job: MockJob, outcome: Outcome, patch: Partial<JobPostingDetail
     ...patch,
     status: "FETCHING",
     failureReason: null,
+    blockedDetail: null,
     baseScore: null,
     tailoring: null,
     updatedAt: new Date().toISOString(),
@@ -456,7 +503,7 @@ function restart(job: MockJob, outcome: Outcome, patch: Partial<JobPostingDetail
 
 export const careerJobsHandlers = [
   http.post(url("/career/batches"), async ({ request, cookies }) => {
-    const rejection = requireSession(cookies);
+    const rejection = guard(request, cookies);
     if (rejection) return rejection;
     const body: unknown = await request.json().catch(() => null);
     const parsed = TailoringBatchInputSchema.safeParse(body);
@@ -520,7 +567,7 @@ export const careerJobsHandlers = [
   }),
 
   http.get(url("/career/jobs"), ({ request, cookies }) => {
-    const rejection = requireSession(cookies);
+    const rejection = guard(request, cookies);
     if (rejection) return rejection;
     state.reads += 1;
     settleAll();
@@ -536,8 +583,8 @@ export const careerJobsHandlers = [
     return HttpResponse.json(page);
   }),
 
-  http.get(url("/career/jobs/:id"), ({ params, cookies }) => {
-    const rejection = requireSession(cookies);
+  http.get(url("/career/jobs/:id"), ({ request, params, cookies }) => {
+    const rejection = guard(request, cookies, String(params["id"]));
     if (rejection) return rejection;
     state.reads += 1;
     settleAll();
@@ -547,7 +594,7 @@ export const careerJobsHandlers = [
   }),
 
   http.post(url("/career/jobs/:id/text"), async ({ request, params, cookies }) => {
-    const rejection = requireSession(cookies);
+    const rejection = guard(request, cookies, String(params["id"]));
     if (rejection) return rejection;
     const parsed = JobPostingTextInputSchema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) {
@@ -560,8 +607,8 @@ export const careerJobsHandlers = [
     return HttpResponse.json(accepted(job), { status: 202 });
   }),
 
-  http.post(url("/career/jobs/:id/retry"), ({ params, cookies }) => {
-    const rejection = requireSession(cookies);
+  http.post(url("/career/jobs/:id/retry"), ({ request, params, cookies }) => {
+    const rejection = guard(request, cookies, String(params["id"]));
     if (rejection) return rejection;
     const job = find(String(params["id"]));
     if (!job) return problemResponse("NOT_FOUND", { detail: "Vaga não encontrada" });
@@ -577,8 +624,8 @@ export const careerJobsHandlers = [
     return HttpResponse.json(accepted(job), { status: 202 });
   }),
 
-  http.get(url("/career/jobs/:id/pdf"), async ({ params, cookies }) => {
-    const rejection = requireSession(cookies);
+  http.get(url("/career/jobs/:id/pdf"), async ({ request, params, cookies }) => {
+    const rejection = guard(request, cookies, String(params["id"]));
     if (rejection) return rejection;
     const job = find(String(params["id"]));
     if (!job) return problemResponse("NOT_FOUND", { detail: "Vaga não encontrada" });
@@ -609,8 +656,8 @@ export const careerJobsHandlers = [
     });
   }),
 
-  http.delete(url("/career/jobs/:id"), ({ params, cookies }) => {
-    const rejection = requireSession(cookies);
+  http.delete(url("/career/jobs/:id"), ({ request, params, cookies }) => {
+    const rejection = guard(request, cookies, String(params["id"]));
     if (rejection) return rejection;
     const index = state.jobs.findIndex((job) => job.detail.id === String(params["id"]));
     if (index < 0) return problemResponse("NOT_FOUND", { detail: "Vaga não encontrada" });

@@ -64,6 +64,8 @@ export {
   saveFile,
   type CareerJobsApi,
   type JobPostingAccepted,
+  type JobPostingBlockedDetail,
+  type JobPostingBlockedKind,
   type JobPostingDetail,
   type JobPostingFailure,
   type JobPostingSourceKind,
