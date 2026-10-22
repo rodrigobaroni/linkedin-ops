@@ -300,6 +300,16 @@ describe("cv.tailor", () => {
     expect(tailored.report.baseScore).toBe(70);
     expect(tailored.report.added).toHaveLength(1);
     expect(tailored.report.humanizer).toMatchObject({ passed: true, regenerations: 0 });
+    // The D4 guard's lexicon is part of what produced the result (ADR-0005 §3).
+    expect(saved.tailored).toMatchObject({
+      generation: {
+        promptVersions: {
+          "cv-tailor": "1.0.0",
+          "cv-humanize": "1.0.0",
+          "cv-competency-lexicon": "1.0.1",
+        },
+      },
+    });
   });
 
   it("regenerates the humanizer at most twice, then delivers and flags", async () => {

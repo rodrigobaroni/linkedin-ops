@@ -22,7 +22,7 @@ import {
 import type { z } from "zod";
 import { err, ok, type EngineError, type Result } from "../result.js";
 import { sanitizeUntrustedText } from "../untrusted.js";
-import { createEntityGuard, withoutLexiconTerms } from "./entities.js";
+import { besideLexiconTerm, createEntityGuard, withoutLexiconTerms } from "./entities.js";
 import { cvFullText, cvItemTexts, normalizeCvIds } from "./ids.js";
 import type { TargetLanguage } from "./language.js";
 import { lintText } from "./lint/checker.js";
@@ -147,7 +147,24 @@ export function parseJobExtractResponse(
  * segment names an entity absent from the base CV (`entities.ts`).
  */
 const CREDENTIAL_PATTERN =
-  /(?<![\p{L}\p{N}])(?:certifica\p{L}*|certified|certificate\p{L}*|diploma\p{L}*|bacharel\p{L}*|bachelor\p{L}*|mestrado|mestre|master'?s|mba|ph\.?d|doutorado|doutor|licen[cç]a\p{L}*|licen[cs]e[ds]?|p[oó]s-gradua\p{L}*|foundation|practitioner|agilist|belt)(?![\p{L}\p{N}])/iu;
+  /(?<![\p{L}\p{N}])(?:certifica\p{L}*|certified|certificate\p{L}*|diploma\p{L}*|bacharel\p{L}*|bachelor\p{L}*|mestrado|mestre|master'?s|mba|ph\.?d|doutorado|doutor|licen[cç]a\p{L}*|licen[cs]e[ds]?|p[oó]s-gradua\p{L}*|foundation|practitioner|agilist|belt|associate|specialty|fundamentals|professional\s+(?:scrum|data\s+engineer|cloud\s+architect|machine\s+learning\s+engineer))(?![\p{L}\p{N}])/iu;
+
+/** Certification exam codes (`AZ-900`, `DP-203`, `SAA-C03`; Pena review §6.4). Case-sensitive: codes are caps. */
+const EXAM_CODE_PATTERN =
+  /(?<![\p{L}\p{N}])(?:AZ|DP|AI|PL|SC|MS|MB|SAA|SAP|DVA|SOA|CLF|DEA|MLS|DOP|ANS)-[A-Z]?\d{2,3}(?![\p{L}\p{N}])/u;
+
+/**
+ * An added credential (D4 hard limit 1): a credential word, an exam code, or a certification level beside a
+ * lexicon term (`Kubernetes Expert`, `Professional Python`) — `expert` and `professional` alone are common words.
+ */
+function namesCredential(text: string): boolean {
+  return (
+    CREDENTIAL_PATTERN.test(text) ||
+    EXAM_CODE_PATTERN.test(text) ||
+    besideLexiconTerm(text, "expert", false) ||
+    besideLexiconTerm(text, "professional", true)
+  );
+}
 
 export interface ParsedCvTailoring extends InjectionReport {
   /** Tailored CV in display order, provenance enforced. */
@@ -277,7 +294,7 @@ export function parseCvTailorResponse(
       ) {
         issues.push(`${segment.segmentId}: hard limit, added number`);
       }
-      if (CREDENTIAL_PATTERN.test(segment.text)) {
+      if (namesCredential(segment.text)) {
         issues.push(`${segment.segmentId}: hard limit, added credential`);
       }
       continue;

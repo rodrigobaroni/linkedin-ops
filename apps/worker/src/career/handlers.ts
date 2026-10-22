@@ -5,6 +5,7 @@
  */
 import {
   CAREER_PROMPTS,
+  CV_COMPETENCY_LEXICON,
   CV_LINT_RULES_VERSION,
   ENGINE_VERSION,
   JOB_ECHO_REPEATED_RULE,
@@ -85,10 +86,19 @@ export function isLinkedInUrl(url: string): boolean {
 
 export function createCareerHandlers(deps: CareerHandlerDeps): CareerHandlers {
   const options = { model: deps.model, rng: deps.rng };
-  const generation = (model: string, prompts: (keyof typeof CAREER_PROMPTS)[]) => ({
+  // `versioned` = other versioned assets the step's result depends on, such as the lexicon of the D4 entity
+  // guard (ADR-0005 §3: reproducibility).
+  const generation = (
+    model: string,
+    prompts: (keyof typeof CAREER_PROMPTS)[],
+    versioned: readonly { id: string; version: string }[] = [],
+  ) => ({
     model,
     engineVersion: ENGINE_VERSION,
-    promptVersions: Object.fromEntries(prompts.map((id) => [id, CAREER_PROMPTS[id].version])),
+    promptVersions: Object.fromEntries([
+      ...prompts.map((id) => [id, CAREER_PROMPTS[id].version]),
+      ...versioned.map((asset) => [asset.id, asset.version]),
+    ]),
   });
 
   const cvExtract: JobHandler<"cv.extract"> = async ({ cvBaseId }, context) => {
@@ -307,7 +317,11 @@ export function createCareerHandlers(deps: CareerHandlerDeps): CareerHandlers {
         cvBaseId: input.cvBaseId,
         content: cv,
         report,
-        generation: generation(tailored.model, ["cv-tailor", "cv-humanize"]),
+        generation: generation(
+          tailored.model,
+          ["cv-tailor", "cv-humanize"],
+          [CV_COMPETENCY_LEXICON],
+        ),
       });
     } catch (error) {
       await failIfFinal(error, context, markFailed, "ai");

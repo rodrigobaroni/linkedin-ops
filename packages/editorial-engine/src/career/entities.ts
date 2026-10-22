@@ -16,7 +16,7 @@
  */
 import type { CvStructured, JobPostingExtracted } from "@linkedin-ops/contracts";
 import { cvItemTexts } from "./ids.js";
-import { CV_COMPETENCY_LEXICON } from "./lint/cv-competency-lexicon.v1.0.0.js";
+import { CV_COMPETENCY_LEXICON } from "./lint/cv-competency-lexicon.v1.0.1.js";
 
 const MONTHS = foldAll([
   "janeiro",
@@ -250,9 +250,13 @@ function coveringSpan(
   );
 }
 
-/** Deny terms as folded token sequences, longest first (`cv-competency-lexicon` `denyTerms`). */
+/**
+ * Deny terms as folded token sequences, longest first (`cv-competency-lexicon` `denyTerms`). `lexicon-only`
+ * groups never match at runtime: they only keep short forms out of the lexicon (Pena review §6.6 R4).
+ */
 const DENY_FORMS: ReadonlyArray<{ words: readonly string[]; capitalizedOnly: boolean }> =
   CV_COMPETENCY_LEXICON.denyTerms
+    .filter((group) => group.match !== "lexicon-only")
     .flatMap((group) =>
       group.terms.map((term) => ({
         words: tokens(term).map(fold),
@@ -347,6 +351,23 @@ export function withoutLexiconTerms(text: string): string {
   const words = tokens(text);
   const covered = lexiconCoverage(words.map(fold));
   return words.filter((_word, index) => covered[index] === undefined).join(" ");
+}
+
+/**
+ * Whether `word` stands right after (`before: false`) or right before (`before: true`) a lexicon term: the
+ * certification level in `Kubernetes Expert` or `Professional Scrum` (Pena review §6.4), never the common word
+ * in "expert em…" or "professional services".
+ */
+export function besideLexiconTerm(text: string, word: string, before: boolean): boolean {
+  const words = tokens(text).map(fold);
+  const covered = lexiconCoverage(words);
+  const target = fold(word);
+  return words.some(
+    (current, index) =>
+      current === target &&
+      covered[index] === undefined &&
+      covered[before ? index + 1 : index - 1] !== undefined,
+  );
 }
 
 function containsPhrase(words: readonly string[], phrase: readonly string[]): boolean {
