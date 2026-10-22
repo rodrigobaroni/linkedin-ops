@@ -66,6 +66,10 @@ catalog:
   # breaking; 0.20.2 of 2026-08-30 (two-week soak rule). Types from DefinitelyTyped (0.17.6 of 2026-04-16).
   pdfkit: 0.20.2
   "@types/pdfkit": 0.17.6
+  # Glyph coverage of the embedded fonts (characters outside them are dropped before rendering); the exact
+  # version pdfkit 0.20.2 already installs (2.0.4 of 2024-08-09). Types 2.0.9 of 2026-03-17.
+  fontkit: 2.0.4
+  "@types/fontkit": 2.0.9
 
 # pnpm 10 blocks install scripts by default. Only these packages may run them (T-005): the Prisma CLI and
 # its schema engine download, argon2's native binding, and esbuild (used by tsx and Vitest).

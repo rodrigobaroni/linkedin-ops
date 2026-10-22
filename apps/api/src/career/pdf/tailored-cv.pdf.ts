@@ -6,6 +6,7 @@ import type {
   CvStructured,
   TailoredCvContent,
 } from "@linkedin-ops/contracts";
+import { create as openFont, type Font } from "fontkit";
 import PDFDocument from "pdfkit";
 
 /**
@@ -16,6 +17,7 @@ import PDFDocument from "pdfkit";
  * - Neutral metadata: empty Info dictionary (no Producer, Creator or dates), no XMP packet, and a document
  *   `/ID` derived from the input instead of the clock.
  * - Embedded subset of Source Sans 3 (OFL, `apps/api/assets/fonts`): selectable text with PT accents.
+ *   Characters the fonts cannot draw (CJK, emoji, controls) are dropped instead of printed as empty boxes.
  * - Tagged PDF (structure tree + `/Lang`) for screen readers and ATS text extraction.
  */
 
@@ -32,12 +34,17 @@ export class TailoredCvRenderError extends Error {
   }
 }
 
-/** Resolved relative to this module: `src/career/pdf` and `dist/career/pdf` sit at the same depth. */
+/**
+ * Read at module load, so a missing font fails the API at boot, not at the first download. Resolved relative
+ * to this module: `src/career/pdf` and `dist/career/pdf` sit at the same depth (the runtime image copies
+ * `apps/api/assets` explicitly).
+ */
 const FONT_DIR = new URL("../../../assets/fonts/", import.meta.url);
 const FONTS = {
   regular: readFileSync(new URL("SourceSans3-Regular.ttf", FONT_DIR)),
   semibold: readFileSync(new URL("SourceSans3-Semibold.ttf", FONT_DIR)),
 };
+const FONT_FACES = Object.values(FONTS).map((file) => openFont(file) as Font);
 
 const PAGE = { size: "A4", margin: 50 } as const;
 const COLOR = { text: "#1a1a1a", muted: "#555555", rule: "#bbbbbb" } as const;
@@ -84,11 +91,10 @@ const LABELS: Record<CareerLanguage, Record<LabelKey, string>> = {
 
 /**
  * pdfkit internals this module relies on (pinned 0.20.2; `tailored-cv.pdf.test.ts` fails if they change):
- * `info` is written as the Info dictionary at `end()`, `_id` is the trailer `/ID`, and `endMetadata()`
- * writes the XMP packet (CreateDate, CreatorTool, Producer).
+ * `_id` is the trailer `/ID` (hashed from the creation date), and `endMetadata()` writes the XMP packet
+ * (CreateDate, CreatorTool, Producer). `doc.info`, the Info dictionary, is public API.
  */
 interface PdfKitInternals {
-  info: Record<string, unknown>;
   _id: Uint8Array;
   endMetadata: () => void;
 }
@@ -137,13 +143,15 @@ export async function renderTailoredCvPdf(input: TailoredCvPdfInput): Promise<Bu
     color: string,
     options: PDFKit.Mixins.TextOptions = {},
   ): void => {
+    const shown = printable(text);
+    if (shown === "") return;
     document.add(
       doc.struct(tag, {}, () => {
         doc
           .font(font)
           .fontSize(size)
           .fillColor(color)
-          .text(text, { width, ...options });
+          .text(shown, { width, ...options });
       }),
     );
   };
@@ -172,7 +180,8 @@ export async function renderTailoredCvPdf(input: TailoredCvPdfInput): Promise<Bu
     doc.y = y + 5;
   };
 
-  const list = (items: readonly string[]): void => {
+  const list = (entries: readonly string[]): void => {
+    const items = entries.map(printable).filter((item) => item !== "");
     if (items.length === 0) return;
     const listStruct = doc.struct("L");
     document.add(listStruct);
@@ -300,9 +309,26 @@ export async function renderTailoredCvPdf(input: TailoredCvPdfInput): Promise<Bu
   return done;
 }
 
+/**
+ * NFC, tabs as spaces, and only characters both embedded fonts can draw (plus line breaks): anything else
+ * (CJK, emoji, control characters) is dropped rather than printed as a `.notdef` box (ADR-0009, known limit).
+ */
+export function printable(text: string): string {
+  let shown = "";
+  for (const char of text.normalize("NFC").replaceAll("\t", " ")) {
+    if (char === "\n" || isDrawable(char.codePointAt(0) ?? 0)) shown += char;
+  }
+  return shown.trim();
+}
+
+function isDrawable(codePoint: number): boolean {
+  if (codePoint < 0x20 || (codePoint >= 0x7f && codePoint < 0xa0)) return false;
+  return FONT_FACES.every((face) => face.hasGlyphForCodePoint(codePoint));
+}
+
 function neutralizeMetadata(doc: PDFKit.PDFDocument, id: Uint8Array): void {
+  doc.info = {};
   const internals = doc as unknown as PdfKitInternals;
-  internals.info = {};
   internals._id = id;
   internals.endMetadata = () => undefined;
 }

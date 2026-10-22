@@ -7,7 +7,7 @@ import {
   fictitiousTailoredCv,
   longTailoredCv,
 } from "../../../test/fixtures/tailored-cv.js";
-import { TailoredCvRenderError, renderTailoredCvPdf } from "./tailored-cv.pdf.js";
+import { TailoredCvRenderError, printable, renderTailoredCvPdf } from "./tailored-cv.pdf.js";
 
 const KB = 1024;
 
@@ -149,6 +149,19 @@ describe("renderTailoredCvPdf", () => {
     expect(pdf.length).toBeLessThan(60 * KB);
   });
 
+  it("drops characters the embedded fonts cannot draw instead of printing empty boxes", async () => {
+    const input = sample();
+    input.base.contact.name = "Ana 日本語 Exemplo 😀";
+    input.content.summary.segments[0]!.text = "Resumo\u0007 com emoji 🚀 e ideograma 漢.";
+
+    const { text } = await textOf(await renderTailoredCvPdf(input));
+    expect(text).toContain("Ana");
+    expect(text).toContain("Exemplo");
+    expect(text).toContain("Resumo com emoji");
+    expect(text).not.toMatch(/[\u3040-\u9fff]|\p{Extended_Pictographic}/u);
+    expect(text).not.toContain("\u0007");
+  });
+
   it("rejects a tailored CV citing a missing base item, naming only the id", async () => {
     const input = sample();
     input.content.educationIds = ["edu-404"];
@@ -157,5 +170,16 @@ describe("renderTailoredCvPdf", () => {
     expect(error).toBeInstanceOf(TailoredCvRenderError);
     expect((error as TailoredCvRenderError).missingItemId).toBe("edu-404");
     expect((error as Error).message).not.toContain("Ana");
+  });
+});
+
+describe("printable", () => {
+  it("keeps Latin with accents, Greek, Cyrillic, typographic punctuation and line breaks", () => {
+    expect(printable("ação — “ok” · α Ж\nfim")).toBe("ação — “ok” · α Ж\nfim");
+  });
+
+  it("composes to NFC, turns tabs into spaces and drops controls, CJK and emoji", () => {
+    expect(printable("e\u0301\tx\u0000\u0007\u0085")).toBe("é x");
+    expect(printable("日本 😀 👍🏽")).toBe("");
   });
 });

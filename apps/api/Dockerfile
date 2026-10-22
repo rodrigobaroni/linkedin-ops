@@ -51,6 +51,9 @@ COPY --from=build --chown=node:node /app/packages/contracts/dist /app/packages/c
 # `prisma generate` + tsc in the build stage; the query compiler WASM ships inside @prisma/client).
 COPY --from=build --chown=node:node /app/packages/domain/dist /app/packages/domain/dist
 COPY --from=build --chown=node:node /app/apps/api/dist /app/apps/api/dist
+# Fonts embedded in the tailored CV PDF (ADR-0009), read at module load so a missing file fails at boot.
+# Explicit even though the prod-deps context carries the sources: the runtime contract does not depend on it.
+COPY --from=build --chown=node:node /app/apps/api/assets /app/apps/api/assets
 EXPOSE 3001
 USER node
 # GET /api/v1/health: liveness (HealthStatus contract) served by the NestJS app (T-008); it never touches
