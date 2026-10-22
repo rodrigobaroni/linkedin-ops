@@ -276,6 +276,7 @@ describe("CareerCvScreen", { timeout: 20_000 }, () => {
         expect.stringContaining(copy.upload.invalidFile),
       ),
     );
+    await expectAccessible();
   });
 
   it("resumes a running extraction after leaving and coming back", async () => {
@@ -292,6 +293,40 @@ describe("CareerCvScreen", { timeout: 20_000 }, () => {
     expect(await screen.findByRole("heading", { name: copy.review.title })).toBeInTheDocument();
   });
 
+  it("pauses polling while the tab is hidden and refetches once when it is visible again", async () => {
+    let visibility: DocumentVisibilityState = "visible";
+    const descriptor = vi
+      .spyOn(document, "visibilityState", "get")
+      .mockImplementation(() => visibility);
+    const setVisibility = (next: DocumentVisibilityState) => {
+      visibility = next;
+      window.dispatchEvent(new Event("visibilitychange"));
+    };
+    resetMockCareer({
+      draft: mockDraft("EXTRACTING"),
+      pending: { outcome: "ok", readyAt: Infinity },
+    });
+    // Slower than the other tests so "exactly one refetch" is not raced by the next interval tick.
+    await renderApp(<CareerCvScreen pollInitialMs={300} />);
+    await screen.findByText(copy.reading.description);
+
+    setVisibility("hidden");
+    const hiddenAt = mockCareerState().reads;
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    expect(mockCareerState().reads).toBe(hiddenAt);
+
+    // Coming back refetches at once, not on the next interval tick (≥ 300 ms away).
+    setVisibility("visible");
+    await waitFor(() => expect(mockCareerState().reads).toBe(hiddenAt + 1), { timeout: 60 });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(mockCareerState().reads).toBe(hiddenAt + 1);
+
+    // Polling goes on afterwards: the extraction finishing still opens the review.
+    finishMockExtraction();
+    expect(await screen.findByRole("heading", { name: copy.review.title })).toBeInTheDocument();
+    descriptor.mockRestore();
+  });
+
   it("TIMED_OUT draft over an active CV keeps the confirmed CV visible", async () => {
     resetMockCareer({ active: mockActiveCv(2), draft: mockDraft("FAILED", "TIMED_OUT") });
     await renderCv();
@@ -299,6 +334,7 @@ describe("CareerCvScreen", { timeout: 20_000 }, () => {
     expect(title.closest("[role='alert']")).toHaveTextContent(copy.error.reasons.TIMED_OUT);
     expect(screen.getByRole("heading", { name: copy.confirmed.badge })).toBeInTheDocument();
     expect(screen.getByText(/^Versão 2 · /)).toBeInTheDocument();
+    await expectAccessible();
   });
 
   it("confirmed: replace opens a new upload that keeps the active CV until confirmed", async () => {
@@ -308,6 +344,7 @@ describe("CareerCvScreen", { timeout: 20_000 }, () => {
     await user.click(screen.getByRole("button", { name: copy.confirmed.replace }));
     expect(screen.getByRole("heading", { name: copy.upload.replaceTitle })).toBeInTheDocument();
     expect(screen.getByText(copy.upload.replaceHint)).toBeInTheDocument();
+    await expectAccessible();
     await user.click(screen.getByRole("button", { name: copy.upload.cancel }));
     expect(
       screen.queryByRole("heading", { name: copy.upload.replaceTitle }),
@@ -336,6 +373,25 @@ describe("CareerCvScreen", { timeout: 20_000 }, () => {
     expect(await screen.findByText(copy.remove.done)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: copy.empty.title })).toBeInTheDocument();
     expect(mockCareerState().active).toBeNull();
+    await expectAccessible();
+  });
+
+  it("a failed DELETE says nothing was deleted and keeps the CV on screen", async () => {
+    resetMockCareer({ active: mockActiveCv() });
+    server.use(http.delete("/api/v1/career/cv", () => problemResponse("INTERNAL")));
+    const { user } = await renderCv({ elevated: true });
+    await screen.findByRole("heading", { name: copy.confirmed.badge });
+    await user.click(screen.getByRole("button", { name: copy.confirmed.remove }));
+    const dialog = await screen.findByRole("dialog", { name: copy.remove.title });
+    await user.click(within(dialog).getByRole("button", { name: copy.remove.confirm }));
+
+    const alert = await screen.findByText(copy.remove.error);
+    expect(alert.closest("[role='alert']")).not.toBeNull();
+    // The screen re-reads the state: the CV is still there and can be deleted again.
+    expect(screen.getByRole("heading", { name: copy.confirmed.badge })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: copy.confirmed.remove })).toBeEnabled();
+    expect(mockCareerState().active).not.toBeNull();
+    await expectAccessible();
   });
 
   describe("closing the delete flow returns focus to 'Apagar CV'", () => {

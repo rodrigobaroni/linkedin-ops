@@ -16,8 +16,9 @@ export function useCareerCvApi() {
 
 /**
  * `GET /career/cv`, polled while the draft is `EXTRACTING` (the worker reads the PDF): 2 s, then backing off
- * to 10 s. The interval pauses while the tab is hidden and a refetch on focus resumes it. The extraction
- * lives on the server, so leaving the screen and coming back simply polls again from the current state.
+ * to 10 s. Hidden tab: no reads at all; visible again: one immediate refetch (the app-wide default turns
+ * refetch-on-focus off, so it is forced here only while extracting), then the interval goes on. The
+ * extraction lives on the server, so leaving the screen and coming back polls again from the current state.
  */
 export function useCareerCv(pollInitialMs: number = CV_POLL.initialMs) {
   const api = useCareerCvApi();
@@ -38,5 +39,8 @@ export function useCareerCv(pollInitialMs: number = CV_POLL.initialMs) {
       return cvPollDelayMs(query.state.dataUpdateCount - polling.current.since, pollInitialMs);
     },
     refetchIntervalInBackground: false,
+    // "always": the app-wide 30 s staleTime would otherwise keep the polled data "fresh" on return.
+    refetchOnWindowFocus: (query) =>
+      query.state.data?.draft?.status === "EXTRACTING" ? "always" : false,
   });
 }
