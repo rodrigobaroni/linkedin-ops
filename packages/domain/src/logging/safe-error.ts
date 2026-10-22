@@ -19,12 +19,26 @@ export const ERROR_MESSAGE_OMITTED = "[message omitted]";
 const MAX_MESSAGE_CHARS = 500;
 const MAX_CAUSE_DEPTH = 2;
 
-/** Row values PostgreSQL quotes in its messages and details; cut to the end of the line. */
-const ROW_DATA = [/Failing row contains.*$/gim, /DETAIL:.*$/gim, /Key \(.*?\)=\(.*$/gim];
+/**
+ * Row and input values PostgreSQL quotes in its messages and details; cut to the end of the line. 22P02/22007
+ * (`invalid input syntax for type uuid: "…"`, `invalid input value for enum …: "…"`) quote the rejected input.
+ */
+const ROW_DATA = [
+  /Failing row contains.*$/gim,
+  /DETAIL:.*$/gim,
+  /Key \(.*?\)=\(.*$/gim,
+  /(invalid input (?:syntax|value) for [^:\n]*:).*$/gim,
+];
 
-/** Removes every quoted row from `text` (each match up to the end of its line). */
+/** Removes every quoted row or input from `text` (each match up to the end of its line). */
 export function scrubErrorText(text: string): string {
-  return ROW_DATA.reduce((current, pattern) => current.replace(pattern, "[row omitted]"), text);
+  return ROW_DATA.reduce(
+    (current, pattern) =>
+      current.replace(pattern, (_match, prefix?: string) =>
+        typeof prefix === "string" ? `${prefix} [value omitted]` : "[row omitted]",
+      ),
+    text,
+  );
 }
 
 export function serializeErrorForLog(error: unknown, depth = 0): SafeLoggedError {
@@ -59,4 +73,39 @@ export function serializeErrorForLog(error: unknown, depth = 0): SafeLoggedError
     out.cause = serializeErrorForLog(error.cause, depth + 1);
   }
   return out;
+}
+
+/** Deepest level of a log object searched for errors; anything deeper is dropped, never logged raw. */
+export const MAX_ERROR_SEARCH_DEPTH = 6;
+export const ERROR_SEARCH_TRUNCATED = "[Truncated]";
+export const ERROR_SEARCH_CIRCULAR = "[Circular]";
+
+/**
+ * Applies `serializeErrorForLog` to every `Error` of a log object, under any key and nested in plain objects
+ * or arrays (#102): `{ exception: pgError }`, `{ ctx: { err } }`, `[e]`. Other values are copied as they
+ * are. Fails closed: a subtree deeper than `MAX_ERROR_SEARCH_DEPTH` or a cycle is replaced by a marker, so
+ * no error can hide below the search depth.
+ */
+export function serializeErrorsDeep(
+  value: unknown,
+  depth = 0,
+  seen: WeakSet<object> = new WeakSet(),
+): unknown {
+  if (value instanceof Error) return serializeErrorForLog(value);
+  if (value === null || typeof value !== "object") return value;
+  if (!Array.isArray(value) && !isPlainObject(value)) return value;
+  if (depth >= MAX_ERROR_SEARCH_DEPTH) return ERROR_SEARCH_TRUNCATED;
+  if (seen.has(value)) return ERROR_SEARCH_CIRCULAR;
+  seen.add(value);
+  if (Array.isArray(value)) return value.map((item) => serializeErrorsDeep(item, depth + 1, seen));
+  const out: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    out[key] = serializeErrorsDeep(entry, depth + 1, seen);
+  }
+  return out;
+}
+
+function isPlainObject(value: object): value is Record<string, unknown> {
+  const prototype = Object.getPrototypeOf(value) as unknown;
+  return prototype === Object.prototype || prototype === null;
 }

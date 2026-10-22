@@ -15,6 +15,7 @@ import {
   TEST_USER,
   type TestApp,
 } from "./helpers.js";
+import { DatabaseError, PrismaClientKnownRequestError, ROW_CANARY } from "./fixtures/db-errors.js";
 
 describe("Pino redaction and auth bodies never logged", () => {
   let app: TestApp;
@@ -53,13 +54,39 @@ describe("Pino redaction and auth bodies never logged", () => {
     expect(text).toContain('"inputTokens":3');
   });
 
-  it("scrubSensitiveKeys is recursive and leaves Error objects for the serializer", () => {
+  it("scrubSensitiveKeys is recursive and reduces Error objects to their allow-listed fields (#102)", () => {
     const error = new Error("boom");
-    const out = scrubSensitiveKeys({ a: { refreshToken: "x" }, err: error, ok: 1 }) as Record<
+    const out = scrubSensitiveKeys({ a: { refreshToken: "x" }, e: error, ok: 1 }) as Record<
       string,
       unknown
     >;
-    expect(out).toEqual({ a: { refreshToken: REDACTED }, err: error, ok: 1 });
+    expect(out).toEqual({
+      a: { refreshToken: REDACTED },
+      e: { type: "Error", message: "boom", stack: expect.stringMatching(/^Error: boom\n/) },
+      ok: 1,
+    });
+  });
+
+  it("never logs a raw error under any key, nested or not (#102)", () => {
+    const logs = new LogCapture();
+    const logger = createLogger({ level: "info", pretty: false, stream: logs.stream });
+    logger.error({ exception: new DatabaseError() }, "pg failed");
+    logger.error({ ctx: { err: new PrismaClientKnownRequestError(), step: "x" } }, "nested");
+    logger.error({ e: new PrismaClientKnownRequestError() }, "short key");
+    logger.error({ list: [new DatabaseError()], error: new DatabaseError() }, "array and error");
+    logger.error(new PrismaClientKnownRequestError(), "error as the merging object");
+    expect(logs.lines).toHaveLength(5);
+    expect(logs.lines[0]?.["exception"]).toMatchObject({ type: "DatabaseError", code: "23505" });
+    expect(logs.lines[1]?.["ctx"]).toMatchObject({
+      err: { type: "PrismaClientKnownRequestError", code: "P2010" },
+      step: "x",
+    });
+    expect(logs.lines[2]?.["e"]).toMatchObject({ type: "PrismaClientKnownRequestError" });
+    expect(logs.lines[3]?.["error"]).toMatchObject({ type: "DatabaseError" });
+    expect(logs.lines[4]?.["err"]).toMatchObject({ type: "PrismaClientKnownRequestError" });
+    for (const leak of [ROW_CANARY, "driverAdapterError", '"detail"', '"meta"', '"table"']) {
+      expect(logs.text).not.toContain(leak);
+    }
   });
 
   it("request logs drop the query string, so csrfToken, OAuth code/state and tokens never reach the log", async () => {

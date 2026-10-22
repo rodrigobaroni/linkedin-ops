@@ -2,7 +2,7 @@
  * Structured logger (ADR-0001: Pino). Defence in depth: credential-like keys and content-bearing keys are
  * redacted even if a call site passes them by mistake (spec §8: CV and posting content never in logs).
  */
-import { serializeErrorForLog } from "@linkedin-ops/domain";
+import { serializeErrorsDeep } from "@linkedin-ops/domain";
 import { pino, type DestinationStream, type Logger } from "pino";
 
 export const REDACTED_PATHS = [
@@ -38,8 +38,13 @@ export function createLogger(level: string, destination?: DestinationStream): Lo
     level,
     base: { service: "worker" },
     redact: { paths: REDACTED_PATHS, censor: "[redacted]" },
-    // Allow-list of error fields (QA #101): Prisma/pg errors carry the offending row in `meta`/`cause`.
-    serializers: { err: serializeErrorForLog, error: serializeErrorForLog },
+    // Allow-list of error fields (QA #101): Prisma/pg errors carry the offending row in `meta`/`cause`. Any
+    // other key, nested too, goes through `formatters.log` (#102); the serializers are idempotent.
+    formatters: {
+      log: (object: Record<string, unknown>) =>
+        serializeErrorsDeep(object) as Record<string, unknown>,
+    },
+    serializers: { err: serializeErrorsDeep, error: serializeErrorsDeep },
   };
   return destination === undefined ? pino(options) : pino(options, destination);
 }

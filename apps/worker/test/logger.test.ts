@@ -46,4 +46,33 @@ describe("worker logger (QA #101)", () => {
     expect(output).not.toContain(ROW_CANARY);
     expect(output).not.toContain("driverAdapterError");
   });
+
+  it("never logs a raw error under another key or nested (#102)", () => {
+    let output = "";
+    const stream = new Writable({
+      write: (chunk: Buffer, _encoding, callback) => {
+        output += chunk.toString("utf8");
+        callback();
+      },
+    });
+    const logger = createLogger("info", stream);
+    logger.error({ exception: new PrismaClientKnownRequestError() }, "a");
+    logger.error({ ctx: { err: new PrismaClientKnownRequestError() } }, "b");
+    logger.error(
+      { e: new PrismaClientKnownRequestError(), list: [new PrismaClientKnownRequestError()] },
+      "c",
+    );
+    const lines = output
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(lines[0]?.["exception"]).toMatchObject({
+      type: "PrismaClientKnownRequestError",
+      code: "P2010",
+    });
+    expect(lines[1]?.["ctx"]).toMatchObject({ err: { type: "PrismaClientKnownRequestError" } });
+    expect(lines[2]?.["e"]).toMatchObject({ type: "PrismaClientKnownRequestError" });
+    expect(output).not.toContain(ROW_CANARY);
+    expect(output).not.toContain("driverAdapterError");
+  });
 });

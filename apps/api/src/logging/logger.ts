@@ -1,5 +1,5 @@
 import { isSensitiveKey } from "@linkedin-ops/contracts";
-import { serializeErrorForLog, type LogLevel } from "@linkedin-ops/domain";
+import { serializeErrorForLog, serializeErrorsDeep, type LogLevel } from "@linkedin-ops/domain";
 import type { DestinationStream, Logger, LoggerOptions } from "pino";
 import { pino } from "pino";
 
@@ -51,7 +51,9 @@ export function scrubSensitiveKeys(
   seen = new WeakSet<object>(),
 ): unknown {
   if (value === null || typeof value !== "object") return value;
-  if (value instanceof Error || value instanceof Date || Buffer.isBuffer(value)) return value;
+  // An error under any key is reduced to its allow-listed fields (#102: Prisma/pg errors carry row data).
+  if (value instanceof Error) return serializeErrorForLog(value);
+  if (value instanceof Date || Buffer.isBuffer(value)) return value;
   if (depth > MAX_SCRUB_DEPTH) return TRUNCATED;
   if (seen.has(value)) return CIRCULAR;
   seen.add(value);
@@ -108,8 +110,9 @@ export function buildLoggerOptions({ level, pretty }: LoggerConfig): LoggerOptio
       }),
       res: (reply: { statusCode?: number }) => ({ statusCode: reply.statusCode }),
       // Allow-list of error fields (QA #101): Prisma/pg errors carry the offending row in `meta`/`cause`.
-      err: serializeErrorForLog,
-      error: serializeErrorForLog,
+      // Idempotent: `error` may arrive already reduced by `formatters.log` (any other key always does).
+      err: serializeErrorsDeep,
+      error: serializeErrorsDeep,
     },
     ...(pretty ? { transport: { target: "pino-pretty", options: { colorize: true } } } : {}),
   };
