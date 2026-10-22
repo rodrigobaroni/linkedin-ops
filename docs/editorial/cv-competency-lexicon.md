@@ -28,7 +28,9 @@ A `denyTerms` também vale **em tempo de execução**: cada trecho é comparado 
 sem acento, e um termo encontrado é rejeitado (salvo se já estiver no CV base). Cada grupo declara como casa:
 `any-case` para nomes distintivos, rejeitados mesmo em minúscula (`nubank`, `itaú`, `magazine luiza`), e
 `capitalized` para nomes que também são palavras comuns (`Via`, `Rede`, `Meta`, `Spring`), rejeitados só quando
-escritos como nome e fora da abertura da frase ("Rede de pipelines…", "Meta de vendas…" e "Via API…" passam).
+escritos como nome. Na abertura da frase, só ficam isentos numa construção comum verificável, por lista explícita
+e testada: seguidos de preposição ou artigo ("Rede de pipelines…", "Meta de vendas…", "Via a API…") ou `Via`
+seguido de termo do léxico ("Via API…"). Fora disso, na abertura também são nome ("Rede entregou…" reprova).
 Termos da lista citados pela vaga (num requisito), em qualquer grafia e em qualquer grupo, contam como nomes
 usados pela vaga e são rejeitados na saída em qualquer grafia e posição (`rede` citado em minúscula pela vaga
 reprova `rede` na saída). Efeito colateral aceito: se a vaga usa a palavra comum no sentido comum ("rede de

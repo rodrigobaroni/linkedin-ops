@@ -264,13 +264,15 @@ const DENY_FORMS: ReadonlyArray<{ words: readonly string[]; capitalizedOnly: boo
 
 /**
  * Deny-term phrases found in analysed tokens: `any-case` terms in any spelling and position (`nubank`),
- * `capitalized` terms only when written as a name and not opening a sentence (`Rede`, never the common word
- * `rede` nor "Rede de pipelines…"; Sentinela/Pena R2). `anyCase` ignores the `capitalized` mode: a deny term the
- * posting itself cites is a name of the posting in any spelling (Crivo, PR #89).
+ * `capitalized` terms only when written as a name (`Rede`, never the common word `rede`). At a sentence opening a
+ * `capitalized` term is a name too, unless it is a verifiable common construction (`commonOpening`: "Rede de
+ * pipelines…", "Via API…"); "Rede delivered…" is a made-up name (Sentinela, PR #89). `anyCase` ignores the
+ * `capitalized` mode: a deny term the posting itself cites is a name of the posting in any spelling (Crivo).
  */
 function denyMatches(
   analysed: readonly Token[],
   anyCase = false,
+  covered: readonly (number | undefined)[] = [],
 ): { start: number; words: readonly string[] }[] {
   const matches: { start: number; words: readonly string[] }[] = [];
   for (let start = 0; start < analysed.length; start += 1) {
@@ -280,7 +282,7 @@ function denyMatches(
         candidate.words.every((word, offset) => analysed[start + offset]?.word === word) &&
         (anyCase ||
           !candidate.capitalizedOnly ||
-          (analysed[start]?.nameLike === true && analysed[start]?.opening !== true)),
+          (analysed[start]?.nameLike === true && !commonOpening(analysed, start, covered))),
     );
     if (form) {
       matches.push({ start, words: form.words });
@@ -290,12 +292,69 @@ function denyMatches(
   return matches;
 }
 
-/** Single-word `capitalized` deny terms: common words, accepted when they only open a sentence (R2). */
+/** Single-word `capitalized` deny terms: names that are also common words (Via, Rede, Meta, Delta…). */
 const COMMON_WORD_DENY = new Set(
   DENY_FORMS.filter((form) => form.capitalizedOnly && form.words.length === 1).map(
     (form) => form.words[0] as string,
   ),
 );
+
+/**
+ * Words that, right after a sentence-opening `capitalized` deny term, show it is the common noun or preposition
+ * (PT/EN prepositions and articles): "Rede de pipelines", "Meta de latência", "Via a API", "Delta of the model".
+ * Closed, tested list (Sentinela, PR #89).
+ */
+export const COMMON_OPENING_FOLLOWERS: ReadonlySet<string> = new Set([
+  "de",
+  "da",
+  "do",
+  "das",
+  "dos",
+  "para",
+  "por",
+  "pelo",
+  "pela",
+  "em",
+  "no",
+  "na",
+  "nos",
+  "nas",
+  "com",
+  "a",
+  "o",
+  "as",
+  "os",
+  "um",
+  "uma",
+  "ao",
+  "aos",
+  "of",
+  "for",
+  "to",
+  "the",
+  "an",
+  "in",
+  "on",
+  "between",
+]);
+
+/**
+ * A sentence-opening `capitalized` deny term used as a common word: followed by a preposition/article
+ * (`COMMON_OPENING_FOLLOWERS`), or `Via` followed by a lexicon term ("Via API…", "Via Python…"). Anything else at
+ * the opening ("Rede delivered…", "Delta entregou…") is a name.
+ */
+function commonOpening(
+  analysed: readonly Token[],
+  index: number,
+  covered: readonly (number | undefined)[],
+): boolean {
+  const token = analysed[index];
+  const next = analysed[index + 1];
+  if (token?.opening !== true || !COMMON_WORD_DENY.has(token.word) || next === undefined)
+    return false;
+  if (COMMON_OPENING_FOLLOWERS.has(next.word)) return true;
+  return token.word === "via" && covered[index + 1] !== undefined;
+}
 
 /** Lexicon entries named anywhere in a text. */
 function lexiconEntries(text: string): Set<number> {
@@ -415,7 +474,7 @@ export function createEntityGuard(base: CvStructured, job: JobPostingExtracted):
         targetRequirementIds.some((id) => requirementEntries.get(id)?.has(entry));
       const violations: string[] = [];
       const denied = new Set<number>();
-      for (const match of denyMatches(analysed)) {
+      for (const match of denyMatches(analysed, false, covered)) {
         if (containsPhrase(baseTokens, match.words)) continue;
         // A brand inside an allowed multi-word competence is the product, not the company (Google Cloud).
         const span = coveringSpan(spans, match);
@@ -436,7 +495,7 @@ export function createEntityGuard(base: CvStructured, job: JobPostingExtracted):
         if (
           !namedByPosting &&
           token.opening &&
-          (isCommon(token.word) || COMMON_WORD_DENY.has(token.word))
+          (isCommon(token.word) || commonOpening(analysed, index, covered))
         )
           return;
         violations.push(token.word);

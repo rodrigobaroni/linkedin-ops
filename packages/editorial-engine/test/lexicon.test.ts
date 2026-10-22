@@ -1,6 +1,7 @@
 import type { JobPostingExtracted } from "@linkedin-ops/contracts";
 import { describe, expect, it } from "vitest";
 import {
+  COMMON_OPENING_FOLLOWERS,
   CV_COMPETENCY_LEXICON,
   createEntityGuard,
   parseCvTailorResponse,
@@ -266,6 +267,71 @@ describe("deny terms cited by the posting are its names in any spelling (Crivo, 
   it("R2 does not reopen it: a posting name opening the sentence is still rejected", () => {
     const g = guardWithReq3("rede API integration");
     expect(g.newEntities("Rede API integration shipped.", ["req-3"])).toEqual(["rede"]);
+  });
+});
+
+describe("R2 exempts only verifiable common constructions at the opening (Sentinela PR #89)", () => {
+  const g = () => createEntityGuard(baseCv, postingWith("Python"));
+
+  it.each([
+    ["Delta delivered Python pipelines.", "delta"],
+    ["Rede delivered Python pipelines.", "rede"],
+    ["Delta entregou pipelines Python.", "delta"],
+    ["Rede entregou pipelines Python.", "rede"],
+    ["Via shipped Python pipelines.", "via"],
+    ["Meta adopted Python pipelines.", "meta"],
+  ])("negative canary: %s is a made-up name at the opening", (text, expected) => {
+    expect(g().newEntities(text, ["req-9"])).toEqual([expected]);
+  });
+
+  it("the explicit list of common constructions is pinned", () => {
+    expect([...COMMON_OPENING_FOLLOWERS].sort()).toEqual(
+      [
+        "de",
+        "da",
+        "do",
+        "das",
+        "dos",
+        "para",
+        "por",
+        "pelo",
+        "pela",
+        "em",
+        "no",
+        "na",
+        "nos",
+        "nas",
+        "com",
+        "a",
+        "o",
+        "as",
+        "os",
+        "um",
+        "uma",
+        "ao",
+        "aos",
+        "of",
+        "for",
+        "to",
+        "the",
+        "an",
+        "in",
+        "on",
+        "between",
+      ].sort(),
+    );
+  });
+
+  it.each([
+    "Via API REST, integrei os sistemas com Python.",
+    "Via Python, automatizei relatórios.",
+    "Via a API, integrei os sistemas com Python.",
+    "Meta de latência cumprida com Python.",
+    "Rede de pipelines em Python.",
+    "Delta of the Python models measured.",
+  ])("positive: %s is a common construction", (text) => {
+    const cited = createEntityGuard(baseCv, postingWith("Python, API e REST"));
+    expect(cited.newEntities(text, ["req-9"])).toEqual([]);
   });
 });
 
