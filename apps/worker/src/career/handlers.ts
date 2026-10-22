@@ -269,17 +269,18 @@ export function createCareerHandlers(deps: CareerHandlerDeps): CareerHandlers {
       const tailored = await runLlmStepWithRegenerations(
         deps.llm,
         // Each regeneration is told what the last invalid attempt got wrong (issue #99).
-        (previous, attempt) =>
+        // `try_` is the regeneration's number, not the posting's cycle (`attempt` of the payload).
+        (previous, try_) =>
           buildCvTailorRequest(
-            { base: input.base, job: input.job, target, previous, attempt },
+            { base: input.base, job: input.job, target, previous, attempt: try_ },
             options,
           ),
         (raw) => parseCvTailorResponse(raw, { base: input.base, job: input.job, target }),
         context.signal,
         CV_TAILOR_MAX_REGENERATIONS,
-        (attempt, reason, issues) =>
+        (try_, reason, issues) =>
           context.logger.warn(
-            { tailorAttempt: attempt, errorClass: reason, issues },
+            { tailorAttempt: try_, errorClass: reason, issues },
             "tailor output invalid",
           ),
       );
