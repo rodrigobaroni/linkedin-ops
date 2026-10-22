@@ -63,6 +63,48 @@ describe("label guard: the postposed modifier is a closed list or a lexicon term
   });
 });
 
+describe("label guard: a base title covers the role before a lexicon or acronym modifier (Maestro, #121)", () => {
+  it.each([
+    ["Product manager API focused on payments.", ["Product Manager"]],
+    ["Data engineer AWS with 8 years in payments.", ["Data Engineer"]],
+    ["Desenvolvedor Python com 8 anos em pagamentos.", ["Desenvolvedor"]],
+    ["Desenvolvedor PHP sênior com 8 anos em e-commerce.", ["Desenvolvedor Sênior"]],
+    ["Engenheiro SAP com foco em finanças.", ["Engenheiro"]],
+    ["Staff engineer Kotlin focused on payments.", ["Staff Engineer"]],
+    ["Sr data engineer AWS with 8 years in payments.", ["Senior Data Engineer"]],
+  ])("positive: '%s' with %j", (text, titles) => {
+    expect(inventedRoleLabels(text, titles)).toEqual([]);
+  });
+
+  it.each([
+    // Seniority after the modifier is still checked.
+    [
+      "Desenvolvedor PHP sênior com 8 anos em e-commerce.",
+      ["Desenvolvedor"],
+      "desenvolvedor php senior",
+    ],
+    // A closed-list modifier is part of the role.
+    [
+      "Desenvolvedora fullstack com foco em pagamentos.",
+      ["Desenvolvedora"],
+      "desenvolvedora fullstack",
+    ],
+    // A title that does not cover the role before the modifier.
+    ["Product manager API focused on payments.", ["Software Engineer"], "product manager api"],
+    ["Data engineer AWS with 8 years in payments.", ["Analytics Engineer"], "data engineer aws"],
+    // A shortened base title does not cover the role before the modifier.
+    ["Engenheiro Go com foco em pagamentos.", ["Engenheiro de Dados Sênior"], "engenheiro go"],
+    ["Engineer Kotlin with 8 years in payments.", ["Senior Software Engineer"], "engineer kotlin"],
+    [
+      "Staff engineer Kotlin focused on payments.",
+      ["Staff Software Engineer"],
+      "staff engineer kotlin",
+    ],
+  ])("negative: '%s' with %j names '%s'", (text, titles, label) => {
+    expect(inventedRoleLabels(text, titles)).toContain(label);
+  });
+});
+
 describe("label guard: 'passionate' and gerunds follow a label (issue #111, item 3)", () => {
   it.each([
     ["engineering leader passionate about data platforms.", EN, "engineering leader"],

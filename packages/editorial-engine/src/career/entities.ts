@@ -1111,6 +1111,24 @@ function coversRole(roleTitle: readonly string[], rolePhrase: RolePhrase): boole
   );
 }
 
+/**
+ * Whether `role` is the whole `title` (folded words), seniority aside: the same words without seniority, and no
+ * seniority the title does not have ("desenvolvedor senior" is "Desenvolvedor Sênior", not "Desenvolvedor").
+ */
+function sameRole(title: readonly string[], role: readonly string[]): boolean {
+  const spelled = (words: readonly string[]) =>
+    words.map((word) => SENIORITY_ABBREVIATIONS.get(word) ?? word);
+  const titleWords = spelled(title);
+  const roleWords = spelled(role);
+  const core = (words: readonly string[]) =>
+    words.filter((word) => !ROLE_SENIORITY.has(word)).join(" ");
+  return (
+    core(roleWords) !== "" &&
+    core(roleWords) === core(titleWords) &&
+    roleWords.every((word) => !ROLE_SENIORITY.has(word) || titleWords.includes(word))
+  );
+}
+
 const SENIORITY_ABBREVIATIONS = new Map([
   ["sr", "senior"],
   ["jr", "junior"],
@@ -1430,14 +1448,29 @@ function roleLabels(
           word(after + offset) === modifierWord &&
           (offset === 0 || !words[after + offset - 1]?.pause),
       );
+    const listedModifier = LABEL_POSTPOSED_MODIFIERS.find(modifierAt);
     const modifier =
-      LABEL_POSTPOSED_MODIFIERS.find(modifierAt) ??
+      listedModifier ??
       LEXICON_FORMS.find((form) => modifierAt(form.words))?.words ??
       (words[after]?.acronym === true ? [word(after)] : undefined);
+    // The role without a lexicon or acronym modifier, with the seniority after it ("desenvolvedor senior" for
+    // "Desenvolvedor PHP sênior com…"): when it is a whole base title (`sameRole`), the modifier names a competence
+    // of that role ("Product manager API…" for "Product Manager"). A shortened title does not count ("Engenheiro Go"
+    // is no "Engenheiro de Dados", "Engineer Kotlin" no "Software Engineer"), and a closed-list modifier stays part
+    // of the role ("Desenvolvedora fullstack" is not "Desenvolvedora").
+    let withoutModifier: string[] | null = null;
     if (modifier !== undefined && !OPENING_WORDS.has(word(head)) && !followed(after)) {
       let next = after + modifier.length;
       while (!words[next - 1]?.pause && ROLE_SENIORITY.has(word(next))) next += 1;
-      if (followed(next)) after = next;
+      if (followed(next)) {
+        if (listedModifier === undefined) {
+          withoutModifier = words
+            .slice(start, after)
+            .concat(words.slice(after + modifier.length, next))
+            .map((role) => role.word);
+        }
+        after = next;
+      }
     }
     if (!followed(after)) continue;
     // Adjectives, seniority and a modifier are part of the label; complements extend it as for an introduced role.
@@ -1456,8 +1489,13 @@ function roleLabels(
       cuts: [after, ...cuts].map((cut) => cut - start),
       context: "",
     };
+    const role = withoutModifier;
+    const covered = (title: readonly string[]) =>
+      coversRole(title, phrase) ||
+      // Only when nothing follows the modifier but seniority: a complement after it is part of the label.
+      (role !== null && end === after && sameRole(title, role));
     const label = phrase.words.join(" ");
-    if (!found.has(label) && !titleWords.some((title) => coversRole(title, phrase))) {
+    if (!found.has(label) && !titleWords.some(covered)) {
       found.set(label, literalSpan(sentence, phrase.words));
     }
   }
