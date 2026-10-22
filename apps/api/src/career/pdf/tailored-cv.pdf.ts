@@ -245,17 +245,19 @@ export async function renderTailoredCvPdf(input: TailoredCvPdfInput): Promise<Bu
     }
   };
 
-  // Header: name and contact line.
+  // Header: name, e-mail, phone and location, links.
   const contact = base.contact;
   if (contact.name) paragraph("H1", contact.name, "semibold", SIZE.name, COLOR.text, {}, true);
-  const contactLine = [contact.email, contact.phone, contact.location].filter(
-    (part): part is string => Boolean(part),
+  // The e-mail and each link get a line of their own: the Unicode line breaker may wrap after "/", "." or "-",
+  // so one sharing a line with other fields could come out split ("https://" + rest) in the extracted text that
+  // ATS read.
+  if (contact.email) paragraph("P", contact.email, "regular", SIZE.meta, COLOR.muted, {}, true);
+  const contactLine = [contact.phone, contact.location].filter((part): part is string =>
+    Boolean(part),
   );
   if (contactLine.length > 0) {
     paragraph("P", contactLine.join("  ·  "), "regular", SIZE.meta, COLOR.muted, {}, true);
   }
-  // One link per line: the Unicode line breaker may wrap after "/", so a URL sharing a line with other
-  // fields would come out split ("https://" + rest) in the extracted text that ATS read.
   for (const link of contact.links) {
     paragraph("P", link, "regular", SIZE.meta, COLOR.muted, {}, true);
   }

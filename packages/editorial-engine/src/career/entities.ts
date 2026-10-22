@@ -139,6 +139,53 @@ const OPENING_WORDS = new Set(
     .map((word) => fold(word)),
 );
 
+/**
+ * Self-describing adjectives and adverbs that open a summary sentence ("Curious, pragmatic…", "Highly
+ * experienced…", "Pragmatic engineer…"; QA of #109, issue #111): common words at an opening for the entity
+ * guard, as `OPENING_WORDS`, but kept apart because the label guard reads `OPENING_WORDS` as action verbs. A
+ * closed list: an adjective outside it still fails closed and costs a regeneration.
+ */
+const OPENING_ADJECTIVES = new Set(
+  `
+  curious pragmatic rigorous passionate motivated dedicated driven results-driven detail-oriented data-driven
+  product-minded customer-focused self-motivated self-driven analytical creative versatile adaptable reliable
+  resourceful proactive collaborative accomplished meticulous thoughtful highly deeply
+  curioso curiosa pragmatico pragmatica rigoroso rigorosa apaixonado apaixonada motivado motivada dedicado
+  dedicada analitico analitica criativo criativa versatil adaptavel proativo proativa colaborativo
+  colaborativa meticuloso meticulosa altamente
+  `
+    .split(/\s+/u)
+    .filter(Boolean)
+    .map((word) => fold(word)),
+);
+/** Adjectives that may follow an opening one ("Highly experienced…", "Altamente focada…"). */
+const ADJECTIVE_FOLLOWERS = new Set([
+  ...OPENING_ADJECTIVES,
+  ...foldAll(
+    `experienced seasoned skilled hands-on proven strong solid focused oriented experiente focado focada
+    orientado orientada`
+      .split(/\s+/u)
+      .filter(Boolean),
+  ),
+]);
+
+/**
+ * An `OPENING_ADJECTIVES` word opening a sentence that reads as an adjective (Pena §6.13): followed by a comma, a
+ * conjunction, another adjective or a role word ("Curious, pragmatic…", "Curiosa e pragmática…", "Highly
+ * experienced…", "Pragmatic engineer…"). Otherwise it may be a name ("Pragmatic shipped…") and fails closed.
+ */
+function openingAdjective(analysed: readonly Token[], index: number): boolean {
+  const token = analysed[index];
+  if (token?.opening !== true || !OPENING_ADJECTIVES.has(token.word)) return false;
+  const next = analysed[index + 1]?.word ?? "";
+  return (
+    token.comma === true ||
+    ROLE_CONJUNCTIONS.has(next) ||
+    ADJECTIVE_FOLLOWERS.has(next) ||
+    ROLE_TITLE_WORDS.has(next)
+  );
+}
+
 /** Typical first words of a requirement line: never harvested as names the posting uses. */
 const REQUIREMENT_OPENERS = new Set(
   `
@@ -756,6 +803,8 @@ interface RoleWord {
   word: string;
   /** Punctuation right after the word: a comma may list another role, anything else ends the phrase. */
   pause: "comma" | "stop" | null;
+  /** Written in capitals, as an acronym ("AWS", "NLP", "B2B"). */
+  acronym?: boolean;
 }
 
 /** Folded words of a text for the role check: split on spaces, slashes and dashes, with the trailing pause. */
@@ -772,6 +821,7 @@ function roleWords(text: string): RoleWord[] {
     result.push({
       word,
       pause: /[.!?;:)]/u.test(trail) ? "stop" : trail.includes(",") ? "comma" : null,
+      acronym: /^\p{Lu}[\p{Lu}\p{N}]+$/u.test(cleaned),
     });
   }
   return result;
@@ -1032,8 +1082,59 @@ function introducedRoles(text: string, vocabulary: ReadonlySet<string>): RolePhr
  * complement of its own next. "engenheiro de dados do time" is covered by "Engenheiro de Dados"; "gerente de
  * produto" is not by "Gerente", "coordenadora de engenharia de dados" not by "Coordenadora de Engenharia de
  * Software", nor "engenheiro do time" by "Engenheiro de Dados" (Codex review, issue #93).
+ *
+ * Seniority may stand apart from the rest (issue #111, Pena §6.12): "senior engineer" is covered by "Senior
+ * Software Engineer", because "engineer" is covered by "Software Engineer" and "senior" is the title's own
+ * seniority. Only seniority: a free subsequence would let "product manager" through for "Product Marketing
+ * Manager". Seniority the title does not have is never covered ("staff engineer", "senior engineer" for
+ * "Software Engineer").
  */
-function coversRole(title: readonly string[], phrase: RolePhrase): boolean {
+function coversRole(roleTitle: readonly string[], rolePhrase: RolePhrase): boolean {
+  // "Sr"/"Jr" are "senior"/"junior" (QA of #121).
+  const spelled = (words: readonly string[]) =>
+    words.map((word) => SENIORITY_ABBREVIATIONS.get(word) ?? word);
+  const title = spelled(roleTitle);
+  const phrase = { ...rolePhrase, words: spelled(rolePhrase.words) };
+  if (coversContiguous(title, phrase)) return true;
+  const kept = phrase.words.flatMap((word, index) => (ROLE_SENIORITY.has(word) ? [] : [index]));
+  if (kept.length === 0 || kept.length === phrase.words.length) return false;
+  const seniority = new Set(title.filter((word) => ROLE_SENIORITY.has(word)));
+  if (phrase.words.some((word) => ROLE_SENIORITY.has(word) && !seniority.has(word))) return false;
+  const cuts = phrase.cuts.map((cut) => kept.filter((index) => index < cut).length);
+  return coversContiguous(
+    title.filter((word) => !ROLE_SENIORITY.has(word)),
+    {
+      words: kept.map((index) => phrase.words[index] as string),
+      cuts: [...new Set(cuts.filter((cut) => cut > 0))],
+      context: phrase.context,
+    },
+  );
+}
+
+/**
+ * Whether `role` is the whole `title` (folded words), seniority aside: the same words without seniority, and no
+ * seniority the title does not have ("desenvolvedor senior" is "Desenvolvedor Sênior", not "Desenvolvedor").
+ */
+function sameRole(title: readonly string[], role: readonly string[]): boolean {
+  const spelled = (words: readonly string[]) =>
+    words.map((word) => SENIORITY_ABBREVIATIONS.get(word) ?? word);
+  const titleWords = spelled(title);
+  const roleWords = spelled(role);
+  const core = (words: readonly string[]) =>
+    words.filter((word) => !ROLE_SENIORITY.has(word)).join(" ");
+  return (
+    core(roleWords) !== "" &&
+    core(roleWords) === core(titleWords) &&
+    roleWords.every((word) => !ROLE_SENIORITY.has(word) || titleWords.includes(word))
+  );
+}
+
+const SENIORITY_ABBREVIATIONS = new Map([
+  ["sr", "senior"],
+  ["jr", "junior"],
+]);
+
+function coversContiguous(title: readonly string[], phrase: RolePhrase): boolean {
   return phrase.cuts.some((cut) => {
     const next = phrase.words[cut] ?? "";
     const attached =
@@ -1115,7 +1216,45 @@ const LABEL_FOLLOWERS = new Set([
   "driving",
   "experienced",
   "experiente",
+  // QA of #109 (issue #111): "engineering leader passionate about…", "Tech lead liderando…". Gerunds are a
+  // closed list: a generic `-ing` would make "Developer tooling at scale…" a label again.
+  "passionate",
+  // QA of #121: participles ("Data engineer specialized in…", "responsible for…", "voltada a…").
+  ...`specialized specialised responsible dedicated known especializado especializada responsavel voltado
+  voltada`
+    .split(/\s+/u)
+    .filter(Boolean),
+  ...`leading building delivering shipping scaling owning helping bridging turning transforming
+  liderando construindo conduzindo entregando atuando desenvolvendo gerenciando coordenando criando escalando
+  apoiando ajudando transformando`
+    .split(/\s+/u)
+    .filter(Boolean),
 ]);
+/**
+ * The modifiers that may follow a label's head besides a lexicon term ("Engenheira backend com…", "Desenvolvedora
+ * full-stack com…"), a closed list (issue #111): any word there made "Developer tooling at scale…" and "Manager
+ * dashboards on…" labels. Hyphenated forms come split by `labelText` ("full-stack" is "full stack").
+ */
+const LABEL_POSTPOSED_MODIFIERS: readonly (readonly string[])[] = [
+  "backend",
+  "back end",
+  "frontend",
+  "front end",
+  "fullstack",
+  "full stack",
+  "mobile",
+  "cloud",
+  "web",
+  "ios",
+  "android",
+  "devops",
+  "qa",
+  "bi",
+  "ml",
+  "ai",
+  "ia",
+  "embedded",
+].map((modifier) => modifier.split(" "));
 /** Adjectives a PT label head takes before its complement ("Líder técnica de dados"). */
 const LABEL_ADJECTIVES = new Set(["tecnico", "tecnica"]);
 /**
@@ -1137,7 +1276,8 @@ const INVISIBLE = /[\u00ad\u200b-\u200d\u2060\ufeff]/gu;
 
 /**
  * Text of a sentence as the label check reads it: hyphenated words joined ("hands-on", "results-driven", so the
- * halves are no stop words) and a spaced dash as a pause ("Tech Lead — pagamentos"; QA of #109).
+ * halves are no stop words) and a spaced dash, `|`, `/` or `·` as a pause ("Tech Lead — pagamentos"; QA of #109;
+ * "Principal Engineer | Pagamentos", QA of #121).
  */
 function labelText(text: string): string {
   return (
@@ -1152,6 +1292,7 @@ function labelText(text: string): string {
           : `${left} ${right}`,
       )
       .replace(/\s+[\u2013\u2014-]+\s+/gu, ", ")
+      .replace(/\s*[|/\u00b7]+\s*/gu, ", ")
   );
 }
 
@@ -1168,23 +1309,71 @@ export function inventedRoleLabels(
   titles: readonly string[],
   firstSentenceOnly = false,
 ): string[] {
-  // An invisible character may hide inside a word ("Te\u200bch lead") or between two ("Tech\u200blead"): both
-  // readings are checked (Pena, labels-bypass2).
-  if (/[\u00ad\u200b-\u200d\u2060\ufeff]/u.test(text)) {
-    return [
-      ...new Set([
-        ...roleLabels(text.replace(INVISIBLE, ""), titles, firstSentenceOnly),
-        ...roleLabels(text.replace(INVISIBLE, " "), titles, firstSentenceOnly),
-      ]),
-    ];
-  }
-  return roleLabels(text, titles, firstSentenceOnly);
+  return inventedRoleLabelMatches(text, titles, firstSentenceOnly).map((match) => match.label);
 }
 
-function roleLabels(text: string, titles: readonly string[], firstSentenceOnly: boolean): string[] {
+export interface RoleLabelMatch {
+  /** The label, folded ("handson staff engineer"). */
+  label: string;
+  /**
+   * The words of the text that read as the label, as written ("Hands-on staff engineer"; issue #111), for the
+   * feedback excerpt; undefined when no stretch of the text reads exactly as it.
+   */
+  excerpt: string | undefined;
+}
+
+/** `inventedRoleLabels` with the stretch of `text` each label was read from. */
+export function inventedRoleLabelMatches(
+  text: string,
+  titles: readonly string[],
+  firstSentenceOnly = false,
+): RoleLabelMatch[] {
+  // An invisible character may hide inside a word ("Te\u200bch lead") or between two ("Tech\u200blead"): both
+  // readings are checked (Pena, labels-bypass2). Their excerpts are not the output's text: `excerptFrom` drops
+  // them.
+  const found = new Map<string, string | undefined>();
+  const readings = /[\u00ad\u200b-\u200d\u2060\ufeff]/u.test(text)
+    ? [text.replace(INVISIBLE, ""), text.replace(INVISIBLE, " ")]
+    : [text];
+  for (const reading of readings) {
+    for (const [label, excerpt] of roleLabels(reading, titles, firstSentenceOnly)) {
+      if (!found.has(label)) found.set(label, excerpt);
+    }
+  }
+  return [...found].map(([label, excerpt]) => ({ label, excerpt }));
+}
+
+/**
+ * The shortest stretch of whole space-separated tokens of `sentence`, from the start of one, that reads (as
+ * `roleLabels` reads it) as `label` or begins with it ("Hands-on staff engineer" for "handson staff engineer").
+ */
+function literalSpan(sentence: string, label: readonly string[]): string | undefined {
+  const raws = [...sentence.matchAll(/\S+/gu)];
+  for (let first = 0; first < raws.length; first += 1) {
+    const start = raws[first]?.index ?? 0;
+    for (let last = first; last < raws.length; last += 1) {
+      const raw = raws[last];
+      if (raw === undefined) break;
+      const span = sentence.slice(start, raw.index + raw[0].length);
+      const read = roleWords(labelText(span)).map((role) => role.word);
+      if (read.length < label.length) continue;
+      if (label.every((word, offset) => read[offset] === word)) {
+        return span.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}+#]+$/gu, "");
+      }
+      break;
+    }
+  }
+  return undefined;
+}
+
+function roleLabels(
+  text: string,
+  titles: readonly string[],
+  firstSentenceOnly: boolean,
+): Map<string, string | undefined> {
   const titleWords = titles.map((title) => roleWords(labelText(title)).map((role) => role.word));
   const sentences = text.normalize("NFKC").split(/(?<=[.!?;])\s+/u);
-  const found = new Set<string>();
+  const found = new Map<string, string | undefined>();
   for (const sentence of firstSentenceOnly ? sentences.slice(0, 1) : sentences) {
     const words = roleWords(labelText(sentence));
     const word = (at: number) => words[at]?.word ?? "";
@@ -1249,20 +1438,50 @@ function roleLabels(text: string, titles: readonly string[], firstSentenceOnly: 
       words[at - 1]?.pause !== null ||
       LABEL_FOLLOWERS.has(word(at)) ||
       listed(at);
-    // One postposed modifier ("Engenheira backend com…", "Desenvolvedora fullstack com…"), never after a head
-    // that is also an action verb ("Lead time de entrega…").
-    if (
-      !OPENING_WORDS.has(word(head)) &&
-      !followed(after) &&
-      !ROLE_STOP_WORDS.has(word(after)) &&
-      !OPENING_WORDS.has(word(after)) &&
-      followed(after + 1)
-    ) {
-      after += 1;
+    // One postposed modifier, of `LABEL_POSTPOSED_MODIFIERS`, a lexicon term or an acronym ("Engenheira backend
+    // com…", "Desenvolvedora full-stack com…", "Desenvolvedor Python com…", "Product manager B2B focused on…"; Pena
+    // §6.13, QA of #121), then any seniority ("Desenvolvedor PHP sênior com…"); never after a head that is also an
+    // action verb ("Lead time de entrega…", "Lead scoring…").
+    const modifierAt = (modifierWords: readonly string[]) =>
+      modifierWords.every(
+        (modifierWord, offset) =>
+          word(after + offset) === modifierWord &&
+          (offset === 0 || !words[after + offset - 1]?.pause),
+      );
+    const listedModifier = LABEL_POSTPOSED_MODIFIERS.find(modifierAt);
+    const modifier =
+      listedModifier ??
+      LEXICON_FORMS.find((form) => modifierAt(form.words))?.words ??
+      (words[after]?.acronym === true ? [word(after)] : undefined);
+    // The role without a lexicon or acronym modifier, with the seniority after it ("desenvolvedor senior" for
+    // "Desenvolvedor PHP sênior com…"): when it is a whole base title (`sameRole`), the modifier names a competence
+    // of that role ("Product manager API…" for "Product Manager"). A shortened title does not count ("Engenheiro Go"
+    // is no "Engenheiro de Dados", "Engineer Kotlin" no "Software Engineer"), and a closed-list modifier stays part
+    // of the role ("Desenvolvedora fullstack" is not "Desenvolvedora").
+    let withoutModifier: string[] | null = null;
+    if (modifier !== undefined && !OPENING_WORDS.has(word(head)) && !followed(after)) {
+      let next = after + modifier.length;
+      while (!words[next - 1]?.pause && ROLE_SENIORITY.has(word(next))) next += 1;
+      if (followed(next)) {
+        if (listedModifier === undefined) {
+          withoutModifier = words
+            .slice(start, after)
+            .concat(words.slice(after + modifier.length, next))
+            .map((role) => role.word);
+        }
+        after = next;
+      }
     }
     if (!followed(after)) continue;
     // Adjectives, seniority and a modifier are part of the label; complements extend it as for an introduced role.
-    const { end, cuts } = extendRolePhrase(words, after - 1, (at) => ROLE_STOP_WORDS.has(word(at)));
+    // A follower ends a complement ("Engenheira de dados especializada em…" is "engenheira de dados").
+    const { end, cuts } = extendRolePhrase(
+      words,
+      after - 1,
+      (at) =>
+        ROLE_STOP_WORDS.has(word(at)) ||
+        (LABEL_FOLLOWERS.has(word(at)) && !ROLE_COMPLEMENT.has(word(at))),
+    );
     // Leading articles are not part of the label ("Um engenheiro de dados sênior…" is the base title); leading
     // adjectives are ("Experienced data engineer" is not "Software Engineer").
     const phrase: RolePhrase = {
@@ -1270,9 +1489,17 @@ function roleLabels(text: string, titles: readonly string[], firstSentenceOnly: 
       cuts: [after, ...cuts].map((cut) => cut - start),
       context: "",
     };
-    if (!titleWords.some((title) => coversRole(title, phrase))) found.add(phrase.words.join(" "));
+    const role = withoutModifier;
+    const covered = (title: readonly string[]) =>
+      coversRole(title, phrase) ||
+      // Only when nothing follows the modifier but seniority: a complement after it is part of the label.
+      (role !== null && end === after && sameRole(title, role));
+    const label = phrase.words.join(" ");
+    if (!found.has(label) && !titleWords.some(covered)) {
+      found.set(label, literalSpan(sentence, phrase.words));
+    }
   }
-  return [...found];
+  return found;
 }
 
 function containsPhrase(words: readonly string[], phrase: readonly string[]): boolean {
@@ -1288,11 +1515,17 @@ interface Token {
   nameLike: boolean;
   /** Name-like only because it is capitalized and opens a sentence. */
   opening: boolean;
+  /** A comma right after the token. */
+  comma?: boolean;
 }
 
 function analyse(text: string): Token[] {
   const result: Token[] = [];
   for (const sentence of text.normalize("NFKC").split(/(?<=[.!?;:])\s+/u)) {
+    // The raw tokens `tokens` keeps, in the same order, for the punctuation after each one.
+    const raws = sentence
+      .split(/\s+/u)
+      .filter((raw) => raw.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}+#]+$/gu, "").length > 0);
     tokens(sentence).forEach((token, index) => {
       const word = fold(token);
       const capitalized = /^\p{Lu}/u.test(token);
@@ -1304,6 +1537,7 @@ function analyse(text: string): Token[] {
         word,
         nameLike: strong || capitalized,
         opening: !strong && capitalized && index === 0,
+        comma: /,[^\p{L}\p{N}]*$/u.test(raws[index] ?? ""),
       });
     });
   }
@@ -1357,6 +1591,7 @@ export function createEntityGuard(base: CvStructured, job: JobPostingExtracted):
       analysed.forEach((token, index) => {
         if (!token.nameLike || covered[index] !== undefined) return;
         if (token.opening && (isCommon(token.word) || REQUIREMENT_OPENERS.has(token.word))) return;
+        if (openingAdjective(analysed, index)) return;
         if (!commonWords.has(token.word)) postingNames.add(token.word);
       });
     }
@@ -1397,7 +1632,9 @@ export function createEntityGuard(base: CvStructured, job: JobPostingExtracted):
         if (
           !namedByPosting &&
           token.opening &&
-          (isCommon(token.word) || commonOpening(analysed, index, covered))
+          (isCommon(token.word) ||
+            commonOpening(analysed, index, covered) ||
+            openingAdjective(analysed, index))
         )
           return;
         violations.push(token.word);

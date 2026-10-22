@@ -25,6 +25,7 @@ import { excerptFrom, type TailorIssue, type TailorIssueCode } from "./feedback.
 import { sanitizeUntrustedText } from "../untrusted.js";
 import {
   createEntityGuard,
+  inventedRoleLabelMatches,
   inventedRoleLabels,
   inventedRoleTitles,
   newCredentials,
@@ -335,14 +336,15 @@ export function parseCvTailorResponse(
     const where = segment.segmentId;
     const labels =
       (block === "summary" || block === "bullet") && !unchangedOriginal
-        ? inventedRoleLabels(segment.text, titles, block === "bullet")
+        ? inventedRoleLabelMatches(segment.text, titles, block === "bullet")
         : [];
     if (labels.length > 0) {
       report(
         `${where}: hard limit, invented role label`,
         "invented_role_label",
         where,
-        labels[0],
+        // The words as written ("Hands-on staff engineer"), not the folded label (issue #111).
+        labels[0]?.excerpt,
         segment.text,
       );
     }
