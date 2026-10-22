@@ -373,19 +373,43 @@ const CREDENTIAL_DENY_FORMS = CV_COMPETENCY_LEXICON.denyTerms
   .filter((group) => group.group.startsWith("credentials"))
   .flatMap((group) => group.terms.map((term) => tokens(term).map(fold)));
 
+/** Head nouns of a role title (EN and PT), for titles hidden inside a credential (Sentinela S-1, PR #91). */
+const ROLE_NOUNS = new Set(
+  `
+  architect engineer administrator admin developer analyst scientist manager consultant specialist owner
+  master lead leader designer tester auditor officer arquiteto arquiteta engenheiro engenheira administrador
+  administradora desenvolvedor desenvolvedora analista cientista gerente consultor consultora especialista
+  `
+    .split(/\s+/u)
+    .filter(Boolean),
+);
+
+interface CredentialPhrase {
+  words: string[];
+  /** Position of the first word among the text's tokens. */
+  start: number;
+  /**
+   * Per word, whether it marks the phrase as a credential beyond doubt (`Certified`, `Associate`, `Professional`,
+   * an exam code…). A credential deny phrase alone (`Solutions Architect`) is a credential without a marker: it
+   * reads as a role title too.
+   */
+  marker: boolean[];
+}
+
 /**
  * Credential phrases of a text, folded: each credential word, exam code, credential deny phrase, `expert` right
  * after a lexicon term (`Kubernetes Expert`) or `Professional` right before one (or before `Data Engineer`…),
  * extended over its sentence neighbours that are names or lexicon terms ("aws certified solutions architect",
  * "certified kubernetes"). A sentence-opening capital alone does not extend it.
  */
-function credentialPhrases(text: string): string[][] {
-  const phrases: string[][] = [];
+function credentialPhrases(text: string): CredentialPhrase[] {
+  const phrases: CredentialPhrase[] = [];
+  let offset = 0;
   for (const sentence of text.normalize("NFKC").split(/(?<=[.!?;:])\s+/u)) {
     const raw = tokens(sentence);
     const words = raw.map(fold);
     const covered = lexiconCoverage(words);
-    const keyword = words.map(
+    const marker = words.map(
       (word, index) =>
         [word, ...word.split(/[-/]/u)].some((part) => CREDENTIAL_WORD.test(part)) ||
         EXAM_CODE.test(raw[index] ?? "") ||
@@ -397,6 +421,7 @@ function credentialPhrases(text: string): string[][] {
               phrase.every((next, offset) => words[index + 1 + offset] === next),
             ))),
     );
+    const keyword = [...marker];
     for (const form of CREDENTIAL_DENY_FORMS) {
       for (let start = 0; start + form.length <= words.length; start += 1) {
         if (form.every((word, offset) => words[start + offset] === word)) {
@@ -416,23 +441,95 @@ function credentialPhrases(text: string): string[][] {
       let last = index;
       while (first > 0 && linked(first - 1)) first -= 1;
       while (last + 1 < words.length && linked(last + 1)) last += 1;
-      phrases.push(words.slice(first, last + 1));
+      phrases.push({
+        words: words.slice(first, last + 1),
+        start: offset + first,
+        marker: marker.slice(first, last + 1),
+      });
       index = last;
     }
+    offset += raw.length;
   }
   return phrases;
 }
 
 /**
  * Credential phrases of `text` that `reference` does not already hold (D4 hard limit 1; Sentinela PR #91). An
- * added segment has no reference, so any credential is new; a rewritten or changed `original` segment may only
- * keep (or shorten) a credential phrase of its cited base items, never add or extend one.
+ * added segment has no reference, so any credential is new. A rewritten or changed `original` segment may keep a
+ * credential phrase of its cited base items, or shorten it only while it keeps a marker ("AWS Certified"): a
+ * shortened phrase without one ("Solutions Architect" out of "AWS Certified Solutions Architect") reads as a role
+ * title and passes only when it is inside one of the base CV's `titles` (Sentinela S-1).
  */
-export function newCredentials(text: string, reference = ""): string[] {
+export function newCredentials(
+  text: string,
+  reference = "",
+  titles: readonly string[] = [],
+): string[] {
   const allowed = credentialPhrases(reference);
+  const titleWords = titles.map((title) => tokens(title).map(fold));
+  const kept = (phrase: CredentialPhrase) =>
+    allowed.some(
+      (source) =>
+        (source.words.length === phrase.words.length &&
+          containsPhrase(source.words, phrase.words)) ||
+        (containsPhrase(source.words, phrase.words) &&
+          (phrase.marker.includes(true) ||
+            titleWords.some((title) => containsPhrase(title, phrase.words)))),
+    );
   return credentialPhrases(text)
-    .filter((phrase) => !allowed.some((source) => containsPhrase(source, phrase)))
-    .map((phrase) => phrase.join(" "));
+    .filter((phrase) => !kept(phrase))
+    .map((phrase) => phrase.words.join(" "));
+}
+
+/**
+ * Role titles hidden in the base CV's credentials that `text` names as a title (Sentinela S-1, PR #91): the
+ * words of a credential around its markers, up to a role noun ("solutions architect" in "AWS Certified Solutions
+ * Architect", "data engineer" in "Google Professional Data Engineer", "kubernetes administrator"). A phrase of two
+ * or more of those words is a title in any case; the role noun alone only when capitalized ("Architect", never
+ * "backend engineer"). A title the base CV already has as an experience title (`titles`) passes.
+ */
+export function titlesFromCredentials(
+  text: string,
+  baseText: string,
+  titles: readonly string[],
+): string[] {
+  const roles: string[][] = [];
+  for (const phrase of credentialPhrases(baseText)) {
+    if (!phrase.marker.includes(true)) continue;
+    let run: string[] = [];
+    phrase.words.forEach((word, index) => {
+      if (!phrase.marker[index]) run.push(word);
+      if (phrase.marker[index] || index === phrase.words.length - 1) {
+        const head = run.findLastIndex((candidate) => ROLE_NOUNS.has(candidate));
+        if (head >= 0) roles.push(run.slice(0, head + 1));
+        run = [];
+      }
+    });
+  }
+  const raw = tokens(text);
+  const words = raw.map(fold);
+  const titleWords = titles.map((title) => tokens(title).map(fold));
+  // Words inside a credential the text names with its marker ("AWS Certified Solutions Architect") are that
+  // credential, not a title; whether the credential itself may be there is `newCredentials`'s call.
+  const inCredential = new Set<number>();
+  for (const phrase of credentialPhrases(text)) {
+    if (!phrase.marker.includes(true)) continue;
+    phrase.words.forEach((_word, index) => inCredential.add(phrase.start + index));
+  }
+  const found = new Set<string>();
+  for (const role of roles) {
+    for (let length = 1; length <= role.length; length += 1) {
+      const suffix = role.slice(role.length - length);
+      for (let start = 0; start + length <= words.length; start += 1) {
+        if (!suffix.every((word, offset) => words[start + offset] === word)) continue;
+        if (length === 1 && !/^\p{Lu}/u.test(raw[start] ?? "")) continue;
+        if (suffix.every((_word, offset) => inCredential.has(start + offset))) continue;
+        if (titleWords.some((title) => containsPhrase(title, suffix))) continue;
+        found.add(suffix.join(" "));
+      }
+    }
+  }
+  return [...found];
 }
 
 function containsPhrase(words: readonly string[], phrase: readonly string[]): boolean {

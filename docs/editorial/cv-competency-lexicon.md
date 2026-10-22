@@ -67,9 +67,14 @@ Nunca entra, nem como alias (`denyTerms`, com teste de interseção vazia):
   `Cloud Architect` ou `Machine Learning Engineer` (`expert` e `professional` sozinhos são palavras comuns).
   A regra vale para **todo** trecho que difere da fonte, não só o `acrescentado` (Sentinela, PR #91): um trecho
   `reescrito` ou um `original` alterado só pode manter (ou encurtar) a frase de credencial que já está nos itens
-  do CV base que ele cita ("AWS Certified Solutions Architect" → "AWS Certified"), nunca acrescentar ou estender
-  uma ("Trabalhei com Kafka" → "Trabalhei com Kafka associate" reprova); o humanizador que acrescenta uma
-  credencial tem o trecho revertido;
+  do CV base que ele cita, e só encurta preservando um marcador inequívoco (`Certified`, `Associate`,
+  `Professional`, `Specialty`, código de prova…): "AWS Certified Solutions Architect" → "AWS Certified" passa;
+  nunca acrescenta ou estende uma ("Trabalhei com Kafka" → "Trabalhei com Kafka associate" reprova); o
+  humanizador que acrescenta uma credencial tem o trecho revertido. Uma credencial também nunca vira **cargo**
+  (Sentinela S-1): as palavras de uma credencial do CV base até um substantivo de cargo ("Solutions Architect",
+  "Data Engineer", "Kubernetes Administrator") reprovam em qualquer trecho, salvo dentro da própria credencial
+  com marcador ou quando o CV base já tem esse cargo como título de experiência; o substantivo de cargo sozinho
+  só reprova com maiúscula ("Architect", nunca "backend engineer");
 - formas curtas ambíguas (`Next`, `Neon`, `Delta`, `Stone`, `Rede`, `Spring`, `Express`, `Kong`, `XP`, `LeSS`):
   só a forma qualificada (`Next.js`, `Neon Postgres`, `Delta Lake`, `Spring Boot`, `Express.js`,
   `Kong Gateway`, `Extreme Programming`, `Large-Scale Scrum`) (C2, C5).

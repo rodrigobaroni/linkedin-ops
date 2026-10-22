@@ -493,3 +493,99 @@ describe("credentials in rewritten and changed original segments (Sentinela, PR 
     ).toEqual([]);
   });
 });
+
+describe("a credential never becomes an invented title (Sentinela S-1, PR #91)", () => {
+  const ROLE = "seg-2: hard limit, title from a credential";
+  /** The base CV with its bullet (exp-1-b-1), title and certifications replaced. */
+  function baseWith(
+    bullet: string,
+    options: { title?: string; certifications?: string[] } = {},
+  ): CvStructured {
+    const [experience] = baseCv.experiences;
+    return {
+      ...baseCv,
+      experiences: [
+        {
+          ...experience!,
+          title: options.title ?? experience!.title,
+          bullets: [{ id: "exp-1-b-1", text: bullet }],
+        },
+      ],
+      certifications: (options.certifications ?? []).map((name, index) => ({
+        id: `cert-${index + 1}`,
+        name,
+        issuer: null,
+        date: null,
+      })),
+    };
+  }
+  /** seg-2 is the rewritten bullet (source exp-1-b-1), seg-3 the added bullet. */
+  function run(base: CvStructured, texts: { bullet?: string; added?: string }) {
+    const output = tailoringOutput();
+    const [bullet, added] = output.tailoredCv.experiences[0]?.bullets.segments ?? [];
+    if (bullet && texts.bullet !== undefined) bullet.text = texts.bullet;
+    if (added && texts.added !== undefined) added.text = texts.added;
+    output.tailoredCv.certifications = base.certifications.map((item, index) => ({
+      cvCertificationId: item.id,
+      order: index + 1,
+    }));
+    return parseCvTailorResponse(output, { base, job, target });
+  }
+  const issues = (result: ReturnType<typeof run>) => (result.ok ? [] : result.error.issues);
+
+  it.each([
+    ["Obtive a AWS Certified Solutions Architect.", "Atuei como Solutions Architect."],
+    ["Obtive a Google Professional Data Engineer.", "Atuei como Data Engineer."],
+    ["Obtive a Certified Kubernetes Administrator.", "Trabalhei como Kubernetes Administrator."],
+    ["Obtive a Certified Kubernetes Administrator.", "Trabalhei como kubernetes administrator."],
+  ])("negative: source %s, rewritten %s", (source, text) => {
+    expect(issues(run(baseWith(source), { bullet: text }))).toContain(ROLE);
+  });
+
+  it("negative: the credential sits in another base item (a certification), not the cited one", () => {
+    const base = baseWith("Trabalhei com pagamentos.", {
+      certifications: ["Google Professional Data Engineer"],
+    });
+    expect(issues(run(base, { bullet: "Trabalhei com pagamentos como Data Engineer." }))).toContain(
+      ROLE,
+    );
+    expect(issues(run(base, { added: "Atuei como Data Engineer com Kafka." }))).toContain(
+      "seg-3: hard limit, title from a credential",
+    );
+  });
+
+  it("positive: keeping the whole credential passes", () => {
+    const source = "Obtive a AWS Certified Solutions Architect.";
+    expect(issues(run(baseWith(source), { bullet: source }))).toEqual([]);
+    expect(
+      issues(run(baseWith(source), { bullet: "Concluí a AWS Certified Solutions Architect." })),
+    ).toEqual([]);
+  });
+
+  it("negative: keeping the credential does not cover a separate title in the same text", () => {
+    const source = "Obtive a AWS Certified Solutions Architect.";
+    const text = "Obtive a AWS Certified Solutions Architect e atuei como Solutions Architect.";
+    expect(issues(run(baseWith(source), { bullet: text }))).toContain(ROLE);
+  });
+
+  it("positive: shortening to 'AWS Certified' keeps the marker and passes", () => {
+    const base = baseWith("Obtive a AWS Certified Solutions Architect.");
+    expect(issues(run(base, { bullet: "Obtive a AWS Certified." }))).toEqual([]);
+  });
+
+  it("positive: a title the base CV already has as a title passes", () => {
+    const base = baseWith("Obtive a AWS Certified Solutions Architect.", {
+      title: "Solutions Architect",
+    });
+    expect(issues(run(base, { bullet: "Atuei como Solutions Architect." }))).toEqual([]);
+  });
+
+  it("a lowercase role word alone is not a title ('backend engineer' with a Data Engineer cert)", () => {
+    const base = baseWith("Trabalhei com pagamentos.", {
+      certifications: ["Google Professional Data Engineer"],
+    });
+    expect(
+      issues(run(base, { bullet: "Trabalhei com pagamentos como backend engineer." })),
+    ).toEqual([]);
+  });
+});

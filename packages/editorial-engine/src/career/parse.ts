@@ -22,7 +22,12 @@ import {
 import type { z } from "zod";
 import { err, ok, type EngineError, type Result } from "../result.js";
 import { sanitizeUntrustedText } from "../untrusted.js";
-import { createEntityGuard, newCredentials, withoutLexiconTerms } from "./entities.js";
+import {
+  createEntityGuard,
+  newCredentials,
+  titlesFromCredentials,
+  withoutLexiconTerms,
+} from "./entities.js";
 import { cvFullText, cvItemTexts, normalizeCvIds } from "./ids.js";
 import type { TargetLanguage } from "./language.js";
 import { lintText } from "./lint/checker.js";
@@ -259,6 +264,8 @@ export function parseCvTailorResponse(
   // Provenance (post-processing 3) and hard limits on additions (post-processing 4).
   const baseNumbers = new Set(numericTokens(cvFullText(base)));
   const entityGuard = createEntityGuard(base, job);
+  const baseText = cvFullText(base);
+  const titles = base.experiences.map((experience) => experience.title);
   const promotedSegmentIds: string[] = [];
   for (const { segment } of listSegments(draft.data)) {
     for (const id of segment.targetRequirementIds) {
@@ -268,6 +275,10 @@ export function parseCvTailorResponse(
     // other proper noun absent from the base CV, in added and rewritten text alike.
     if (entityGuard.newEntities(segment.text, segment.targetRequirementIds).length > 0) {
       issues.push(`${segment.segmentId}: hard limit, new entity`);
+    }
+    // A credential's words never become a title the base CV does not have (Sentinela S-1, PR #91).
+    if (titlesFromCredentials(segment.text, baseText, titles).length > 0) {
+      issues.push(`${segment.segmentId}: hard limit, title from a credential`);
     }
     if (segment.provenance === "added") {
       if (
@@ -288,7 +299,7 @@ export function parseCvTailorResponse(
     const sourceText = sources.join("\n");
     // Rewritten and changed `original` text may keep a credential of its cited items, never add one (Sentinela
     // PR #91); an unchanged `original` holds exactly its source's.
-    if (newCredentials(segment.text, sourceText).length > 0) {
+    if (newCredentials(segment.text, sourceText, titles).length > 0) {
       issues.push(`${segment.segmentId}: hard limit, credential not in cited base items`);
     }
     const sourceNumbers = new Set(numericTokens(sourceText));
