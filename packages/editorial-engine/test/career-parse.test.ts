@@ -2,6 +2,7 @@ import type { CvStructured } from "@linkedin-ops/contracts";
 import { describe, expect, it } from "vitest";
 import {
   buildMatchReport,
+  inventedRoleTitles,
   parseCvExtractResponse,
   parseCvTailorResponse,
   parseJobExtractResponse,
@@ -467,14 +468,22 @@ describe("credentials in rewritten and changed original segments (Sentinela, PR 
     const result = run(baseWith("Operei clusters Kubernetes."), {
       bullet: "Operei clusters Kubernetes como certified Kubernetes administrator.",
     });
-    expect(issues(result)).toEqual(["seg-2: hard limit, credential not in cited base items"]);
+    // "como … administrator" also presents a role the base CV does not have (issue #93).
+    expect(issues(result)).toEqual([
+      "seg-2: hard limit, credential not in cited base items",
+      "seg-2: hard limit, invented role title",
+    ]);
   });
 
   it("negative: a different credential than the one in the source", () => {
     const result = run(baseWith("Atuei como AWS Certified Solutions Architect com Kubernetes."), {
       bullet: "Atuei como Certified Kubernetes com AWS.",
     });
-    expect(issues(result)).toEqual(["seg-2: hard limit, credential not in cited base items"]);
+    // "Atuei como …" also presents it as a role the base CV does not have (issue #93).
+    expect(issues(result)).toEqual([
+      "seg-2: hard limit, credential not in cited base items",
+      "seg-2: hard limit, invented role title",
+    ]);
   });
 
   it("positive: a rewritten segment keeping the certification already in its source passes", () => {
@@ -630,8 +639,380 @@ describe("a credential never becomes an invented title (Sentinela S-1, PR #91)",
     const base = baseWith("Trabalhei com pagamentos.", {
       certifications: ["Google Professional Data Engineer"],
     });
+    const result = issues(run(base, { bullet: "Trabalhei com pagamentos como backend engineer." }));
+    expect(result).not.toContain(ROLE);
+    // It is still a role the base CV does not have as a title (issue #93).
+    expect(result).toEqual(["seg-2: hard limit, invented role title"]);
+  });
+});
+
+describe("a role introducer never presents an invented title (issue #93, Pena §6.10.2)", () => {
+  /** The base CV with its only experience titled `title` and, when given, its bullet (exp-1-b-1) set to `bullet`. */
+  function baseWith(title: string, bullet?: string): CvStructured {
+    const [experience] = baseCv.experiences;
+    const bullets =
+      bullet === undefined ? experience!.bullets : [{ id: "exp-1-b-1", text: bullet }];
+    return { ...baseCv, experiences: [{ ...experience!, title, bullets }] };
+  }
+  /** seg-1 is the rewritten summary, seg-2 the rewritten bullet, seg-3 the added bullet, seg-4 the skill. */
+  function run(
+    base: CvStructured,
+    texts: { summary?: string; bullet?: string; added?: string; skill?: string },
+  ) {
+    const output = tailoringOutput();
+    const [summary] = output.tailoredCv.summary.segments;
+    const [bullet, added] = output.tailoredCv.experiences[0]?.bullets.segments ?? [];
+    const [skill] = output.tailoredCv.experiences[0]?.skills.segments ?? [];
+    if (summary && texts.summary !== undefined) summary.text = texts.summary;
+    if (bullet && texts.bullet !== undefined) bullet.text = texts.bullet;
+    if (added && texts.added !== undefined) added.text = texts.added;
+    if (skill && texts.skill !== undefined) skill.text = texts.skill;
+    return parseCvTailorResponse(output, { base, job, target });
+  }
+  const issues = (result: ReturnType<typeof run>) => (result.ok ? [] : result.error.issues);
+  const base = baseWith("Engenheira de software sênior");
+
+  it.each([
+    ["bullet", "seg-2", "Atuei como tech lead do time de dados."],
+    ["bullet", "seg-2", "Worked as a product manager for payments."],
+    ["bullet", "seg-2", "Fui contratado como coordenador de engenharia."],
+    ["added", "seg-3", "Atuei como tech lead do time de dados."],
+    ["added", "seg-3", "Worked as a product manager for payments."],
+    ["summary", "seg-1", "Atuei como head de dados em pagamentos."],
+    ["skill", "seg-4", "PostgreSQL como gerente de banco de dados"],
+    ["bullet", "seg-2", "Atuei como engenheira e tech lead do time de dados."],
+    ["bullet", "seg-2", "Atuei como engenheira de software, tech lead e mentora."],
+    ["bullet", "seg-2", "Atuei como líder técnica do time."],
+    ["bullet", "seg-2", "In the role of engineering manager, I led payments."],
+    ["bullet", "seg-2", "Atuei como engenheira de dados em pagamentos."],
+  ])("canary: the %s %s '%s' is rejected", (key, segmentId, text) => {
+    expect(issues(run(base, { [key]: text }))).toContain(
+      `${segmentId}: hard limit, invented role title`,
+    );
+  });
+
+  it("positive: the role is the base CV's experience title, in any case", () => {
+    const pt = baseWith("Engenheiro de Dados");
+    expect(issues(run(pt, { bullet: "Atuei como engenheiro de dados." }))).toEqual([]);
+    expect(issues(run(pt, { added: "Atuei como Engenheiro de Dados em pagamentos." }))).toEqual([]);
+  });
+
+  it("positive: a sub-phrase of the experience title passes", () => {
+    expect(issues(run(base, { bullet: "Atuei como engenheira de software no time." }))).toEqual([]);
+    expect(issues(run(base, { bullet: "Atuei como engenheira em pagamentos." }))).toEqual([]);
+  });
+
+  it.each([
+    "Atuei como parte do time de pagamentos.",
+    "Worked as part of the payments team.",
+    "Atuei como referência técnica do time.",
+  ])("positive: '%s' (no role noun) passes", (text) => {
+    expect(issues(run(base, { bullet: text }))).toEqual([]);
+  });
+
+  it("positive: a role the cited base item already introduces passes in a rewritten segment", () => {
+    const own = baseWith("Engenheira de software sênior", "Atuei como tech lead do time de dados.");
+    expect(issues(run(own, { bullet: "Atuei como tech lead do time de dados." }))).toEqual([]);
+    // An added segment cites no base item: only an experience title covers it.
+    expect(issues(run(own, { added: "Atuei como tech lead do time de dados." }))).toContain(
+      "seg-3: hard limit, invented role title",
+    );
+  });
+});
+
+describe("inventedRoleTitles (issue #93, Codex review)", () => {
+  it.each([
+    ["Worked as a founder of a payments startup.", ["Software Engineer"], "founder"],
+    ["Atuei como mentora do time.", ["Engenheira de software"], "mentora"],
+    [
+      "Led delivery after being promoted to engineering manager.",
+      ["Software Engineer"],
+      "engineering manager",
+    ],
+    ["Me tornei tech lead em 2023.", ["Engenheira de software"], "tech lead"],
+    [
+      "Atuei como coordenadora de engenharia de dados.",
+      ["Coordenadora de Engenharia de Software"],
+      "coordenadora de engenharia de dados",
+    ],
+    ["Atuei como engenheiro do time de dados.", ["Engenheiro de Dados"], "engenheiro do time"],
+    [
+      "Worked as engineer, architect, and product manager.",
+      ["Engineer", "Architect"],
+      "product manager",
+    ],
+    ["Worked as an engineering manager and tech lead.", ["Engineering Manager"], "tech lead"],
+    ["Worked as an agile coach.", ["Software Engineer"], "agile coach"],
+    [
+      "Led delivery after being promoted from engineer to product manager.",
+      ["Engineer"],
+      "product manager",
+    ],
+    ["Atuei como gerente de produto.", ["Gerente"], "gerente de produto"],
+    ["No papel de responsável técnico, conduzi a migração.", ["Engenheira"], "responsavel tecnico"],
+    ["Worked as head of data engineering.", ["Head of Data Science"], "head of data engineering"],
+    ["Worked as a recruiter.", ["Software Engineer"], "recruiter"],
+    ["Atuei como recrutador.", ["Engenheira de software"], "recrutador"],
+    ["I was a product manager at a fintech.", ["Software Engineer"], "product manager"],
+    ["Fui gerente de produto.", ["Engenheira de software"], "gerente de produto"],
+    ["Fui contratado como coordenador de engenharia.", ["Engenheiro"], "coordenador de engenharia"],
+    ["Became a professional product manager.", ["Software Engineer"], "product manager"],
+  ])("negative: '%s' with titles %j names '%s'", (text, titles, role) => {
+    expect(inventedRoleTitles(text, titles).some((found) => found.startsWith(role))).toBe(true);
+  });
+
+  it.each([
+    ["Atuei como engenheiro de dados do time de pagamentos.", ["Engenheiro de Dados"]],
+    [
+      "Atuei como coordenadora de engenharia de software.",
+      ["Coordenadora de Engenharia de Software"],
+    ],
+    ["Atuei como Engenheira de Software Sênior.", ["Engenheira de software sênior"]],
+    ["Became an AWS Certified Solutions Architect in 2023.", ["Software Engineer"]],
+    ["Colaborei com design, bem como com o gerente de produto.", ["Engenheira de software"]],
+    ["Partnered with design as well as the product manager.", ["Software Engineer"]],
+    ["Partnered with stakeholders such as the engineering manager.", ["Software Engineer"]],
+    ["Promoted to the role of engineering manager.", ["Engineering Manager"]],
+    ["Appointed as product manager in 2023.", ["Product Manager"]],
+    ["Appointed to lead the payments migration.", ["Software Engineer"]],
+    ["Worked as an engineering manager of the payments team.", ["Engineering Manager"]],
+    ["Atuei como engenheira de software desenvolvendo APIs.", ["Engenheira de software sênior"]],
+    ["Worked as head of data science at a fintech.", ["Head of Data Science"]],
+    ["Worked as head of data leading teams.", ["Head of Data"]],
+    ["Became an AWS Solutions Architect Associate.", ["Software Engineer"]],
+    ["Worked as a member of the payments team.", ["Software Engineer"]],
+    ["Promovido de analista a analista sênior.", ["Analista", "Analista Sênior"]],
+    ["The migration was a success.", ["Software Engineer"]],
+  ])("positive: '%s' with titles %j", (text, titles) => {
+    expect(inventedRoleTitles(text, titles)).toEqual([]);
+  });
+});
+
+describe("inventedRoleTitles with a reference (issue #93, Codex review)", () => {
+  it("a role the reference states in the same context passes", () => {
+    const reference = "Atuei como tech lead do time de dados.";
+    expect(inventedRoleTitles("Atuei como tech lead do time de dados.", [], reference)).toEqual([]);
+  });
+
+  it("a role kept by the same holder passes with another introducer", () => {
     expect(
-      issues(run(base, { bullet: "Trabalhei com pagamentos como backend engineer." })),
+      inventedRoleTitles("Served as a product manager.", [], "Worked as a product manager."),
     ).toEqual([]);
+  });
+
+  it("negative: an English reference that gives the role to a colleague", () => {
+    const reference = "A colleague worked as a product manager.";
+    expect(inventedRoleTitles("I worked as a product manager.", [], reference)).toEqual([
+      "product manager",
+    ]);
+  });
+
+  it("negative: a role the reference gives someone else", () => {
+    const reference = "Colaborei com uma colega que atuou como product manager.";
+    expect(inventedRoleTitles("Atuei como product manager.", [], reference)).toEqual([
+      "product manager",
+    ]);
+  });
+});
+
+describe("listed roles and copulas (issue #93, Maestro on PR #98)", () => {
+  const has = (found: string[], role: string) => found.some((name) => name.includes(role));
+
+  it.each([
+    ["Worked as an engineer and technical product manager.", ["Engineer"], "product manager"],
+    ["Worked as an engineer, then senior technical product manager.", ["Engineer"], "manager"],
+    ["Atuei como engenheira e principal arquiteta de soluções.", ["Engenheira"], "arquiteta"],
+  ])("canary: a listed role past two words: '%s'", (text, titles, role) => {
+    expect(has(inventedRoleTitles(text, titles), role)).toBe(true);
+  });
+
+  it.each([
+    ["I was a recruiter.", "recruiter"],
+    ["I was a talent partner for payments.", "talent partner"],
+    ["Fui recrutador do time de pagamentos.", "recrutador"],
+    ["Sou instrutora de TypeScript.", "instrutora"],
+  ])("canary: a copula before a role outside the closed list: '%s'", (text, role) => {
+    expect(has(inventedRoleTitles(text, ["Engenheira de software"], "", ""), role)).toBe(true);
+  });
+
+  it.each([
+    "I was responsible for the billing migration.",
+    "I was part of the payments team.",
+    "I was the first to adopt durable queues.",
+    "Fui responsável pela migração de cobrança.",
+    "Fui premiada pela migração de cobrança.",
+  ])("positive: '%s' presents no role", (text) => {
+    expect(inventedRoleTitles(text, ["Engenheira de software"], "", "")).toEqual([]);
+  });
+
+  it("positive: a copula before a word of the base CV is not a role candidate", () => {
+    // A role title word ("recrutador", QA on PR #98) is a role whatever the base CV's vocabulary.
+    const baseText = "Apresentei a migração de cobrança como palestrante convidada.";
+    const titles = ["Engenheira de software"];
+    expect(inventedRoleTitles("Fui palestrante.", titles, "", baseText)).toEqual([]);
+    expect(inventedRoleTitles("Fui palestrante.", titles, "", "")).toEqual(["palestrante"]);
+  });
+});
+
+describe("cv.tailor rejects a copula before an invented role (Maestro on PR #98)", () => {
+  it("canary: 'Fui recrutador do time de pagamentos.' in the added bullet", () => {
+    const output = tailoringOutput();
+    const added = output.tailoredCv.experiences[0]?.bullets.segments[1];
+    if (added) added.text = "Fui recrutador do time de pagamentos.";
+    const result = parseCvTailorResponse(output, { base: baseCv, job, target });
+    expect(result.ok ? [] : result.error.issues).toContain(
+      "seg-3: hard limit, invented role title",
+    );
+  });
+});
+
+describe("QA on PR #98 (9f02a0d)", () => {
+  const titles = ["Engenheira de software"];
+  const has = (found: string[], role: string) => found.some((name) => name.includes(role));
+
+  it.each([
+    ["PO", "po"],
+    ["gestor de TI", "gestor de ti"],
+    ["gestora de TI", "gestora de ti"],
+    ["SRE", "sre"],
+    ["DBA", "dba"],
+    ["PM", "pm"],
+    ["programadora", "programadora"],
+    ["programador", "programador"],
+    ["agilista", "agilista"],
+    ["tech recruiter", "tech recruiter"],
+    ["recrutadora", "recrutadora"],
+    ["professora", "professora"],
+    ["professor", "professor"],
+    ["instrutora", "instrutora"],
+    ["instrutor", "instrutor"],
+  ])("canary (1): 'Liderei a migração como %s' is rejected", (role, found) => {
+    expect(has(inventedRoleTitles(`Liderei a migração como ${role}.`, titles), found)).toBe(true);
+  });
+
+  it.each([
+    ["Led the migration as a programmer.", "programmer"],
+    ["Led the migration as an instructor.", "instructor"],
+    ["Led the migration as a teacher.", "teacher"],
+    ["Led the migration as a recruiter.", "recruiter"],
+  ])("canary (1): EN '%s' is rejected", (text, found) => {
+    expect(has(inventedRoleTitles(text, ["Software Engineer"]), found)).toBe(true);
+  });
+
+  it.each([
+    ["Atuei como engenheira de software e, mais tarde, tech lead.", titles],
+    ["Worked as a software engineer and, later, tech lead.", ["Software Engineer"]],
+    ["Worked as a software engineer, later, tech lead.", ["Software Engineer"]],
+    ["Worked as a software engineer, and later, tech lead.", ["Software Engineer"]],
+  ])("canary (2): an aside between commas does not end the list: '%s'", (text, base) => {
+    expect(has(inventedRoleTitles(text, base), "tech lead")).toBe(true);
+  });
+
+  it("canary (3): a typographic apostrophe (I’m) is a copula too", () => {
+    expect(
+      has(inventedRoleTitles("I’m a recruiter.", ["Software Engineer"], "", ""), "recruiter"),
+    ).toBe(true);
+  });
+
+  it.each([
+    "Served as the point of contact for payments.",
+    "I was a key contributor to the billing migration.",
+    "I am a strong believer in durable queues.",
+  ])("positive (4): '%s' presents no role", (text) => {
+    expect(inventedRoleTitles(text, ["Software Engineer"], "", "")).toEqual([]);
+  });
+
+  it("positive: a listed title the base CV has, with an aside, passes", () => {
+    expect(
+      inventedRoleTitles("Worked as a software engineer and, later, tech lead.", [
+        "Software Engineer",
+        "Tech Lead",
+      ]),
+    ).toEqual([]);
+  });
+});
+
+describe("Re-QA on PR #98 (847efbc): principal and staff are modifiers", () => {
+  const titles = ["Engenheira de software"];
+
+  it.each([
+    "Atuei como principal responsável pela migração.",
+    "Fui o principal responsável pela migração.",
+    "Fui a principal responsável pela migração.",
+    "Atuei como principal ponto de contato do cliente.",
+    "Atuei como principal referência técnica do time.",
+    "Atuei como principal interlocutora com o cliente.",
+    "Atuei como principal interlocutor com o cliente.",
+    "Atuei como principal articuladora da migração.",
+    "Atuei como principal articulador da migração.",
+    "Sou a principal referência em PostgreSQL do time.",
+    "Como principal objetivo, reduzi incidentes.",
+    "Como principal resultado, reduzi incidentes.",
+    "As the principal investigator, I led the study.",
+    "As the principal contributor, I led the migration.",
+    "Atuei como staff de apoio no evento.",
+    "Trabalhei como staff de apoio no evento.",
+    "Atuei como contato técnico do cliente.",
+    "Trabalhei como ponte entre o PO e o time.",
+    "Apresentei a migração às 2 PM.",
+    "Reunião diária às 9 PM com o time.",
+  ])("positive: '%s' presents no role", (text) => {
+    expect(inventedRoleTitles(text, titles, "", "")).toEqual([]);
+  });
+
+  it.each([
+    ["Liderei como principal engineer.", "principal engineer"],
+    ["Atuei como engenheira principal.", "engenheira principal"],
+    ["Fui a principal desenvolvedora do módulo.", "principal desenvolvedora"],
+    ["Worked as a staff engineer.", "staff engineer"],
+    ["Atuei como engenheira staff.", "engenheira staff"],
+    ["Liderei a migração como principal PM.", "principal pm"],
+  ])("negative: '%s' is rejected", (text, role) => {
+    expect(inventedRoleTitles(text, titles, "", "").some((found) => found.startsWith(role))).toBe(
+      true,
+    );
+  });
+
+  it("positive: 'engenheira principal' passes when it is the base CV's title", () => {
+    expect(
+      inventedRoleTitles("Atuei como engenheira principal.", ["Engenheira Principal"]),
+    ).toEqual([]);
+  });
+});
+
+describe("Re-QA on PR #98 (ce7e566): a non-role item does not end the list", () => {
+  const titles = ["Engenheira de software"];
+  const has = (found: string[], role: string) => found.some((name) => name.includes(role));
+
+  it.each([
+    ["Atuei como principal e tech lead.", "tech lead"],
+    ["Atuei como referência e tech lead do time.", "tech lead"],
+    ["Atuei como ponto focal e tech lead.", "tech lead"],
+    ["Fui a principal responsável e tech lead do time.", "tech lead"],
+    ["Atuei como principal responsável e, depois, tech lead.", "tech lead"],
+    ["Atuei como responsável pelo time e tech lead.", "tech lead"],
+    ["Atuei como principal referência e gerente de produto.", "gerente de produto"],
+    ["Worked as the principal point of contact and product manager.", "product manager"],
+  ])("canary: '%s' is rejected", (text, role) => {
+    expect(has(inventedRoleTitles(text, titles, "", ""), role)).toBe(true);
+  });
+
+  it.each([
+    "Atuei como ponto focal entre áreas.",
+    "Atuei como parte do squad de pagamentos.",
+    "Atuei como principal responsável pela migração.",
+    "Served as the point of contact for payments.",
+    "Atuei como responsável técnico.",
+  ])("positive: '%s' presents no role", (text) => {
+    expect(inventedRoleTitles(text, titles, "", "")).toEqual([]);
+  });
+
+  it("'No papel de responsável técnico' stays rejected", () => {
+    expect(
+      has(
+        inventedRoleTitles("No papel de responsável técnico, conduzi a migração.", titles),
+        "responsavel",
+      ),
+    ).toBe(true);
   });
 });

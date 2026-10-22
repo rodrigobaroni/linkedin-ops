@@ -180,3 +180,58 @@ describe("the humanizer never turns a credential into a title (Sentinela S-1, PR
     expect(result.ok && result.value.revertedSegmentIds).toEqual([]);
   });
 });
+
+describe("the humanizer never introduces an invented title (issue #93, Pena §6.10.2)", () => {
+  /** The tailored CV against the fixture base, with the rewritten bullet (seg-2) set to `bullet`. */
+  function beforeWith(bullet: string): TailoredCvContent {
+    const raw = tailoringOutput();
+    const seg = raw.tailoredCv.experiences[0]?.bullets.segments[0];
+    if (seg) seg.text = bullet;
+    const result = parseCvTailorResponse(raw, {
+      base: baseCv,
+      job,
+      target: resolveTargetLanguage("en"),
+    });
+    if (!result.ok) throw new Error(result.error.issues.join());
+    return result.value.cv;
+  }
+
+  it.each([
+    "Atuei como product manager nos pipelines de cobrança.",
+    "Atuei como tech lead nos pipelines de cobrança.",
+    "Worked as an engineering manager on the billing pipelines.",
+  ])("canary: 'Atuei com pipelines…' → '%s' is reverted", (text) => {
+    const cv = beforeWith("Atuei com pipelines de cobrança.");
+    const result = parseCvHumanizeResponse(output(cv, { "seg-2": text }), {
+      before: cv,
+      base: baseCv,
+    });
+    expect(result.ok && result.value.revertedSegmentIds).toEqual(["seg-2"]);
+    expect(result.ok && textOf(result.value.cv, "seg-2")?.text).toBe(
+      "Atuei com pipelines de cobrança.",
+    );
+  });
+
+  it("positive: the base CV's title, or a phrase without a role noun, applies", () => {
+    const cv = beforeWith("Atuei com pipelines de cobrança.");
+    const result = parseCvHumanizeResponse(
+      output(cv, {
+        "seg-2": "Atuei como engenheira de software nos pipelines de cobrança.",
+        "seg-3": "Evaluated Kafka for event streaming as part of the team.",
+      }),
+      { before: cv, base: baseCv },
+    );
+    expect(result.ok && result.value.revertedSegmentIds).toEqual([]);
+  });
+});
+
+describe("the humanizer never turns a copula into an invented title (Maestro on PR #98)", () => {
+  it("canary: 'Evaluated Kafka…' → 'I was a recruiter…' is reverted", () => {
+    const cv = before();
+    const result = parseCvHumanizeResponse(
+      output(cv, { "seg-3": "I was a recruiter evaluating Kafka for event streaming." }),
+      { before: cv, base: baseCv },
+    );
+    expect(result.ok && result.value.revertedSegmentIds).toEqual(["seg-3"]);
+  });
+});

@@ -566,6 +566,474 @@ export function titlesFromCredentials(
   return [...found];
 }
 
+/**
+ * Words that head a role title once a role introducer presents them (issue #93): the role nouns plus leadership,
+ * founder, coaching, seniority and C-level terms, and roles and acronyms that follow a plain `como`/`as` ("Liderei
+ * a migração como PO / SRE / gestora de TI / programadora / professora"; QA on PR #98). Wider than `ROLE_NOUNS`,
+ * which only cuts titles out of credentials. `principal` and `staff` are `ROLE_MODIFIERS`, not heads.
+ */
+const ROLE_TITLE_WORDS = new Set([
+  ...ROLE_NOUNS,
+  ...`
+  lider head chefe coordenador coordenadora coordinator diretor diretora director supervisor supervisora
+  presidente president cto ceo cfo coo cio cpo vp intern estagiario estagiaria trainee senior pleno junior sr jr
+  founder cofounder fundador fundadora cofundador cofundadora socio socia partner mentor mentora coach evangelist
+  evangelista advocate steward po pm sre dba gestor gestora programador programadora programmer agilista
+  recruiter recrutador recrutadora professor professora teacher instrutor instrutora instructor
+  `
+    .split(/\s+/u)
+    .filter(Boolean),
+]);
+
+interface RoleIntroducer {
+  words: string[];
+  /** What follows is a role by grammar, even without a role title word ("No papel de responsável técnico"). */
+  strong: boolean;
+  /** A role reached ("promoted to", "became"): a credential after it names the credential, not a role. */
+  promotion: boolean;
+  /** "promoted from X to Y": `to`/`a`/`para` after the first role introduces the second. */
+  from: boolean;
+  /**
+   * A first-person copula ("Fui …", "I was a …"): a word outside the base CV and the lexicon after it is a role
+   * candidate even outside `ROLE_TITLE_WORDS` (Maestro on PR #98).
+   */
+  copula?: boolean;
+  /** It names a role ("papel de", "cargo de", "role of"): what follows is a role even if it is in `NOT_ROLES`. */
+  named?: boolean;
+}
+
+/**
+ * Introducers for this check: `ROLE_INTRODUCERS` (the multi-word ones are strong) plus promotions (Codex review,
+ * issue #93): "promoted to", "promovido a", "appointed", "nomeado" (strong); "became", "me tornei", "virei";
+ * "promoted from … to …".
+ */
+const INTRODUCERS: RoleIntroducer[] = [
+  ...ROLE_INTRODUCERS.map((words) => ({
+    words,
+    strong: words.length > 1,
+    promotion: false,
+    from: false,
+    named: words.length > 1,
+  })),
+  ...["promoted to", "promovido a", "promovida a", "promovido para", "promovida para"]
+    .concat(["appointed", "nomeado", "nomeada"])
+    .map((phrase) => ({ words: phrase.split(" "), strong: true, promotion: true, from: false })),
+  // A copula before a role title word ("Fui gerente de produto", "I was a product manager"; Codex review). The
+  // first-person ones also make a role candidate of an unknown word ("Fui recrutador", "I was a recruiter").
+  ...["fui", "sou", "i was", "i am", "i'm"].map((phrase) => ({
+    words: phrase.split(" "),
+    strong: false,
+    promotion: false,
+    from: false,
+    copula: true,
+  })),
+  ...["era", "was", "am"].map((phrase) => ({
+    words: phrase.split(" "),
+    strong: false,
+    promotion: false,
+    from: false,
+  })),
+  ...["became", "become", "becoming", "me tornei", "tornei me", "virei"].map((phrase) => ({
+    words: phrase.split(" "),
+    strong: false,
+    promotion: true,
+    from: false,
+  })),
+  // A verb that says the candidate held the role makes `como`/`as` strong ("Atuei como recrutador"; Codex review).
+  ...[
+    "atuei como",
+    "atuou como",
+    "atuando como",
+    "trabalhei como",
+    "trabalhou como",
+    "trabalhando como",
+    "contratado como",
+    "contratada como",
+    "entrei como",
+    "ingressei como",
+    "worked as",
+    "working as",
+    "served as",
+    "serving as",
+    "acted as",
+    "acting as",
+    "hired as",
+    "employed as",
+    "joined as",
+  ].map((phrase) => ({ words: phrase.split(" "), strong: true, promotion: false, from: false })),
+  ...["promoted from", "promovido de", "promovida de"].map((phrase) => ({
+    words: phrase.split(" "),
+    strong: true,
+    promotion: true,
+    from: true,
+  })),
+];
+/**
+ * Words that make a role title only next to a role noun (re-QA on PR #98): before it ("principal engineer",
+ * "principal desenvolvedora") they are inside the head search's phrase; after it ("engenheira principal") they are
+ * seniority. Alone they are skipped ("como principal responsável", "staff de apoio").
+ */
+const ROLE_MODIFIERS = new Set(["principal", "staff"]);
+/** What may follow a title's head and still be the title: seniority ("engenheiro sênior") and complements. */
+const ROLE_SENIORITY = new Set(["senior", "pleno", "junior", "sr", "jr", ...ROLE_MODIFIERS]);
+const ROLE_COMPLEMENT = new Set(["de", "da", "do", "dos", "das", "of"]);
+/** Complements that attach the role to a team or area ("do time", "of the team") rather than name it. */
+const ROLE_ATTACHMENTS = new Set(["da", "do", "dos", "das"]);
+const ROLE_MAX_COMPLEMENTS = 3;
+/**
+ * A complement runs over several words ("head of data engineering"; Codex review, issue #93), up to a stop word,
+ * a pause, another complement, seniority or a gerund ("engenheira de software desenvolvendo APIs", "head of data
+ * leading teams"; not `ING_NOUNS`).
+ */
+const ROLE_COMPLEMENT_WORDS = 3;
+/** Words that end the search for a title's head ("como parte do time em pagamentos", "appointed to lead"). */
+const ROLE_STOP_WORDS = new Set(
+  "em no na nos nas in at on for para pelo pela com with durante during after apos onde where que that which who e and ou or & to".split(
+    " ",
+  ),
+);
+/**
+ * What an introducer may present that is not a role ("Atuei como parte do time", "as part of", "Served as the point
+ * of contact", "I was a key contributor", "I am a strong believer", "como principal responsável"; QA on PR #98).
+ * Opening the phrase (after `ROLE_MODIFIERS`), one ends that item's search ("Trabalhei como ponte entre o PO e o
+ * time" never reaches "po"); the list goes on after the next conjunction or comma ("como referência e tech lead").
+ */
+const NOT_ROLES = new Set(
+  `parte part ponte bridge referencia reference ponto point contact contato elo apoio suporte support membro member
+  interface voz voice contributor believer responsavel objetivo resultado interlocutor interlocutora articulador
+  articuladora investigator`
+    .split(/\s+/u)
+    .filter(Boolean),
+);
+/** What a first-person copula may present that is not a role ("I was the first to …", "Fui a primeira a …"). */
+const COPULA_NOT_ROLES = new Set(
+  `first last only main one primeiro primeira unico unica ultimo ultima under over never ever after other together
+  rather later better`
+    .split(/\s+/u)
+    .filter(Boolean),
+);
+/**
+ * Agentive endings (PT/EN) that make an unknown word after a first-person copula without an article a role
+ * candidate ("Fui recrutador", "Sou instrutora"; Maestro on PR #98). Without an article and without one of these
+ * ("Fui responsável", "Fui premiada") the word is taken as an adjective or a participle.
+ */
+const AGENTIVE = /(?:or|ora|er|ista|eiro|eira|ente|ante|dor|dora|ist|ian)$/u;
+
+/** EN `-ing` words that name an area, not an action, inside a complement ("head of data engineering"). */
+const ING_NOUNS = new Set(
+  `engineering marketing billing pricing accounting banking consulting computing learning manufacturing networking
+  processing testing sourcing branding publishing planning licensing onboarding reporting staffing recruiting
+  hosting streaming`
+    .split(/\s+/u)
+    .filter(Boolean),
+);
+/** Words that list another role after the first ("engenheira e tech lead"). */
+const ROLE_CONJUNCTIONS = new Set(["e", "and", "ou", "or", "&"]);
+/** "promoted from engineer to product manager", "promovido de analista a gerente". */
+const ROLE_FROM_TO = new Set(["to", "a", "para"]);
+/** Words before or after `como`/`as` that make it a comparison, not a role ("bem como", "such as", "as well"). */
+const COMPARISON_BEFORE = new Set(["assim", "bem", "tanto", "such", "well"]);
+const COMPARISON_AFTER = new Set(["well", "soon", "long", "much", "far"]);
+/**
+ * How many words after an introducer (an article skipped) may hold the title's head, and how many a strong
+ * introducer takes as the role when none of them is a role title word. After a list separator there is no fixed
+ * window: the head is searched up to the end of the clause (a pause or a stop word; Maestro on PR #98).
+ */
+const ROLE_WINDOW = 4;
+const ROLE_STRONG_WINDOW = 3;
+const ROLE_ASIDE_WORDS = 4;
+
+interface RoleWord {
+  word: string;
+  /** Punctuation right after the word: a comma may list another role, anything else ends the phrase. */
+  pause: "comma" | "stop" | null;
+}
+
+/** Folded words of a text for the role check: split on spaces, slashes and dashes, with the trailing pause. */
+function roleWords(text: string): RoleWord[] {
+  const result: RoleWord[] = [];
+  // A typographic apostrophe is the ASCII one ("I’m"; QA on PR #98).
+  const normalized = text.normalize("NFKC").replace(/[\u2018\u2019\u02bc]/gu, "'");
+  for (const raw of normalized.split(/[\s/\u2013\u2014-]+/u)) {
+    const cleaned = raw.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}+#]+$/gu, "");
+    // "às" (à + as) keeps its accent: folded it would be the introducer "as" ("às 2 PM"; re-QA on PR #98).
+    const word = /^às$/iu.test(cleaned.normalize("NFC")) ? "às" : fold(cleaned);
+    if (word.length === 0) continue;
+    const trail = /[^\p{L}\p{N}+#]+$/u.exec(raw)?.[0] ?? "";
+    result.push({
+      word,
+      pause: /[.!?;:)]/u.test(trail) ? "stop" : trail.includes(",") ? "comma" : null,
+    });
+  }
+  return result;
+}
+
+/** The introducer starting at `start` of `words`, or null. */
+function introducerAt(words: readonly RoleWord[], start: number): RoleIntroducer | null {
+  return (
+    INTRODUCERS.find((introducer) => {
+      const phrase = introducer.words;
+      const end = start + phrase.length;
+      if (!phrase.every((word, offset) => words[start + offset]?.word === word)) return false;
+      if (phrase.some((_word, offset) => words[start + offset]?.pause)) return false;
+      if (introducer.promotion || phrase.length > 1) return true;
+      return (
+        !COMPARISON_BEFORE.has(words[start - 1]?.word ?? "") &&
+        !COMPARISON_AFTER.has(words[end]?.word ?? "")
+      );
+    }) ?? null
+  );
+}
+
+interface RolePhrase {
+  words: string[];
+  /** Lengths at which the phrase may end as a title: after the head (and seniority), after each complement. */
+  cuts: number[];
+  /**
+   * The clause before the introducer ("" for "Atuei como …" or "Served as …", "a colleague" for "A colleague worked
+   * as …"): who the text says holds the role, whatever the introducer's wording.
+   */
+  context: string;
+}
+
+/**
+ * Role phrases a text presents with a role introducer (issue #93; Pena review §6.10.2), folded. After the
+ * introducer, its article and a nested introducer ("promoted to the role of …", "appointed as …"), the phrase runs
+ * up to the last role title word within `ROLE_WINDOW` words, short of a stop word; a strong introducer takes up to
+ * `ROLE_STRONG_WINDOW` words when there is none ("No papel de responsável técnico", "Atuei como recrutador"),
+ * unless they open with one of `NOT_ROLES`. A first-person copula does the same for a word outside the base CV
+ * (`vocabulary`) and the lexicon, after an article or with an `AGENTIVE` ending ("I was a recruiter", "Fui
+ * recrutador"). Then any seniority and up to
+ * `ROLE_MAX_COMPLEMENTS` complements ("coordenador de engenharia de dados", "engenheiro de dados sênior"), without
+ * a credential's words up to its last marker. A comma or conjunction right after it lists another role, whose head
+ * is searched up to the end of the clause ("engenheira de software, tech lead e mentora"; "engineer, architect, and
+ * product manager"; "an engineer and technical product manager"). Without a role ("como parte do time", "as part of") there is no phrase.
+ */
+function introducedRoles(text: string, vocabulary: ReadonlySet<string>): RolePhrase[] {
+  const words = roleWords(text);
+  const covered = lexiconCoverage(words.map((role) => role.word));
+  const word = (at: number) => words[at]?.word ?? "";
+  const phrases: RolePhrase[] = [];
+  // An aside between commas does not end a list ("e, mais tarde, tech lead", ", and later, tech lead"; QA on PR
+  // #98): after a separator, up to `ROLE_ASIDE_WORDS` words without a role title word, closed by a comma.
+  const afterAside = (next: number, separated: boolean) => {
+    if (!separated) return next;
+    for (let at = next; at < Math.min(words.length, next + ROLE_ASIDE_WORDS); at += 1) {
+      if (ROLE_TITLE_WORDS.has(word(at)) || words[at]?.pause === "stop") break;
+      if (words[at]?.pause === "comma") return at + 1;
+    }
+    return next;
+  };
+  // Past the last introducer, so "as" inside "worked as" does not count twice.
+  let introduced = 0;
+  for (let index = 0; index < words.length; index += 1) {
+    const introducer = index < introduced ? null : introducerAt(words, index);
+    if (introducer === null) continue;
+    introduced = index + introducer.words.length;
+    let clause = index;
+    while (clause > 0 && !words[clause - 1]?.pause) clause -= 1;
+    const context = words
+      .slice(clause, index)
+      .map((role) => role.word)
+      .join(" ");
+    let start = index + introducer.words.length;
+    let strong = introducer.strong;
+    let named = introducer.named === true;
+    let promotion = introducer.promotion;
+    let from = introducer.from;
+    let window = ROLE_WINDOW;
+    let copula = introducer.copula === true;
+    while (start < words.length) {
+      let article = false;
+      for (let skip = 0; skip < 2; skip += 1) {
+        if (ARTICLES.has(word(start)) && !words[start]?.pause) {
+          start += 1;
+          article = true;
+        }
+        const nested = introducerAt(words, start);
+        if (nested === null) break;
+        start += nested.words.length;
+        strong ||= nested.strong;
+        named ||= nested.named === true;
+        promotion ||= nested.promotion;
+        from ||= nested.from;
+      }
+      let opener = start;
+      while (ROLE_MODIFIERS.has(word(opener)) && !words[opener]?.pause) opener += 1;
+      const notRole = !named && NOT_ROLES.has(word(opener));
+      let head = -1;
+      // "Promovido de analista a analista sênior": the source role ends at `a`.
+      const stop = (at: number) =>
+        ROLE_STOP_WORDS.has(word(at)) || (from && ROLE_FROM_TO.has(word(at)));
+      for (let at = start; !notRole && at < Math.min(words.length, start + window); at += 1) {
+        if (stop(at)) break;
+        // "às 2 PM" is a time, not a product manager.
+        const time = word(at) === "pm" && /^\d/u.test(word(at - 1));
+        if (ROLE_TITLE_WORDS.has(word(at)) && !time) head = at;
+        if (words[at]?.pause) break;
+      }
+      const candidate =
+        !notRole &&
+        copula &&
+        !COPULA_NOT_ROLES.has(word(opener)) &&
+        !vocabulary.has(word(opener)) &&
+        covered[opener] === undefined &&
+        (article || (word(opener).length >= 5 && AGENTIVE.test(word(opener))));
+      if (head < 0 && !notRole && (strong || candidate)) {
+        for (let at = opener; at < Math.min(words.length, opener + ROLE_STRONG_WINDOW); at += 1) {
+          if (stop(at) || ROLE_COMPLEMENT.has(word(at))) break;
+          head = at;
+          if (words[at]?.pause) break;
+        }
+        if (head >= 0 && !named && NOT_ROLES.has(word(head))) head = -1;
+      }
+      if (head < 0) {
+        // A non-role item ("como referência", "como principal") ends only its own phrase (re-QA on PR #98): the
+        // list goes on after the next conjunction or comma of the clause ("como referência e tech lead").
+        if (!notRole && opener === start) break;
+        let next = -1;
+        let separated = false;
+        for (let at = opener; at < words.length; at += 1) {
+          if (ROLE_CONJUNCTIONS.has(word(at))) {
+            next = at + 1;
+            separated = words[at]?.pause === "comma";
+            break;
+          }
+          if (words[at]?.pause === "comma") {
+            next = at + 1;
+            separated = true;
+            break;
+          }
+          if (words[at]?.pause) break;
+        }
+        if (next < 0) break;
+        start = afterAside(next, separated);
+        strong = false;
+        named = false;
+        copula = false;
+        window = words.length;
+        continue;
+      }
+      let end = head + 1;
+      const open = () => end < words.length && !words[end - 1]?.pause;
+      const seniority = () => {
+        while (open() && ROLE_SENIORITY.has(word(end))) end += 1;
+      };
+      seniority();
+      const cuts = [end];
+      for (let complement = 0; complement < ROLE_MAX_COMPLEMENTS; complement += 1) {
+        if (!open() || !ROLE_COMPLEMENT.has(word(end)) || words[end]?.pause) break;
+        let next = end + 1;
+        if (word(end) === "of" && ARTICLES.has(word(next)) && !words[next]?.pause) next += 1;
+        const first = next;
+        while (
+          next < words.length &&
+          next - first < ROLE_COMPLEMENT_WORDS &&
+          (next === first || !words[next - 1]?.pause) &&
+          !stop(next) &&
+          !ROLE_COMPLEMENT.has(word(next)) &&
+          !ROLE_SENIORITY.has(word(next)) &&
+          !/ndo$/u.test(word(next)) &&
+          !(/ing$/u.test(word(next)) && !ING_NOUNS.has(word(next)))
+        ) {
+          next += 1;
+        }
+        if (next === first) break;
+        end = next;
+        seniority();
+        cuts.push(end);
+      }
+      // A credential naming the role ("como AWS Certified Solutions Architect") is `newCredentials`'s call; the
+      // role is what follows its last marker. After a promotion it is the credential itself ("Became an AWS
+      // Certified …", "Became an AWS Solutions Architect Associate").
+      // `Professional` only cuts the prefix: alone it does not make "a professional product manager" a credential.
+      const marker = words
+        .slice(start, head)
+        .findLastIndex(({ word }) => CREDENTIAL_WORD.test(word) || word === "professional");
+      const credential = words.slice(start, end + 1).some(({ word }) => CREDENTIAL_WORD.test(word));
+      if (!(promotion && credential)) {
+        const first = start + marker + 1;
+        phrases.push({
+          words: words.slice(first, end).map((role) => role.word),
+          cuts: cuts.map((cut) => cut - first),
+          context,
+        });
+      }
+      const pause = words[end - 1]?.pause;
+      if (pause === "stop") break;
+      if (from && ROLE_FROM_TO.has(word(end))) {
+        start = end + 1;
+        from = false;
+        window = ROLE_WINDOW;
+        continue;
+      }
+      const conjunction = ROLE_CONJUNCTIONS.has(word(end));
+      const separated = pause === "comma" || (conjunction && words[end]?.pause === "comma");
+      if (conjunction) start = afterAside(end + 1, separated);
+      else if (pause === "comma") start = afterAside(end, separated);
+      else break;
+      strong = false;
+      named = false;
+      copula = false;
+      window = words.length;
+    }
+  }
+  return phrases;
+}
+
+/**
+ * Whether a title's words cover `phrase`: some cut of the phrase occurs in the title, and either the phrase ends
+ * there or what follows only attaches the role to a team ("do time", "of the team") while the title has no
+ * complement of its own next. "engenheiro de dados do time" is covered by "Engenheiro de Dados"; "gerente de
+ * produto" is not by "Gerente", "coordenadora de engenharia de dados" not by "Coordenadora de Engenharia de
+ * Software", nor "engenheiro do time" by "Engenheiro de Dados" (Codex review, issue #93).
+ */
+function coversRole(title: readonly string[], phrase: RolePhrase): boolean {
+  return phrase.cuts.some((cut) => {
+    const next = phrase.words[cut] ?? "";
+    const attached =
+      ROLE_ATTACHMENTS.has(next) || (next === "of" && ARTICLES.has(phrase.words[cut + 1] ?? ""));
+    if (cut < phrase.words.length && !attached) return false;
+    for (let at = 0; at + cut <= title.length; at += 1) {
+      if (!phrase.words.slice(0, cut).every((word, offset) => title[at + offset] === word))
+        continue;
+      if (cut === phrase.words.length || !ROLE_COMPLEMENT.has(title[at + cut] ?? "")) return true;
+    }
+    return false;
+  });
+}
+
+/**
+ * Role titles `text` presents with a role introducer that the base CV does not have (D4 hard limit 1, issue #93):
+ * "Atuei como tech lead…", "Worked as a product manager…", "Fui contratado como coordenador de engenharia". A
+ * role phrase passes only when one of the base CV's experience `titles` (any case) covers it, or when `reference`
+ * (the cited base items of a rewritten segment, the humanizer's text before) states the same role for the same
+ * holder, the clause before the introducer ("Atuei como tech lead" → "Trabalhei como tech lead"): keeping a role
+ * the base CV states is not creating one, but "uma colega que atuou como product manager" does not make it the
+ * candidate's. `baseText` is the base CV's text, whose words are not role candidates after a copula. Fails closed: a comparison it misreads as a role
+ * costs a regeneration or a reverted segment.
+ */
+export function inventedRoleTitles(
+  text: string,
+  titles: readonly string[],
+  reference = "",
+  baseText = "",
+): string[] {
+  const vocabulary = new Set(roleWords(baseText).map((role) => role.word));
+  const titleWords = titles.map((title) => roleWords(title).map((role) => role.word));
+  const stated = introducedRoles(reference, vocabulary).map(
+    (phrase) => `${phrase.context}|${phrase.words.join(" ")}`,
+  );
+  const invented = introducedRoles(text, vocabulary)
+    .filter(
+      (phrase) =>
+        !titleWords.some((title) => coversRole(title, phrase)) &&
+        !stated.includes(`${phrase.context}|${phrase.words.join(" ")}`),
+    )
+    .map((phrase) => phrase.words.join(" "));
+  return [...new Set(invented)];
+}
+
 function containsPhrase(words: readonly string[], phrase: readonly string[]): boolean {
   for (let start = 0; start + phrase.length <= words.length; start += 1) {
     if (phrase.every((word, offset) => words[start + offset] === word)) return true;
