@@ -1,6 +1,6 @@
 {
   "name": "@linkedin-ops/editorial-engine",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Pure editorial logic: prompt registry, request builders, response parsers, scoring and evals (no I/O)",
   "type": "module",

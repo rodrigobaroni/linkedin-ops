@@ -2,23 +2,31 @@
   "name": "@linkedin-ops/worker",
   "version": "0.0.0",
   "private": true,
-  "description": "Background worker (pg-boss) — job handlers and external-service adapters over the domain layer",
+  "description": "Background worker (pg-boss) \u2014 job handlers and external-service adapters over the domain layer",
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "clean": "rm -rf dist .next .turbo coverage *.tsbuildinfo"
+    "clean": "rm -rf dist .next .turbo coverage *.tsbuildinfo",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "start": "node dist/index.js"
   },
   "dependencies": {
-    "@linkedin-ops/contracts": "workspace:*"
+    "@linkedin-ops/contracts": "workspace:*",
+    "@linkedin-ops/domain": "workspace:*",
+    "@linkedin-ops/editorial-engine": "workspace:*",
+    "pg-boss": "catalog:",
+    "pino": "catalog:",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@linkedin-ops/config": "workspace:*",
     "@types/node": "catalog:",
     "eslint": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "@testcontainers/postgresql": "catalog:"
   }
 }

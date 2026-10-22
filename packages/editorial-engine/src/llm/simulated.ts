@@ -5,7 +5,10 @@
 import type { PromptId } from "@linkedin-ops/contracts";
 import { LlmError, type LlmClient, type LlmRequest, type LlmResponse } from "./port.js";
 
-export type SimulatedOutput = unknown | ((request: LlmRequest, call: number) => unknown);
+/** `call` is the 0-based index of calls to the same prompt. */
+export type SimulatedResponder = (request: LlmRequest, call: number) => unknown;
+/** A fixed JSON-like output (cloned per call) or a responder. */
+export type SimulatedOutput = SimulatedResponder | Record<string, unknown> | readonly unknown[];
 
 export interface SimulatedCall {
   promptId: PromptId;
@@ -36,7 +39,7 @@ export class SimulatedLlmClient implements LlmClient {
     try {
       const output: unknown =
         typeof configured === "function"
-          ? (configured as (r: LlmRequest, c: number) => unknown)(request, callIndex)
+          ? configured(request, callIndex)
           : (JSON.parse(JSON.stringify(configured)) as unknown);
       return Promise.resolve({ output, model: `simulated:${request.model}`, usage: null });
     } catch (error) {

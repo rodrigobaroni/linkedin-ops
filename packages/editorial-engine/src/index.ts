@@ -1,5 +1,8 @@
 // @linkedin-ops/editorial-engine — pure editorial core (ADR-0005): prompt registry, request builders, response
 // parsers and checks. No I/O: the worker's adapters perform every call.
+/** Persisted with every generation (ADR-0005 §3); keep in sync with package.json. */
+export const ENGINE_VERSION = "0.1.0";
+
 export * from "./result.js";
 export * from "./runtime.js";
 export * from "./llm/port.js";
