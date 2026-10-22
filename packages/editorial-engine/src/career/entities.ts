@@ -106,7 +106,7 @@ const OPENING_WORDS = new Set(
   contributed contribute hired hire trained train tested test monitored monitor secured secure standardized
   streamlined rebuilt replaced replace consolidated reviewed review presented present negotiated planned
   prioritized organized organised acted served serve took handled oversaw directed headed spearheaded
-  packaged package tuned tune configured configure debugged debug profiled benchmarked documented document
+  exposed expose exportei expus packaged package tuned tune configured configure debugged debug profiled benchmarked documented document
   prototyped prototype validated validate modernized modernised upgraded upgrade resolved resolve fixed fix
   enabled enable released release rolled set saved save accelerated accelerate measured measure researched
   investigated investigate identified identify translated translate onboarded onboard used use leveraged
@@ -219,6 +219,39 @@ function lexiconCoverage(words: readonly string[]): (number | undefined)[] {
   return covered;
 }
 
+/** Deny terms as folded token sequences, longest first (`cv-competency-lexicon` `denyTerms`). */
+const DENY_FORMS: ReadonlyArray<{ words: readonly string[]; capitalizedOnly: boolean }> =
+  CV_COMPETENCY_LEXICON.denyTerms
+    .flatMap((group) =>
+      group.terms.map((term) => ({
+        words: tokens(term).map(fold),
+        capitalizedOnly: group.match === "capitalized",
+      })),
+    )
+    .filter((form) => form.words.length > 0)
+    .sort((a, b) => b.words.length - a.words.length);
+
+/**
+ * Deny-term phrases found in analysed tokens: `any-case` terms in any spelling (`nubank`), `capitalized` terms
+ * only when written as a name (`Rede`, never the common word `rede`).
+ */
+function denyMatches(analysed: readonly Token[]): { start: number; words: readonly string[] }[] {
+  const matches: { start: number; words: readonly string[] }[] = [];
+  for (let start = 0; start < analysed.length; start += 1) {
+    const form = DENY_FORMS.find(
+      (candidate) =>
+        start + candidate.words.length <= analysed.length &&
+        candidate.words.every((word, offset) => analysed[start + offset]?.word === word) &&
+        (!candidate.capitalizedOnly || analysed[start]?.nameLike === true),
+    );
+    if (form) {
+      matches.push({ start, words: form.words });
+      start += form.words.length - 1;
+    }
+  }
+  return matches;
+}
+
 /** Lexicon entries named anywhere in a text. */
 function lexiconEntries(text: string): Set<number> {
   return new Set(
@@ -234,6 +267,13 @@ export function withoutLexiconTerms(text: string): string {
   const words = tokens(text);
   const covered = lexiconCoverage(words.map(fold));
   return words.filter((_word, index) => covered[index] === undefined).join(" ");
+}
+
+function containsPhrase(words: readonly string[], phrase: readonly string[]): boolean {
+  for (let start = 0; start + phrase.length <= words.length; start += 1) {
+    if (phrase.every((word, offset) => words[start + offset] === word)) return true;
+  }
+  return false;
 }
 
 interface Token {
@@ -285,6 +325,7 @@ export function createEntityGuard(base: CvStructured, job: JobPostingExtracted):
   ];
   const jobText = jobTexts.join("\n");
   const baseWords = vocabulary(baseText);
+  const baseTokens = tokens(baseText).map(fold);
   const baseEntries = lexiconEntries(baseText);
   const commonWords = new Set([
     ...lowercaseOccurrences(baseText),
@@ -298,6 +339,9 @@ export function createEntityGuard(base: CvStructured, job: JobPostingExtracted):
   for (const requirement of job.requirements) {
     for (const text of [requirement.text, requirement.evidence]) {
       const analysed = analyse(text);
+      // Clients the deny list knows are names in any spelling, even in a lowercase requirement.
+      for (const match of denyMatches(analysed))
+        for (const word of match.words) postingNames.add(word);
       const capitalized = analysed.filter((token) => /^\p{Lu}/u.test(token.word) || token.nameLike);
       if (analysed.length > 2 && capitalized.length / analysed.length > 0.6) continue;
       const covered = lexiconCoverage(analysed.map((token) => token.word));
@@ -317,7 +361,14 @@ export function createEntityGuard(base: CvStructured, job: JobPostingExtracted):
       const analysed = analyse(text);
       const covered = lexiconCoverage(analysed.map((token) => token.word));
       const violations: string[] = [];
+      const denied = new Set<number>();
+      for (const match of denyMatches(analysed)) {
+        if (containsPhrase(baseTokens, match.words)) continue;
+        for (let i = 0; i < match.words.length; i += 1) denied.add(match.start + i);
+        violations.push(match.words.join(" "));
+      }
       analysed.forEach((token, index) => {
+        if (denied.has(index)) return;
         const namedByPosting = postingNames.has(token.word);
         if (!token.nameLike && !namedByPosting) return;
         const entry = covered[index];
@@ -330,7 +381,7 @@ export function createEntityGuard(base: CvStructured, job: JobPostingExtracted):
         if (!namedByPosting && token.opening && isCommon(token.word)) return;
         violations.push(token.word);
       });
-      return violations;
+      return [...new Set(violations)];
     },
   };
 }

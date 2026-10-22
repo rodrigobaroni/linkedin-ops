@@ -93,6 +93,42 @@ describe("closed-list entity guard (Maestro's decision; Sentinela PR #89)", () =
   });
 });
 
+describe("denyTerms at runtime (Sentinela PR #89)", () => {
+  it("requirement and output both lowercase: 'nubank' is rejected", () => {
+    const guard = createEntityGuard(baseCv, postingWith("nubank API integration"));
+    expect(
+      guard.newEntities("Built a nubank API integration with Kafka.", ["req-9", "req-3"]),
+    ).toEqual(["nubank"]);
+  });
+
+  it("a lowercase client of the deny list is rejected even when the posting never names it", () => {
+    const guard = createEntityGuard(baseCv, postingWith("Kafka"));
+    expect(guard.newEntities("Built payment flows for itaú with Kafka.", ["req-9"])).toEqual([
+      "itau",
+    ]);
+    expect(guard.newEntities("Built payment flows for magazine luiza.", ["req-9"])).toEqual([
+      "magazine luiza",
+    ]);
+  });
+
+  it("names that are also common words are rejected only when written as names", () => {
+    const guard = createEntityGuard(baseCv, postingWith("API and REST"));
+    expect(guard.newEntities("Exposed the API via REST to the partner rede.", ["req-9"])).toEqual(
+      [],
+    );
+    expect(guard.newEntities("Exposed the API to Rede via REST.", ["req-9"])).toEqual(["rede"]);
+  });
+
+  it("a deny-listed name that the base CV already has stays allowed", () => {
+    const base = {
+      ...baseCv,
+      experiences: baseCv.experiences.map((e) => ({ ...e, company: "Itaú Unibanco" })),
+    };
+    const guard = createEntityGuard(base, postingWith("Kafka"));
+    expect(guard.newEntities("Built Kafka pipelines at Itaú Unibanco.", ["req-9"])).toEqual([]);
+  });
+});
+
 describe("Pena's evals (cv-competency-lexicon-review.md §7)", () => {
   const guard = (requirement: string) => createEntityGuard(baseCv, postingWith(requirement));
 

@@ -24,6 +24,13 @@ frase (`Google Cloud` passa, `Google` sozinho não).
 
 Os dígitos de um termo aceito do léxico (`ISO 27001`, `OAuth 2.0`, `GA4`) não contam como "número acrescentado".
 
+A `denyTerms` também vale **em tempo de execução**: cada trecho é comparado com a lista por frase, sem caixa e
+sem acento, e um termo encontrado é rejeitado (salvo se já estiver no CV base). Cada grupo declara como casa:
+`any-case` para nomes distintivos, rejeitados mesmo em minúscula (`nubank`, `itaú`, `magazine luiza`), e
+`capitalized` para nomes que também são palavras comuns (`Via`, `Rede`, `Meta`, `Spring`), rejeitados só quando
+escritos como nome. Termos da lista que aparecem num requisito, em qualquer grafia, também passam a contar como
+nomes usados pela vaga.
+
 ## 2. O que entra e o que nunca entra
 
 Entra: tecnologia, linguagem, framework, banco de dados, plataforma, ferramenta, protocolo, padrão técnico ou
@@ -52,8 +59,17 @@ O mesmo vale para a primeira palavra de uma frase: ela só é isenta quando est�
 palavras de abertura da guarda (PT e EN) ou aparece em minúscula no CV base ou na vaga. Um verbo de abertura
 ausente da lista também custa uma regeneração e se resolve acrescentando-o à lista.
 
-## 4. Histórico
+## 4. Resíduo conhecido
+
+Um nome **inventado**, escrito **todo em minúscula**, que **não está na `denyTerms`** e que a vaga não usa (por
+exemplo, um cliente fictício `acmebank` em minúscula) não é detectável de forma determinística: para o
+verificador, ele é indistinguível de uma palavra comum. A mitigação é a proveniência obrigatória: todo trecho
+`acrescentado` aparece marcado na revisão do painel e listado no relatório de aderência, com a nota do que foi
+acrescentado e por quê, e Rodrigo revisa antes de baixar o PDF (`career-editorial-exception.md` §4 e §5).
+Quando um nome assim for observado, ele entra na `denyTerms` (nova versão).
+
+## 5. Histórico
 
 | Data | Versão | Mudança |
 |---|---|---|
-| 2026-10-22 | 1.0.0 | Seed a partir da pré-revisão da Pena (C1–C7, cobertura §3, `denyTerms` §4). |
+| 2026-10-22 | 1.0.0 | Seed a partir da pré-revisão da Pena (C1–C7, cobertura §3, `denyTerms` §4); `denyTerms` aplicada em tempo de execução com modos `any-case` e `capitalized` (Sentinela, PR #89). |
