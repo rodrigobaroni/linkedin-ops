@@ -126,7 +126,7 @@ describe("parseCvTailorResponse (cv-tailor)", () => {
   it("promotes an `original` segment whose text differs from its source to `rewritten`", () => {
     const output = tailoringOutput();
     const seg = output.tailoredCv.skills.technical.segments[0];
-    if (seg) seg.text = "TypeScript (Node.js)";
+    if (seg) seg.text = "TypeScript language";
     const value = tailored(output);
     expect(value.promotedSegmentIds).toEqual(["seg-5"]);
     expect(value.cv.skills.technical.segments[0]?.provenance).toBe("rewritten");
@@ -184,6 +184,92 @@ describe("parseCvTailorResponse (cv-tailor)", () => {
       const seg = output.tailoredCv.experiences[0]?.bullets.segments[1];
       if (seg) seg.text = "Confluent Certified Developer for Apache Kafka.";
       expect(issuesOf(output)).toContain("seg-3: hard limit, added credential");
+    });
+
+    describe("entity guard (Sentinela/Crivo PR #89)", () => {
+      /** Replaces the added bullet (seg-3, targets req-3 Kafka) or the rewritten bullet (seg-2). */
+      function withBullet(index: 0 | 1, text: string) {
+        const output = tailoringOutput();
+        const seg = output.tailoredCv.experiences[0]?.bullets.segments[index];
+        if (seg) seg.text = text;
+        return output;
+      }
+      const CANARIES: Array<[kind: string, text: string]> = [
+        ["employer", "Built payment APIs while working at Google with Kafka."],
+        ["job title", "Acted as Staff Engineer for the Kafka rollout."],
+        ["date", "Led the Kafka rollout since March."],
+        ["client", "Delivered the Kafka integration for Itaú."],
+        ["project", "Led the Kafka rollout of project Phoenix."],
+        ["Crivo repro", "Delivered Project Apollo for Nubank using Kafka."],
+      ];
+      for (const [kind, text] of CANARIES) {
+        it(`rejects a new ${kind} in an added segment`, () => {
+          expect(issuesOf(withBullet(1, text))).toContain("seg-3: hard limit, new entity");
+        });
+        it(`rejects a new ${kind} in a rewritten segment`, () => {
+          expect(issuesOf(withBullet(0, text))).toContain("seg-2: hard limit, new entity");
+        });
+      }
+
+      it("allows a competence term of the targeted technical requirement", () => {
+        expect(tailor(withBullet(1, "Evaluated Kafka for event streaming.")).ok).toBe(true);
+      });
+
+      it("does not allow the same term when the segment does not target that requirement", () => {
+        const output = withBullet(0, "Led the migration of the billing service to Kafka.");
+        expect(issuesOf(output)).toContain("seg-2: hard limit, new entity");
+      });
+
+      it("never allows terms of non-competence requirements (experience, certification)", () => {
+        const output = tailoringOutput();
+        const extended = {
+          ...job,
+          requirements: [
+            ...job.requirements,
+            {
+              id: "req-4",
+              kind: "desirable" as const,
+              category: "experience" as const,
+              text: "Experience at Nubank",
+              evidence: "Kafka is a plus",
+            },
+          ],
+        };
+        output.matchAssessment.requirements.push({
+          requirementId: "req-4",
+          status: "missing",
+          cvEvidence: [],
+          rationale: "Sem essa experiência.",
+        });
+        const seg = output.tailoredCv.experiences[0]?.bullets.segments[1];
+        if (seg) {
+          seg.text = "Worked with Nubank on event streaming.";
+          seg.targetRequirementIds = ["req-4"];
+        }
+        const result = parseCvTailorResponse(output, { base: baseCv, job: extended, target });
+        expect(!result.ok && result.error.issues).toContain("seg-3: hard limit, new entity");
+      });
+
+      it("accepts entities already in the base CV and translated base skills", () => {
+        const output = withBullet(
+          0,
+          "Led the PostgreSQL billing migration at Empresa Fictícia S.A.",
+        );
+        expect(tailor(output).ok).toBe(true);
+      });
+
+      it("rejects an added skill that the cited requirement does not name", () => {
+        const output = tailoringOutput();
+        output.tailoredCv.skills.technical.segments.push({
+          segmentId: "seg-9",
+          text: "Kubernetes",
+          provenance: "added",
+          sourceCvItemIds: [],
+          targetRequirementIds: ["req-3"],
+          additionNote: "Competência coerente.",
+        });
+        expect(issuesOf(output)).toContain("seg-9: hard limit, new entity");
+      });
     });
 
     it("never takes employer, title or dates from the model: the output has no such fields", () => {

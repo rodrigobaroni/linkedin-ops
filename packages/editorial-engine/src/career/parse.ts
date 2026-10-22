@@ -22,6 +22,7 @@ import {
 import type { z } from "zod";
 import { err, ok, type EngineError, type Result } from "../result.js";
 import { sanitizeUntrustedText } from "../untrusted.js";
+import { createEntityGuard } from "./entities.js";
 import { cvFullText, cvItemTexts, normalizeCvIds } from "./ids.js";
 import type { TargetLanguage } from "./language.js";
 import { lintText } from "./lint/checker.js";
@@ -142,7 +143,8 @@ export function parseJobExtractResponse(
 /**
  * D4 hard limits (career-editorial-exception.md §3, confirmed by Rodrigo on 2026-10-22, §9). Fixed rule:
  * employer, title, dates, education, certifications and languages are never generated (copied from the base CV
- * by id); added segments carry no number absent from the base CV and no credential.
+ * by id); added segments carry no number absent from the base CV and no credential; no added or rewritten
+ * segment names an entity absent from the base CV (`entities.ts`).
  */
 const CREDENTIAL_PATTERN =
   /(?<![\p{L}\p{N}])(?:certifica\p{L}*|certified|certificate\p{L}*|diploma\p{L}*|bacharel\p{L}*|bachelor\p{L}*|mestrado|mestre|master'?s|mba|ph\.?d|doutorado|doutor|licen[cç]a\p{L}*|licen[cs]e[ds]?|p[oó]s-gradua\p{L}*)(?![\p{L}\p{N}])/iu;
@@ -258,10 +260,24 @@ export function parseCvTailorResponse(
 
   // Provenance (post-processing 3) and hard limits on additions (post-processing 4).
   const baseNumbers = new Set(numericTokens(cvFullText(base)));
+  const entityGuard = createEntityGuard(base, job);
   const promotedSegmentIds: string[] = [];
-  for (const { segment } of listSegments(draft.data)) {
+  for (const { segment, block } of listSegments(draft.data)) {
     for (const id of segment.targetRequirementIds) {
       if (!requirementIds.has(id)) issues.push(`${segment.segmentId}: unknown requirement ${id}`);
+    }
+    // D4 hard limits 1, 2 and 4: no employer, title, date, institution, certification, client, project or
+    // other proper noun absent from the base CV, in added and rewritten text alike.
+    if (
+      // In a skills list the first word is a name, not a verb: it counts for added skills (which must come
+      // from the cited requirement); a rewritten skill is a translation of a base CV skill.
+      entityGuard.newEntities(
+        segment.text,
+        segment.targetRequirementIds,
+        block === "skills" && segment.provenance === "added",
+      ).length > 0
+    ) {
+      issues.push(`${segment.segmentId}: hard limit, new entity`);
     }
     if (segment.provenance === "added") {
       if (numericTokens(segment.text).some((token) => !baseNumbers.has(token))) {

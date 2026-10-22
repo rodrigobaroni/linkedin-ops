@@ -16,5 +16,6 @@ export * from "./career/language.js";
 export * from "./career/report.js";
 export * from "./career/segments.js";
 export * from "./career/ids.js";
+export * from "./career/entities.js";
 export * from "./career/lint/checker.js";
 export * from "./career/lint/cv-banned-phrases.v1.0.0.js";
