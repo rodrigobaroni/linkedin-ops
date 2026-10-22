@@ -18,11 +18,8 @@ import { PgBoss } from "pg-boss";
 import { pino } from "pino";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createCareerHandlers } from "../src/career/handlers.js";
-import {
-  unavailableJobPageFetcher,
-  type CvBaseDraftStore,
-  type JobPostingStore,
-} from "../src/career/ports.js";
+import type { CvBaseDraftStore, JobPostingStore } from "@linkedin-ops/domain";
+import { unavailableJobPageFetcher } from "../src/career/ports.js";
 import { PGBOSS_SCHEMA_NAME } from "../src/jobs/queues.js";
 import { startWorkerLifecycle, type WorkerLifecycle } from "../src/lifecycle.js";
 import {

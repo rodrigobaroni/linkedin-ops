@@ -4,15 +4,18 @@
  */
 import type { PgBoss } from "pg-boss";
 import type { Logger } from "pino";
-import type { CareerHandlers } from "./career/handlers.js";
+import type { WiredCareerHandlers } from "./career/handlers.js";
 import { CANCELLED_REQUEUE_DELAY_SECONDS, createJobRunner } from "./jobs/runner.js";
 import { WORK_OPTIONS, WORKER_QUEUES, provisionQueues } from "./jobs/queues.js";
 
 export interface WorkerDeps {
   boss: Pick<PgBoss, "createQueue" | "updateQueue" | "getQueue" | "work" | "send">;
   logger: Logger;
-  /** `null` until the Career stores are wired (PR 2/3): queues are provisioned but not consumed. */
-  career: CareerHandlers | null;
+  /**
+   * Handlers of the queues whose stores are wired (`cv.extract` since the CV base store; `job.fetch` and
+   * `cv.tailor` with career PR 3). Every queue is provisioned; only those with a handler are consumed.
+   */
+  career: WiredCareerHandlers | null;
   /** Aborted by the lifecycle before pg-boss stops, so handlers end and re-enqueue their jobs. */
   shutdown?: AbortSignal;
 }
@@ -25,17 +28,18 @@ export async function registerWorkers({
   shutdown,
 }: WorkerDeps): Promise<string[]> {
   await provisionQueues(boss);
-  if (career === null) {
-    logger.warn({ queues: WORKER_QUEUES }, "career handlers not wired; queues provisioned only");
-    return [];
+  const wired = WORKER_QUEUES.filter((queue) => career?.[queue] !== undefined);
+  const unwired = WORKER_QUEUES.filter((queue) => !wired.includes(queue));
+  if (unwired.length > 0) {
+    logger.warn({ queues: unwired }, "career handlers not wired; queues provisioned only");
   }
   const ids: string[] = [];
-  for (const queue of WORKER_QUEUES) {
+  for (const queue of wired) {
     const requeue = (payload: object) =>
       boss.send(queue, payload, { startAfter: CANCELLED_REQUEUE_DELAY_SECONDS });
     const runner = createJobRunner(
       queue,
-      career[queue] as never,
+      career?.[queue] as never,
       logger,
       requeue,
       shutdown ?? null,
@@ -44,6 +48,6 @@ export async function registerWorkers({
       await boss.work(queue, { ...WORK_OPTIONS[queue], batchSize: 1, perJobResults: true }, runner),
     );
   }
-  logger.info({ queues: WORKER_QUEUES }, "career workers registered");
+  if (wired.length > 0) logger.info({ queues: wired }, "career workers registered");
   return ids;
 }

@@ -1082,22 +1082,30 @@ model IdempotencyKey {
 /// unconfirmed draft and at most one active version per user (partial unique indexes in the migration).
 /// The uploaded PDF is never stored; its text lives in `extracted_text` only while `cv.extract` runs.
 model CvBase {
-  id            String               @id @db.Uuid
-  userId        String               @map("user_id") @db.Uuid
-  version       Int
+  id                 String               @id @db.Uuid
+  userId             String               @map("user_id") @db.Uuid
+  version            Int
   /// Draft lifecycle; a confirmed version is always `READY`.
-  status        CvDraftStatus
-  failureReason CvExtractionFailure? @map("failure_reason")
+  status             CvDraftStatus
+  failureReason      CvExtractionFailure? @map("failure_reason")
   /// Structured CV (contracts schema, validated on write and read); null until `READY`.
-  content       Json?
+  content            Json?
   /// Text extracted from the PDF, input of `cv.extract`; cleared when the draft leaves `EXTRACTING`.
-  extractedText String?              @map("extracted_text")
+  extractedText      String?              @map("extracted_text")
+  /// `cv-extract` parse warnings (`ParseWarning[]`), shown on review; null until `READY`.
+  parseWarnings      Json?                @map("parse_warnings")
+  /// The model output flagged instructions in the CV text (ADR-0005 §4): confirming needs an explicit ack.
+  injectionSuspected Boolean              @default(false) @map("injection_suspected")
+  /// Offending excerpt quoted by the model (≤ 500 characters); CV content: never logged nor audited.
+  injectionEvidence  String?              @map("injection_evidence")
+  /// Model, prompt and engine versions of the extraction (ADR-0005 §3).
+  generation         Json?
   /// Activation is an explicit service step (deactivate the previous version in the same transaction).
-  isActive      Boolean              @default(false) @map("is_active")
+  isActive           Boolean              @default(false) @map("is_active")
   /// null = draft (not yet reviewed and confirmed by the owner).
-  confirmedAt   DateTime?            @map("confirmed_at") @db.Timestamptz(3)
-  createdAt     DateTime             @map("created_at") @db.Timestamptz(3)
-  updatedAt     DateTime             @map("updated_at") @db.Timestamptz(3)
+  confirmedAt        DateTime?            @map("confirmed_at") @db.Timestamptz(3)
+  createdAt          DateTime             @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime             @map("updated_at") @db.Timestamptz(3)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

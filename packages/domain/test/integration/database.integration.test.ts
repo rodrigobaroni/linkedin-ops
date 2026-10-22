@@ -755,6 +755,41 @@ describe("cv bases (career PR 2, migration 20261022100000)", () => {
     );
   });
 
+  it("bounds the extraction metadata (migration 20261022200000)", async () => {
+    const userId = await owner();
+    const ready = (data: Record<string, unknown>) =>
+      prisma.cvBase.create({
+        data: {
+          id: newId(),
+          userId,
+          version: 1,
+          status: "READY",
+          content,
+          createdAt: now(),
+          updatedAt: now(),
+          ...data,
+        },
+      });
+    // Evidence only with the flag, at most 500 characters.
+    await expectRejects(ready({ injectionEvidence: "trecho" }), CHECK);
+    await expectRejects(
+      ready({ injectionSuspected: true, injectionEvidence: "x".repeat(501) }),
+      CHECK,
+    );
+    await expectRejects(ready({ parseWarnings: { field: "x" } }), CHECK);
+    await expectRejects(ready({ generation: ["gpt"] }), CHECK);
+    const row = await ready({
+      injectionSuspected: true,
+      injectionEvidence: "x".repeat(500),
+      parseWarnings: [{ field: "experiences", message: "datas ambíguas" }],
+      generation: { model: "gpt-test" },
+    });
+    expect(row.injectionSuspected).toBe(true);
+    // Rows written before the migration read as "not flagged".
+    const legacy = await extracting(await owner(), 1);
+    expect(legacy).toMatchObject({ injectionSuspected: false, injectionEvidence: null });
+  });
+
   it("is deleted with its owner", async () => {
     const userId = await owner();
     await confirmed(userId, 1, true);

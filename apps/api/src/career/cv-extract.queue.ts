@@ -1,8 +1,13 @@
-import { randomUUID } from "node:crypto";
-import { Inject, Injectable } from "@nestjs/common";
-import { CvExtractPayloadSchema, type CvExtractPayload } from "@linkedin-ops/contracts";
+import type { OnApplicationBootstrap, OnApplicationShutdown } from "@nestjs/common";
+import {
+  CvExtractPayloadSchema,
+  PGBOSS_SCHEMA_NAME,
+  QUEUES,
+  type CvExtractPayload,
+} from "@linkedin-ops/contracts";
+import type { SqlExecutor } from "@linkedin-ops/domain";
+import { PgBoss } from "pg-boss";
 import type { Logger } from "pino";
-import { API_LOGGER } from "../logging/logger.js";
 
 /** Injection token of the `cv.extract` producer. */
 export const CV_EXTRACT_QUEUE = Symbol("CV_EXTRACT_QUEUE");
@@ -12,26 +17,156 @@ export const CV_EXTRACT_QUEUE = Symbol("CV_EXTRACT_QUEUE");
  * stays in `cv_bases.extracted_text` and never goes into the job table.
  */
 export interface CvExtractQueue {
-  /** Enqueues the job and returns its id. */
-  enqueue(payload: CvExtractPayload): Promise<{ jobId: string }>;
+  /**
+   * Resolves when the producer can send; rejects at once when it cannot (never waits for a start). Called
+   * BEFORE the draft's transaction opens, so a queue outage never holds a transaction (nor the owner's lock).
+   */
+  ensureReady(): Promise<void>;
+  /**
+   * Inserts the job through `db`, the transaction that creates the draft (ADR-0002 §3): the job exists only
+   * if the draft commits. Returns the job id. Never starts the producer: rejects if `ensureReady` did not.
+   */
+  enqueue(payload: CvExtractPayload, db: SqlExecutor): Promise<{ jobId: string }>;
+}
+
+const CV_EXTRACT = QUEUES["cv.extract"];
+
+export const CV_EXTRACT_QUEUE_START_TIMEOUT_MS = 10_000;
+
+/** Background start retries: 1 s, 2 s, 4 s … capped at 60 s, until the worker has created the schema. */
+export const CV_EXTRACT_QUEUE_RETRY = { initialMs: 1_000, maxMs: 60_000 } as const;
+
+export class CvExtractQueueUnavailableError extends Error {
+  constructor(reason: "start_failed" | "start_timeout" | "not_started") {
+    super(`cv.extract producer unavailable: ${reason}`);
+    this.name = "CvExtractQueueUnavailableError";
+  }
+}
+
+export interface PgBossCvExtractQueueOptions {
+  startTimeoutMs?: number;
+  retry?: { initialMs: number; maxMs: number };
 }
 
 /**
- * Placeholder until the pg-boss producer of career PR 1 is merged: validates the payload as the real
- * producer will and answers a synthetic job id, but nothing consumes it — the draft stays `EXTRACTING`
- * and is settled as `TIMED_OUT` (`CV_EXTRACTION_STALE_MS`).
- * TODO(career PR 1): bind `CV_EXTRACT_QUEUE` to the pg-boss producer and delete this class.
+ * pg-boss producer. The API only sends: it neither migrates the `pgboss` schema nor provisions queues (the
+ * worker does both at boot) and runs no maintenance or cron. pg-boss starts at application bootstrap, with a
+ * timeout, and never inside a request: if the start fails (e.g. the worker has not migrated the schema yet)
+ * the API still boots, retries in the background with backoff, and uploads answer 503 before any
+ * transaction until the producer is ready. `enqueue` never starts pg-boss.
  */
-@Injectable()
-export class UnwiredCvExtractQueue implements CvExtractQueue {
-  constructor(@Inject(API_LOGGER) private readonly logger: Logger) {}
+export class PgBossCvExtractQueue
+  implements CvExtractQueue, OnApplicationBootstrap, OnApplicationShutdown
+{
+  readonly #boss: PgBoss;
+  readonly #logger: Logger;
+  readonly #startTimeoutMs: number;
+  readonly #retry: { initialMs: number; maxMs: number };
+  #ready = false;
+  #closed = false;
+  #attempted = false;
+  #attempts = 0;
+  #starting: Promise<void> | undefined;
+  #retryTimer: NodeJS.Timeout | undefined;
 
-  async enqueue(payload: CvExtractPayload): Promise<{ jobId: string }> {
-    const valid = CvExtractPayloadSchema.parse(payload);
-    this.logger.warn(
-      { queue: "cv.extract", cvBaseId: valid.cvBaseId, correlationId: valid.correlationId },
-      "cv.extract producer not wired yet (career PR 1); job not delivered",
+  constructor(databaseUrl: string, logger: Logger, options: PgBossCvExtractQueueOptions = {}) {
+    this.#logger = logger;
+    this.#startTimeoutMs = options.startTimeoutMs ?? CV_EXTRACT_QUEUE_START_TIMEOUT_MS;
+    this.#retry = options.retry ?? CV_EXTRACT_QUEUE_RETRY;
+    this.#boss = new PgBoss({
+      connectionString: databaseUrl,
+      schema: PGBOSS_SCHEMA_NAME,
+      application_name: "linkedin-ops-api",
+      max: 2,
+      connectionTimeoutMillis: this.#startTimeoutMs,
+      migrate: false,
+      supervise: false,
+      schedule: false,
+    });
+    this.#boss.on("error", (error: Error) =>
+      logger.error({ queue: CV_EXTRACT.name, errorClass: error.name }, "pg-boss error"),
     );
-    return { jobId: randomUUID() };
+  }
+
+  get ready(): boolean {
+    return this.#ready;
+  }
+
+  /**
+   * One start attempt, awaited so a reachable database is ready before the first request; a failure never
+   * fails the boot (no crash loop while the worker migrates) and schedules the background retries.
+   */
+  async onApplicationBootstrap(): Promise<void> {
+    await this.#attempt();
+  }
+
+  ensureReady(): Promise<void> {
+    if (this.#ready) return Promise.resolve();
+    return Promise.reject(new CvExtractQueueUnavailableError("not_started"));
+  }
+
+  async enqueue(payload: CvExtractPayload, db: SqlExecutor): Promise<{ jobId: string }> {
+    if (!this.#ready) throw new CvExtractQueueUnavailableError("not_started");
+    const valid = CvExtractPayloadSchema.parse(payload);
+    const jobId = await this.#boss.send(CV_EXTRACT.name, valid, {
+      db,
+      singletonKey: CV_EXTRACT.singletonKeyFrom?.(valid),
+    });
+    // A new draft id never collides with a pending singleton; null would mean a lost job.
+    if (jobId === null) throw new Error("cv.extract job was not created");
+    return { jobId };
+  }
+
+  async onApplicationShutdown(): Promise<void> {
+    this.#closed = true;
+    clearTimeout(this.#retryTimer);
+    this.#retryTimer = undefined;
+    if (!this.#attempted) return;
+    await this.#starting?.catch(() => undefined);
+    await this.#boss.stop({ graceful: false, close: true });
+  }
+
+  /** Resolves in every case; on failure or timeout schedules the next attempt. */
+  async #attempt(): Promise<void> {
+    if (this.#ready || this.#closed) return;
+    this.#attempted = true;
+    this.#attempts += 1;
+    // One start in flight at a time; a start that outlives its timeout keeps running and the next attempt
+    // waits on it instead of starting another.
+    this.#starting ??= this.#boss.start().then(
+      () => {
+        this.#ready = true;
+        this.#logger.info(
+          { queue: CV_EXTRACT.name, attempts: this.#attempts },
+          "cv.extract producer ready",
+        );
+      },
+      (error: unknown) => {
+        this.#starting = undefined;
+        throw error;
+      },
+    );
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), this.#startTimeoutMs);
+      timer.unref();
+    });
+    let failure: string | null = null;
+    try {
+      if ((await Promise.race([this.#starting, timeout])) === "timeout") failure = "TIMEOUT";
+    } catch (error) {
+      failure = error instanceof Error ? error.name : "unknown";
+    } finally {
+      clearTimeout(timer);
+    }
+    if (failure === null || this.#closed) return;
+    const delayMs = Math.min(this.#retry.initialMs * 2 ** (this.#attempts - 1), this.#retry.maxMs);
+    // Class only: the driver error may quote the connection target.
+    this.#logger.warn(
+      { queue: CV_EXTRACT.name, errorClass: failure, attempt: this.#attempts, retryInMs: delayMs },
+      "cv.extract producer start failed; retrying in the background",
+    );
+    this.#retryTimer = setTimeout(() => void this.#attempt(), delayMs);
+    this.#retryTimer.unref();
   }
 }

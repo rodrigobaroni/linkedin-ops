@@ -25,16 +25,11 @@ import {
   type LlmClient,
   type Rng,
 } from "@linkedin-ops/editorial-engine";
+import type { CareerFailureReason, CvBaseDraftStore, JobPostingStore } from "@linkedin-ops/domain";
 import { CancelledJobError, PermanentJobError, RetryableJobError } from "../jobs/errors.js";
 import type { JobContext, JobHandler } from "../jobs/runner.js";
 import { runLlmStep, runLlmStepWithRegenerations } from "./llm-step.js";
-import {
-  JobFetchError,
-  type CareerFailureReason,
-  type CvBaseDraftStore,
-  type JobPageFetcher,
-  type JobPostingStore,
-} from "./ports.js";
+import { JobFetchError, type JobPageFetcher } from "./ports.js";
 
 /** Spec §5 step 5: the humanizer runs once and regenerates at most twice. */
 export const HUMANIZE_MAX_ATTEMPTS = 3;
@@ -59,6 +54,9 @@ export interface CareerHandlers {
   "job.fetch": JobHandler<"job.fetch">;
   "cv.tailor": JobHandler<"cv.tailor">;
 }
+
+/** The handlers whose stores are wired; a queue without one is provisioned but not consumed. */
+export type WiredCareerHandlers = Partial<CareerHandlers>;
 
 /**
  * Marks the item failed when this error ends the job for good, then rethrows for the runner. A cancellation
@@ -101,13 +99,15 @@ export function createCareerHandlers(deps: CareerHandlerDeps): CareerHandlers {
     ]),
   });
 
-  const cvExtract: JobHandler<"cv.extract"> = async ({ cvBaseId }, context) => {
+  const cvExtract: JobHandler<"cv.extract"> = async ({ cvBaseId, correlationId }, context) => {
     const draft = await deps.cvStore.loadForExtraction(cvBaseId);
     if (!draft) {
       context.logger.info({ outcome: "skipped" }, "cv draft not awaiting extraction");
       return;
     }
-    const markFailed = (reason: CareerFailureReason) => deps.cvStore.markFailed(cvBaseId, reason);
+    const meta = { jobId: context.jobId, correlationId };
+    const markFailed = (reason: CareerFailureReason) =>
+      deps.cvStore.markFailed(cvBaseId, reason, meta);
     try {
       const built = buildCvExtractRequest({ cvText: draft.text }, options);
       const { value, model } = await runLlmStep(
@@ -130,13 +130,17 @@ export function createCareerHandlers(deps: CareerHandlerDeps): CareerHandlers {
         await markFailed("not_a_cv");
         return;
       }
-      await deps.cvStore.completeExtraction(cvBaseId, {
-        cv: value.cv,
-        parseWarnings: value.parseWarnings,
-        injectionSuspected: value.injectionSuspected || built.preflightInjectionFlags.length > 0,
-        injectionEvidence: value.injectionEvidence,
-        generation: generation(model, ["cv-extract"]),
-      });
+      await deps.cvStore.completeExtraction(
+        cvBaseId,
+        {
+          cv: value.cv,
+          parseWarnings: value.parseWarnings,
+          injectionSuspected: value.injectionSuspected || built.preflightInjectionFlags.length > 0,
+          injectionEvidence: value.injectionEvidence,
+          generation: generation(model, ["cv-extract"]),
+        },
+        meta,
+      );
     } catch (error) {
       await failIfFinal(error, context, markFailed, "ai");
     }

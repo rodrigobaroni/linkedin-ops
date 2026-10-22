@@ -9,6 +9,7 @@ import type {
 } from "@linkedin-ops/contracts";
 import {
   CvDraftNotReadyError,
+  CvInjectionUnacknowledgedError,
   type CvAuditMeta,
   type CvBaseRecord,
   type CvDraftRecord,
@@ -108,31 +109,51 @@ export class CvBaseService {
       file.fill(0);
     }
 
-    const meta = userMeta(session, correlationId);
-    // TODO(career PR 1): enqueue `cv.extract` in the same transaction as the draft (pg-boss accepts the
-    // transaction's connection) or through an outbox, so the PDF text is never committed without its job;
-    // the worker must call `failExtraction` on the job's terminal failure. Until then the text can outlive a
-    // lost job only until `CvExtractionSweeper` settles the draft (Sentinela S-2).
-    const draft = await this.cvBases.startDraft(session.userId, text, meta);
-    let jobId: string;
+    // Checked before the transaction opens: a producer that is down never holds a transaction or the lock.
     try {
-      ({ jobId } = await this.queue.enqueue({
-        schemaVersion: 1,
-        correlationId,
-        requestedBy: { type: "USER", id: session.userId },
-        cvBaseId: draft.id,
-      }));
-    } catch (error) {
-      // The draft would wait for a job that does not exist: fail it now (and erase its text).
-      this.logger.error(
-        { err: error, queue: "cv.extract", cvBaseId: draft.id, correlationId },
-        "cv.extract enqueue failed",
-      );
-      await this.cvBases.failExtraction(draft.id, "EXTRACTION_FAILED", meta);
+      await this.queue.ensureReady();
+    } catch {
       throw new ProblemError("UPSTREAM_UNAVAILABLE", {
         detail: "Não foi possível iniciar a leitura do CV; tente de novo",
       });
     }
+
+    // The draft and its `cv.extract` job commit together (ADR-0002 §3): the PDF text is never stored
+    // without a job, and a queue failure rolls the draft back. A job lost afterwards is still settled by
+    // `CvExtractionSweeper` (Sentinela S-2); the worker fails the draft on the job's terminal failure.
+    let started: { draft: CvDraftRecord<CvStructured>; jobId: string };
+    try {
+      started = await this.cvBases.startDraft(
+        session.userId,
+        text,
+        userMeta(session, correlationId),
+        async (db, draftId) => {
+          try {
+            const payload = {
+              schemaVersion: 1 as const,
+              correlationId,
+              requestedBy: { type: "USER" as const, id: session.userId },
+              cvBaseId: draftId,
+            };
+            return (await this.queue.enqueue(payload, db)).jobId;
+          } catch (error) {
+            throw new CvExtractEnqueueError(error);
+          }
+        },
+      );
+    } catch (error) {
+      // Any other failure (database) stays a 500 through the global filter.
+      if (!(error instanceof CvExtractEnqueueError)) throw error;
+      // Class only: pg-boss and driver errors may quote the statement's parameters.
+      this.logger.error(
+        { queue: "cv.extract", errorClass: error.causeClass, correlationId },
+        "cv.extract enqueue failed; draft rolled back",
+      );
+      throw new ProblemError("UPSTREAM_UNAVAILABLE", {
+        detail: "Não foi possível iniciar a leitura do CV; tente de novo",
+      });
+    }
+    const { draft, jobId } = started;
     return { id: draft.id, status: draft.status, jobId, draft: toCvDraft(draft) };
   }
 
@@ -147,9 +168,16 @@ export class CvBaseService {
         input.draftId,
         input.content,
         userMeta(session, correlationId),
+        { acknowledgeInjection: input.acknowledgeInjection === true },
       );
       return toCvBase(confirmed);
     } catch (error) {
+      if (error instanceof CvInjectionUnacknowledgedError) {
+        throw new ProblemError("CV_INJECTION_UNACKNOWLEDGED", {
+          detail:
+            "A leitura do CV encontrou um trecho que parece instrução para a IA; revise-o e confirme de novo",
+        });
+      }
       if (!(error instanceof CvDraftNotReadyError)) throw error;
       throw new ProblemError("CV_DRAFT_NOT_READY", {
         detail:
@@ -165,6 +193,17 @@ export class CvBaseService {
   }
 }
 
+/** The `cv.extract` enqueue failed inside the draft's transaction (rolled back with it). */
+class CvExtractEnqueueError extends Error {
+  readonly causeClass: string;
+
+  constructor(cause: unknown) {
+    super("cv.extract enqueue failed");
+    this.name = "CvExtractEnqueueError";
+    this.causeClass = cause instanceof Error ? cause.name : "unknown";
+  }
+}
+
 function userMeta(session: AuthenticatedSession, correlationId: string): CvAuditMeta {
   return { correlationId, actor: { type: "USER", userId: session.userId } };
 }
@@ -176,6 +215,9 @@ export function toCvDraft(record: CvDraftRecord<CvStructured>): CvDraft {
     status: record.status,
     failureReason: record.failureReason,
     content: record.content,
+    parseWarnings: record.parseWarnings,
+    injectionSuspected: record.injectionSuspected,
+    injectionEvidence: record.injectionEvidence,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
   };

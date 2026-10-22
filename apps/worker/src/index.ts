@@ -1,7 +1,15 @@
 // @linkedin-ops/worker — entry point. Validates the environment first (fails closed), then starts pg-boss in
 // its own `pgboss` schema, provisions the queues, registers the handlers and keeps a heartbeat for the
 // container healthcheck. SIGTERM/SIGINT stop gracefully.
-import { RuntimeEnvError, validateWorkerEnv, type WorkerRuntimeEnv } from "@linkedin-ops/domain";
+import { CvStructuredSchema } from "@linkedin-ops/contracts";
+import {
+  createPrismaClient,
+  PrismaCvBaseDraftStore,
+  PrismaCvBases,
+  RuntimeEnvError,
+  validateWorkerEnv,
+  type WorkerRuntimeEnv,
+} from "@linkedin-ops/domain";
 import { PgBoss } from "pg-boss";
 import { wireCareer } from "./career/wiring.js";
 import { createLogger } from "./logger.js";
@@ -29,10 +37,14 @@ async function main(): Promise<void> {
   });
   boss.on("error", (error: Error) => logger.error({ errorClass: error.name }, "pg-boss error"));
 
-  // The Career stores are bound to the domain repositories in PR 2 (CV) and PR 3 (postings).
-  const career = wireCareer(env, logger, null);
+  // Domain stores over Prisma (connections open lazily). The postings store arrives with career PR 3.
+  const prisma = createPrismaClient({ connectionString: env.databaseUrl });
+  const cvStore = new PrismaCvBaseDraftStore(
+    new PrismaCvBases(prisma, (value) => CvStructuredSchema.parse(value)),
+  );
+  const career = wireCareer(env, logger, { cvStore });
 
-  await startWorkerLifecycle({ boss, logger, career });
+  await startWorkerLifecycle({ boss, logger, career, onStopped: () => prisma.$disconnect() });
   logger.info({ nodeEnv: env.nodeEnv, openai: env.openai !== null }, "worker started");
 }
 

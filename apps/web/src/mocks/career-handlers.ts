@@ -155,6 +155,8 @@ export function mockDraft(
     status,
     failureReason,
     content: status === "READY" ? MOCK_CV_CONTENT : null,
+    parseWarnings: [],
+    injectionSuspected: false,
     createdAt: now,
     updatedAt: now,
   };

@@ -7,7 +7,7 @@
  */
 import type { PgBoss } from "pg-boss";
 import type { Logger } from "pino";
-import type { CareerHandlers } from "./career/handlers.js";
+import type { WiredCareerHandlers } from "./career/handlers.js";
 import { startHeartbeat, type Heartbeat } from "./health/heartbeat.js";
 import { registerWorkers } from "./worker.js";
 
@@ -27,12 +27,14 @@ export interface SignalSource {
 export interface WorkerLifecycleOptions {
   boss: Boss;
   logger: Logger;
-  career: CareerHandlers | null;
+  career: WiredCareerHandlers | null;
   /** Defaults to `process`. */
   signals?: SignalSource;
   /** Injected for tests; defaults to the heartbeat file writer. */
   heartbeat?: (probe: () => Promise<unknown>) => Heartbeat;
   stopTimeoutMs?: number;
+  /** Runs once pg-boss has stopped (no handler is running any more): release the database client. */
+  onStopped?: () => Promise<void>;
 }
 
 export interface WorkerLifecycle {
@@ -71,6 +73,7 @@ export async function startWorkerLifecycle(
       heartbeat.stop();
       shutdown.abort();
       await boss.stop({ graceful: true, timeout: stopTimeoutMs });
+      await options.onStopped?.();
       logger.info("worker stopped");
     })();
     return stopping;

@@ -28,6 +28,7 @@ export const PROBLEM_TITLES: Readonly<Record<ErrorCode, string>> = {
   AUTONOMY_MODE_NOT_ENABLED: "Modo de autonomia não habilitado",
   CV_PDF_UNREADABLE: "Não foi possível ler o PDF do CV",
   CV_DRAFT_NOT_READY: "O rascunho de CV não pode ser confirmado",
+  CV_INJECTION_UNACKNOWLEDGED: "Confirme que revisou o trecho suspeito do CV",
   RATE_LIMITED: "Muitas requisições; tente novamente em instantes",
   PAYLOAD_TOO_LARGE: "Corpo da requisição grande demais",
   UNSUPPORTED_MEDIA_TYPE: "Tipo de conteúdo não suportado",

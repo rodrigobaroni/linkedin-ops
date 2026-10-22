@@ -5,8 +5,7 @@
 import { QUEUES, type QueueName } from "@linkedin-ops/contracts";
 import type { PgBoss, WorkOptions } from "pg-boss";
 
-/** pg-boss tables live in their own schema of the application database (ADR-0002 §1). */
-export const PGBOSS_SCHEMA_NAME = "pgboss";
+export { PGBOSS_SCHEMA_NAME } from "@linkedin-ops/contracts";
 
 /** Career queues: concurrency 3 (spec §4). `job.fetch` also runs 1 at a time per group (ADR-0008 §4). */
 export const WORK_OPTIONS = {

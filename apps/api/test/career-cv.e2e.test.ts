@@ -25,6 +25,7 @@ import {
   CvPdfExtractor,
   DEFAULT_CV_PDF_EXTRACTOR_LIMITS,
 } from "../src/career/cv-pdf.extractor.js";
+import { CV_EXTRACT_QUEUE, type CvExtractQueue } from "../src/career/cv-extract.queue.js";
 import { REQUESTED_WITH_VALUE } from "../src/common/route-access.guard.js";
 
 const UPLOAD = "/api/v1/career/cv";
@@ -37,6 +38,12 @@ const UPLOAD = "/api/v1/career/cv";
 const LEGIT_PARSE_TIMEOUT_MS = 60_000;
 const HOSTILE_PARSE_TIMEOUT_MS = 3_000;
 
+/** A ready producer, so a stored-path failure comes from the (stub) database, not from the queue. */
+const readyQueue: CvExtractQueue = {
+  ensureReady: () => Promise.resolve(),
+  enqueue: () => Promise.reject(new Error("not reached: the draft insert fails first")),
+};
+
 describe("career CV base routes (no database)", () => {
   let app: TestApp;
   let cookie: string;
@@ -44,6 +51,7 @@ describe("career CV base routes (no database)", () => {
   beforeAll(async () => {
     app = await createTestApp({
       overrides: [
+        [CV_EXTRACT_QUEUE, readyQueue],
         [
           CV_PDF_EXTRACTOR,
           new CvPdfExtractor({

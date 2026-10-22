@@ -86,10 +86,25 @@ export {
 export {
   PrismaCvBases,
   CvDraftNotReadyError,
+  CvInjectionUnacknowledgedError,
   CV_EXTRACTION_STALE_MS,
+  CV_INJECTION_EVIDENCE_MAX_CHARS,
   type CvAuditMeta,
   type CvBaseRecord,
   type CvBaseState,
   type CvContentParser,
   type CvDraftRecord,
+  type CvExtractEnqueue,
+  type CvExtraction,
+  type SqlExecutor,
 } from "./career/cv-bases.js";
+export { PrismaCvBaseDraftStore } from "./career/prisma-cv-base-draft-store.js";
+export type {
+  CareerFailureReason,
+  CareerJobMeta,
+  CvBaseDraftStore,
+  CvExtractionResult,
+  GenerationInfo,
+  JobPostingSource,
+  JobPostingStore,
+} from "./career/ports.js";
