@@ -185,6 +185,10 @@ describe("CareerCvScreen", { timeout: 20_000 }, () => {
     await waitFor(() => expect(badgeHeading).toHaveFocus());
     expect(screen.getByText(copy.confirmed.description)).toBeInTheDocument();
     expect(screen.getByText(/^Versão 1 · Confirmado em /)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: copy.confirmed.viewJobs })).toHaveAttribute(
+      "href",
+      "/carreira/vagas",
+    );
     const confirmed = mockCareerState().active?.content;
     expect(confirmed?.contact.name).toBe("Ana Revisada");
     expect(confirmed?.languages[0]).toEqual({
@@ -341,6 +345,10 @@ describe("CareerCvScreen", { timeout: 20_000 }, () => {
     resetMockCareer({ active: mockActiveCv(), extractionMs: 0 });
     const { user } = await renderCv();
     await screen.findByRole("heading", { name: copy.confirmed.badge });
+    expect(screen.getByRole("link", { name: copy.confirmed.viewJobs })).toHaveAttribute(
+      "href",
+      "/carreira/vagas",
+    );
     await user.click(screen.getByRole("button", { name: copy.confirmed.replace }));
     expect(screen.getByRole("heading", { name: copy.upload.replaceTitle })).toBeInTheDocument();
     expect(screen.getByText(copy.upload.replaceHint)).toBeInTheDocument();

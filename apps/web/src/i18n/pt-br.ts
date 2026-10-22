@@ -338,6 +338,7 @@ export const messages = {
         badge: "CV base confirmado",
         description: "Seu CV está pronto para analisar vagas.",
         meta: (version: number, date: string) => `Versão ${version} · Confirmado em ${date}`,
+        viewJobs: "Ver vagas",
         replace: "Substituir CV",
         remove: "Apagar CV",
       },
