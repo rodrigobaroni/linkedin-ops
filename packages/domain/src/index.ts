@@ -109,3 +109,13 @@ export type {
   JobPostingSource,
   JobPostingStore,
 } from "./career/ports.js";
+export {
+  ERROR_MESSAGE_OMITTED,
+  ERROR_SEARCH_CIRCULAR,
+  ERROR_SEARCH_TRUNCATED,
+  MAX_ERROR_SEARCH_DEPTH,
+  scrubErrorText,
+  serializeErrorForLog,
+  serializeErrorsDeep,
+  type SafeLoggedError,
+} from "./logging/safe-error.js";

@@ -12,6 +12,38 @@ export class BoomController {
   }
 }
 
+export const ROW_CANARY = "CANARIO-LINHA-0000";
+
+/** Shaped like a Prisma 7 + adapter-pg CHECK violation: the offending row in `meta` and in the message. */
+class PrismaClientKnownRequestError extends Error {
+  readonly code = "P2010";
+  readonly meta = {
+    driverAdapterError: {
+      cause: {
+        originalCode: "23514",
+        detail: `Failing row contains (https://x.example/${ROW_CANARY}).`,
+      },
+    },
+  };
+
+  constructor() {
+    super(
+      `Invalid \`tx.jobPosting.create()\` invocation:\n\nnew row violates check constraint "job_postings_url_check". Failing row contains (https://x.example/${ROW_CANARY}).`,
+    );
+    this.name = "PrismaClientKnownRequestError";
+  }
+}
+
+/** A database error escaping a handler (QA #101): its log line must not carry the row. */
+@Controller()
+export class PrismaBoomController {
+  @Get("__probe/prisma-boom")
+  @ContractRouteFree()
+  boom(): never {
+    throw new PrismaClientKnownRequestError();
+  }
+}
+
 /** A Nest route with neither `@ContractRoute` nor `@RouteAuth`: the guard must default to `session`. */
 @Controller()
 export class UnregisteredController {

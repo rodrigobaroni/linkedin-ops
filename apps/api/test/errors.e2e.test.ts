@@ -1,12 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ProblemDetailsSchema } from "@linkedin-ops/contracts";
 import { createTestApp, mutationHeaders, type TestApp } from "./helpers.js";
-import { BoomController } from "./probe.controllers.js";
+import { BoomController, PrismaBoomController, ROW_CANARY } from "./probe.controllers.js";
 
 describe("Problem Details (RFC 9457, contracts.md §4)", () => {
   let app: TestApp;
   beforeAll(async () => {
-    app = await createTestApp({ controllers: [BoomController] });
+    app = await createTestApp({ controllers: [BoomController, PrismaBoomController] });
   });
   afterAll(() => app.close());
 
@@ -72,5 +72,22 @@ describe("Problem Details (RFC 9457, contracts.md §4)", () => {
       (l) => l["correlationId"] === res.body.correlationId && l["level"] === "error",
     );
     expect(line).toBeDefined();
+  });
+
+  it("a Prisma error escaping a handler is logged with class and code only, never the row (QA #101)", async () => {
+    const res = await app.request.get("/api/v1/__probe/prisma-boom").expect(500);
+    expect(res.body.code).toBe("INTERNAL");
+    expect(JSON.stringify(res.body)).not.toContain(ROW_CANARY);
+    const line = app.logs.lines.find(
+      (entry) =>
+        (entry["err"] as { type?: string } | undefined)?.type === "PrismaClientKnownRequestError",
+    );
+    expect(line?.["err"]).toEqual({
+      type: "PrismaClientKnownRequestError",
+      code: "P2010",
+      message: expect.stringContaining("job_postings_url_check"),
+    });
+    expect(app.logs.text).not.toContain(ROW_CANARY);
+    expect(app.logs.text).not.toContain("driverAdapterError");
   });
 });

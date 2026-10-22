@@ -43,7 +43,6 @@ type ThrottleRow = {
  * locked in sorted order, so concurrent attempts with overlapping keys cannot deadlock, and a key cleared by
  * a concurrent success is recreated rather than lost (#105).
  */
-
 export class LoginThrottle {
   constructor(
     private readonly prisma: PrismaClient,
