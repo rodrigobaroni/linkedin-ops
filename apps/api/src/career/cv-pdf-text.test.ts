@@ -2,12 +2,16 @@ import { readFileSync } from "node:fs";
 import { CV_UPLOAD_LIMITS } from "@linkedin-ops/contracts";
 import { describe, expect, it } from "vitest";
 import { buildPdf, fictitiousCvPdf } from "../../test/fixtures/pdf.js";
-import { CvPdfError, extractCvPdfText, hasPdfSignature, normalizeText } from "./cv-pdf.js";
+import { CvPdfError, hasPdfSignature, normalizeText } from "./cv-pdf.js";
+import { parsePdfText } from "./cv-pdf-text.js";
 
 const COMMITTED_FIXTURE = new URL("../../test/fixtures/cv-ficticio.pdf", import.meta.url);
 
+/** pdf.js may detach its input: give it an own copy, never a (pooled) Buffer slice. */
+const parse = (file: Buffer) => parsePdfText(new Uint8Array(file));
+
 async function rejection(file: Buffer): Promise<string> {
-  const error = await extractCvPdfText(file).then(
+  const error = await parse(file).then(
     () => null,
     (caught: unknown) => caught,
   );
@@ -15,9 +19,9 @@ async function rejection(file: Buffer): Promise<string> {
   return (error as CvPdfError).reason;
 }
 
-describe("extractCvPdfText", () => {
+describe("parsePdfText (runs inside the parsing worker)", () => {
   it("extracts the text layer of every page, line by line, with accents", async () => {
-    const text = await extractCvPdfText(fictitiousCvPdf("CANARIO-1234"));
+    const text = await parse(fictitiousCvPdf("CANARIO-1234"));
     expect(text).toContain("Ana Exemplo da Silva");
     expect(text).toContain("Engenheira com foco em sistemas distribuídos. CANARIO-1234");
     expect(text).toContain("Empresa Fictícia S.A. - Engenheira Sênior (2021 - atual)");
@@ -28,7 +32,7 @@ describe("extractCvPdfText", () => {
   it("reads the committed fictitious CV (regenerate with test/fixtures/pdf.ts)", async () => {
     const file = readFileSync(COMMITTED_FIXTURE);
     expect(file.equals(fictitiousCvPdf())).toBe(true);
-    expect(await extractCvPdfText(file)).toContain("Universidade Imaginária");
+    expect(await parse(file)).toContain("Universidade Imaginária");
   });
 
   it("checks the signature, not the name or the declared type", async () => {
@@ -60,11 +64,10 @@ describe("extractCvPdfText", () => {
     expect(await rejection(buildPdf({ pages }))).toBe("TOO_MUCH_TEXT");
   });
 
-  it("leaves the caller's buffer intact so it can wipe it", async () => {
-    const file = fictitiousCvPdf();
-    const copy = Buffer.from(file);
-    await extractCvPdfText(file);
-    expect(file.equals(copy)).toBe(true);
+  it("leaves no readable copy of its input (detached by pdf.js or wiped)", async () => {
+    const data = new Uint8Array(fictitiousCvPdf());
+    await parsePdfText(data);
+    expect(data.byteLength === 0 || data.every((byte) => byte === 0)).toBe(true);
   });
 });
 

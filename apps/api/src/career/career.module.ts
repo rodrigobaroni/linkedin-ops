@@ -13,6 +13,7 @@ import {
   DEFAULT_CAREER_RATE_LIMITS,
 } from "./cv-base.service.js";
 import { CV_EXTRACT_QUEUE, UnwiredCvExtractQueue } from "./cv-extract.queue.js";
+import { CV_PDF_EXTRACTOR, CvPdfExtractor } from "./cv-pdf.extractor.js";
 
 /** Career module (spec 2026-10-22): CV base in PR 2; job postings and tailoring arrive in PR 3. */
 @Module({})
@@ -33,6 +34,7 @@ export class CareerModule {
         },
         { provide: CV_EXTRACT_QUEUE, useClass: UnwiredCvExtractQueue },
         { provide: CAREER_RATE_LIMITS, useValue: DEFAULT_CAREER_RATE_LIMITS },
+        { provide: CV_PDF_EXTRACTOR, useFactory: () => new CvPdfExtractor() },
         CvBaseService,
       ],
     };

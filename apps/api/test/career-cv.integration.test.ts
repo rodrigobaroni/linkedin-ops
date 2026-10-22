@@ -16,6 +16,7 @@ import { Test } from "@nestjs/testing";
 import type { NestFastifyApplication } from "@nestjs/platform-fastify";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import {
+  CV_UPLOAD_LIMITS,
   CvBaseStateSchema,
   CvBaseSchema,
   CvExtractPayloadSchema,
@@ -44,7 +45,7 @@ import { CV_EXTRACT_QUEUE, type CvExtractQueue } from "../src/career/cv-extract.
 import { REQUESTED_WITH_VALUE } from "../src/common/route-access.guard.js";
 import { createLogger } from "../src/logging/logger.js";
 import { fictitiousCvStructured } from "./fixtures/cv-structured.js";
-import { fictitiousCvPdf } from "./fixtures/pdf.js";
+import { fictitiousCvPdf, fictitiousCvPdfOfSize } from "./fixtures/pdf.js";
 import { APP_BASE_URL, LogCapture, cookieHeader, mutationHeaders } from "./helpers.js";
 
 const POSTGRES_IMAGE =
@@ -225,6 +226,14 @@ describe("POST /career/cv (upload)", () => {
     expect(row.extractedText).toContain("Universidade Imaginária");
     // Nothing that looks like the file itself was stored.
     expect(JSON.stringify(row)).not.toContain("%PDF");
+  });
+
+  it("accepts a valid PDF of exactly 5 MiB (the limit is inclusive)", async () => {
+    const actor = await newActor();
+    const file = fictitiousCvPdfOfSize(CV_UPLOAD_LIMITS.maxBytes);
+    expect(file.length).toBe(5 * 1024 * 1024);
+    const res = await upload(actor, file).expect(202);
+    expect(res.body.status).toBe("EXTRACTING");
   });
 
   it("a new upload replaces the pending draft (one draft per user)", async () => {

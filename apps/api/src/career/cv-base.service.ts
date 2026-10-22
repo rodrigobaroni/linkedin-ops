@@ -20,7 +20,8 @@ import { FixedWindowLimiter } from "../linkedin/fixed-window-limiter.js";
 import { API_LOGGER } from "../logging/logger.js";
 import type { AuthenticatedSession } from "../session/session.service.js";
 import { CV_EXTRACT_QUEUE, type CvExtractQueue } from "./cv-extract.queue.js";
-import { CvPdfError, extractCvPdfText, type CvPdfRejection } from "./cv-pdf.js";
+import { CvPdfBusyError, CvPdfError, type CvPdfRejection } from "./cv-pdf.js";
+import { CV_PDF_EXTRACTOR, type CvPdfExtractor } from "./cv-pdf.extractor.js";
 
 export const CV_BASES = Symbol("CV_BASES");
 export const CAREER_RATE_LIMITS = Symbol("CAREER_RATE_LIMITS");
@@ -52,6 +53,10 @@ const PDF_REJECTIONS: Readonly<
       "O PDF não tem texto selecionável (parece digitalizado); exporte o CV como PDF de texto",
   },
   TOO_MUCH_TEXT: { code: "CV_PDF_UNREADABLE", detail: "O PDF tem texto demais para um CV" },
+  TOO_COMPLEX: {
+    code: "CV_PDF_UNREADABLE",
+    detail: "O PDF é complexo demais para ler; exporte o CV de novo como PDF simples",
+  },
 };
 
 /**
@@ -67,6 +72,7 @@ export class CvBaseService {
   constructor(
     @Inject(CV_BASES) private readonly cvBases: PrismaCvBases<CvStructured>,
     @Inject(CV_EXTRACT_QUEUE) private readonly queue: CvExtractQueue,
+    @Inject(CV_PDF_EXTRACTOR) private readonly pdf: CvPdfExtractor,
     @Inject(CAREER_RATE_LIMITS) limits: CareerRateLimits,
     @Inject(API_LOGGER) private readonly logger: Logger,
   ) {
@@ -87,8 +93,14 @@ export class CvBaseService {
     let text: string;
     try {
       this.#uploadLimiter.consume(session.userId, "Muitos envios de CV; tente de novo mais tarde");
-      text = await extractCvPdfText(file);
+      text = await this.pdf.extract(file);
     } catch (error) {
+      if (error instanceof CvPdfBusyError) {
+        throw new ProblemError("SERVICE_NOT_READY", {
+          detail: "Muitos CVs sendo lidos agora; tente de novo em instantes",
+          headers: { "Retry-After": String(error.retryAfterSeconds) },
+        });
+      }
       if (!(error instanceof CvPdfError)) throw error;
       const { code, detail } = PDF_REJECTIONS[error.reason];
       throw new ProblemError(code, { detail });

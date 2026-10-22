@@ -1,11 +1,17 @@
 /**
  * CV base HTTP edge without a database (career PR 2): the N4 multipart exception of `POST /career/cv`,
  * the upload checks that run before anything is stored (size, PDF signature, text layer) and the auth
- * levels of the four routes. The stored flow is covered by `career-cv.integration.test.ts`.
+ * levels of the four routes, and the parsing isolation (worker thread, deadline, concurrency cap; Sentinela
+ * S-1). The stored flow is covered by `career-cv.integration.test.ts`.
  */
 import { CV_UPLOAD_LIMITS, ProblemDetailsSchema } from "@linkedin-ops/contracts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { buildPdf, fictitiousCvPdf } from "./fixtures/pdf.js";
+import {
+  buildPdf,
+  fictitiousCvPdf,
+  fictitiousCvPdfOfSize,
+  xObjectBombPdf,
+} from "./fixtures/pdf.js";
 import {
   APP_BASE_URL,
   cookieHeader,
@@ -14,16 +20,35 @@ import {
   TEST_USER,
   type TestApp,
 } from "./helpers.js";
+import {
+  CV_PDF_EXTRACTOR,
+  CvPdfExtractor,
+  DEFAULT_CV_PDF_EXTRACTOR_LIMITS,
+} from "../src/career/cv-pdf.extractor.js";
 import { REQUESTED_WITH_VALUE } from "../src/common/route-access.guard.js";
 
 const UPLOAD = "/api/v1/career/cv";
+/** Parsing deadline of this suite: a CV takes ~150 ms in a cold thread; the XObject bomb never finishes. */
+const PARSE_TIMEOUT_MS = 2_000;
 
 describe("career CV base routes (no database)", () => {
   let app: TestApp;
   let cookie: string;
 
   beforeAll(async () => {
-    app = await createTestApp();
+    app = await createTestApp({
+      overrides: [
+        [
+          CV_PDF_EXTRACTOR,
+          new CvPdfExtractor({
+            ...DEFAULT_CV_PDF_EXTRACTOR_LIMITS,
+            timeoutMs: PARSE_TIMEOUT_MS,
+            maxConcurrent: 1,
+            retryAfterSeconds: 3,
+          }),
+        ],
+      ],
+    });
     cookie = cookieHeader(app.sessions.issueForTest(TEST_USER).cookieValue);
   });
   afterAll(() => app.close());
@@ -108,9 +133,9 @@ describe("career CV base routes (no database)", () => {
   });
 
   describe("upload checks before anything is stored", () => {
-    it("rejects a file over 5 MiB with 413", async () => {
-      const big = Buffer.concat([fictitiousCvPdf(), Buffer.alloc(CV_UPLOAD_LIMITS.maxBytes)]);
-      expectProblem(await upload(big).expect(413), "PAYLOAD_TOO_LARGE");
+    it("rejects a valid PDF of exactly 5 MiB + 1 byte with 413 (5 MiB itself is accepted: integration)", async () => {
+      const file = fictitiousCvPdfOfSize(CV_UPLOAD_LIMITS.maxBytes + 1);
+      expectProblem(await upload(file).expect(413), "PAYLOAD_TOO_LARGE");
     });
 
     it("rejects a non-PDF by its signature with 415, whatever its name and declared type", async () => {
@@ -123,6 +148,12 @@ describe("career CV base routes (no database)", () => {
       const res = await upload(buildPdf({ pages: [[]] })).expect(422);
       expectProblem(res, "CV_PDF_UNREADABLE");
       expect(res.body.detail).toMatch(/texto selecionável/);
+    });
+
+    it("rejects an encrypted PDF with 422 CV_PDF_UNREADABLE", async () => {
+      const res = await upload(buildPdf({ pages: [["Ana"]], encrypted: true })).expect(422);
+      expectProblem(res, "CV_PDF_UNREADABLE");
+      expect(res.body.detail).toMatch(/protegido por senha/);
     });
 
     it("rejects a missing file part with 400", async () => {
@@ -162,6 +193,34 @@ describe("career CV base routes (no database)", () => {
         .expect(401);
       expectProblem(res, "AUTH_REAUTH_REQUIRED");
     });
+  });
+
+  describe("parsing isolation (Sentinela S-1)", () => {
+    it(
+      "terminates a hostile PDF at the deadline (422) while the API keeps answering, and caps concurrency (503)",
+      async () => {
+        const started = Date.now();
+        const hostile = upload(xObjectBombPdf()).then((res) => res);
+
+        // While that thread spins, the API answers other requests at once.
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        const healthStarted = Date.now();
+        await app.request.get("/api/v1/health").expect(200);
+        expect(Date.now() - healthStarted).toBeLessThan(500);
+
+        // The only parsing slot is taken: another upload is told to come back.
+        const busy = await upload(fictitiousCvPdf()).expect(503);
+        expectProblem(busy, "SERVICE_NOT_READY");
+        expect(busy.headers["retry-after"]).toBe("3");
+
+        const res = await hostile;
+        expect(res.status).toBe(422);
+        expectProblem(res, "CV_PDF_UNREADABLE");
+        expect(res.body.detail).toMatch(/complexo demais/);
+        expect(Date.now() - started).toBeLessThan(PARSE_TIMEOUT_MS + 1_500);
+      },
+      PARSE_TIMEOUT_MS + 10_000,
+    );
   });
 
   it("never logs CV text, even when the request fails after extraction", async () => {

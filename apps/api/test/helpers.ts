@@ -75,6 +75,8 @@ export interface CreateTestAppOptions {
   controllers?: Type<unknown>[];
   /** Replace readiness probes (default: database `failed` because there is no DB, queue `skipped`). */
   probes?: ReadinessProbe[];
+  /** Extra provider overrides (token → value), applied after the defaults. */
+  overrides?: [token: unknown, value: unknown][];
 }
 
 export async function createTestApp(options: CreateTestAppOptions = {}): Promise<TestApp> {
@@ -98,6 +100,9 @@ export async function createTestApp(options: CreateTestAppOptions = {}): Promise
     .overrideProvider(USER_PROFILES)
     .useValue(sessions);
   if (options.probes) builder = builder.overrideProvider(READINESS_PROBES).useValue(options.probes);
+  for (const [token, value] of options.overrides ?? []) {
+    builder = builder.overrideProvider(token).useValue(value);
+  }
 
   const moduleRef = await builder.compile();
   const app = moduleRef.createNestApplication<NestFastifyApplication>(

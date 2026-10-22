@@ -1,40 +1,16 @@
 import { CV_UPLOAD_LIMITS } from "@linkedin-ops/contracts";
 import { getDocumentProxy } from "unpdf";
-
-/** `%PDF-`: every PDF starts with this header (ISO 32000-1 §7.5.2). The file name and declared type are ignored. */
-const PDF_SIGNATURE = Buffer.from("%PDF-", "latin1");
-
-export type CvPdfRejection =
-  /** Not a PDF by its signature. */
-  | "NOT_PDF"
-  /** pdf.js could not open it (corrupt, truncated, password-protected). */
-  | "UNREADABLE"
-  | "TOO_MANY_PAGES"
-  /** No text layer (scanned image) — OCR is out of scope. */
-  | "NO_TEXT"
-  | "TOO_MUCH_TEXT";
-
-/** Expected rejection of an uploaded file. The message never carries file content. */
-export class CvPdfError extends Error {
-  constructor(readonly reason: CvPdfRejection) {
-    super(`CV PDF rejected: ${reason}`);
-    this.name = "CvPdfError";
-  }
-}
-
-export function hasPdfSignature(file: Buffer): boolean {
-  return file.subarray(0, PDF_SIGNATURE.length).equals(PDF_SIGNATURE);
-}
+import { CvPdfError, hasPdfSignature, normalizeText } from "./cv-pdf.js";
 
 /**
- * Extracts the text layer of an uploaded CV with pdf.js (unpdf's serverless build: pure JS, no native
- * binary, no `eval` code path). The caller owns the buffer and discards it right after; nothing here keeps a copy,
- * logs, or writes to disk. pdf.js console output is limited to errors (`verbosity: 0`).
+ * Extracts the text layer of a CV PDF with pdf.js (unpdf's serverless build: pure JS, no native binary, no
+ * `eval` code path). Runs **only inside the parsing worker thread** (`cv-pdf.worker.ts`), never on the API
+ * event loop: a hostile PDF can make pdf.js spin or allocate without bound, and only terminating the thread
+ * stops it (`CvPdfExtractor`). Nothing here keeps a copy, logs, or writes to disk; `data` is wiped (or already
+ * detached by pdf.js) when this returns.
  */
-export async function extractCvPdfText(file: Buffer): Promise<string> {
-  if (!hasPdfSignature(file)) throw new CvPdfError("NOT_PDF");
-  // pdf.js may transfer (detach) the array it is given; it gets a copy so the caller can still wipe `file`.
-  const data = new Uint8Array(file);
+export async function parsePdfText(data: Uint8Array): Promise<string> {
+  if (!hasPdfSignature(data)) throw new CvPdfError("NOT_PDF");
   let document: Awaited<ReturnType<typeof getDocumentProxy>>;
   try {
     document = await getDocumentProxy(data, {
@@ -78,22 +54,7 @@ export async function extractCvPdfText(file: Buffer): Promise<string> {
     throw new CvPdfError("UNREADABLE");
   } finally {
     await document.loadingTask.destroy();
-    // Usually detached by pdf.js already (nothing left to wipe); otherwise the copy is wiped too.
+    // Usually detached by pdf.js already (nothing left to wipe); otherwise it is wiped here.
     if (data.byteLength > 0) data.fill(0);
   }
-}
-
-/** Unicode NFC, no control characters except newlines, trimmed lines, at most one blank line in a row. */
-export function normalizeText(text: string): string {
-  return (
-    text
-      .normalize("NFC")
-      // eslint-disable-next-line no-control-regex
-      .replaceAll(/[\u0000-\u0008\u000B-\u001F\u007F]/g, " ")
-      .split("\n")
-      .map((line) => line.replaceAll(/[ \t\u00A0]+/g, " ").trim())
-      .join("\n")
-      .replaceAll(/\n{3,}/g, "\n\n")
-      .trim()
-  );
 }
