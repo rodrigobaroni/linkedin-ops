@@ -22,7 +22,10 @@
     "test": "vitest run",
     "clean": "rm -rf dist .turbo coverage *.tsbuildinfo"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@linkedin-ops/contracts": "workspace:*",
+    "zod": "catalog:"
+  },
   "devDependencies": {
     "@linkedin-ops/config": "workspace:*",
     "@types/node": "catalog:",
