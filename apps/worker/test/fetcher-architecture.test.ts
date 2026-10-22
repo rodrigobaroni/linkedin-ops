@@ -10,6 +10,10 @@ import { describe, expect, it } from "vitest";
 
 const SRC = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
 const ENTRY = resolve(SRC, "career/http-job-page-fetcher.ts");
+/** Loaded by URL (`new Worker`), not by import: walked as a second entry. */
+const WORKER_ENTRY = resolve(SRC, "career/job-page-text-worker.ts");
+/** Its one dynamic import, of the extractor next to it (`.ts` in tests, `.js` in the build). */
+const ALLOWED_DYNAMIC_IMPORT = { file: WORKER_ENTRY, target: "career/job-page-text.ts" };
 
 const ALLOWED_PACKAGES = new Set(["parse5", "pino", "@linkedin-ops/domain"]);
 const ALLOWED_DOMAIN_NAMES = new Set([
@@ -47,16 +51,18 @@ function importsOf(file: string): ImportRecord[] {
   return records;
 }
 
-function graph(entry: string): { files: string[]; imports: ImportRecord[] } {
+function graph(...entries: string[]): { files: string[]; imports: ImportRecord[] } {
   const files: string[] = [];
   const imports: ImportRecord[] = [];
-  const queue = [entry];
+  const queue = [...entries];
   while (queue.length > 0) {
     const file = queue.shift() as string;
     if (files.includes(file)) continue;
     files.push(file);
     for (const record of importsOf(file)) {
-      if (record.specifier.startsWith(".")) {
+      if (record.specifier === "<dynamic import>" && file === ALLOWED_DYNAMIC_IMPORT.file) {
+        queue.push(resolve(SRC, ALLOWED_DYNAMIC_IMPORT.target));
+      } else if (record.specifier.startsWith(".")) {
         queue.push(resolve(dirname(file), record.specifier.replace(/\.js$/, ".ts")));
       } else {
         imports.push(record);
@@ -67,7 +73,7 @@ function graph(entry: string): { files: string[]; imports: ImportRecord[] } {
 }
 
 describe("job-page fetcher architecture (ADR-0008 §2)", () => {
-  const { files, imports } = graph(ENTRY);
+  const { files, imports } = graph(ENTRY, WORKER_ENTRY);
 
   it("covers the fetcher, the policy, the extractor and the HTTP client", () => {
     const relative = files.map((file) => file.slice(SRC.length + 1)).sort();
@@ -76,6 +82,8 @@ describe("job-page fetcher architecture (ADR-0008 §2)", () => {
         "career/http-job-page-fetcher.ts",
         "career/job-fetch-policy.ts",
         "career/job-page-text.ts",
+        "career/job-page-text-runner.ts",
+        "career/job-page-text-worker.ts",
         "career/ports.ts",
         "http/address-policy.ts",
         "http/safe-http-client.ts",

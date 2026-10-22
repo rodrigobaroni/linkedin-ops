@@ -10,8 +10,8 @@ import {
   SafeHttpError,
   type SafeHttpClientOptions,
 } from "../http/safe-http-client.js";
-import { JobFetchHops, classifyFetchFailure } from "./job-fetch-policy.js";
-import { extractJobPageText } from "./job-page-text.js";
+import { JobFetchHops, classifyFetchFailure, isLinkedInShortener } from "./job-fetch-policy.js";
+import { extractJobPageTextIsolated } from "./job-page-text-runner.js";
 import { JobFetchError, type JobPageFetcher } from "./ports.js";
 
 /** Bumped when the fetcher's behavior towards sites changes. */
@@ -74,8 +74,9 @@ export class HttpJobPageFetcher implements JobPageFetcher {
 
     const domain = hops.domain as string;
     // A shortener that answers 200 shows an interstitial, not the posting.
-    if (response.url.hostname.toLowerCase() === "lnkd.in") throw new JobFetchError("permanent");
-    const page = extractJobPageText(response.body, response.contentType);
+    if (isLinkedInShortener(response.url)) throw new JobFetchError("permanent");
+    // Off the event loop, with a hard timeout (QA #104).
+    const page = await extractJobPageTextIsolated(response.body, response.contentType);
     logger?.info(
       {
         fetchDomain: domain,
@@ -87,7 +88,8 @@ export class HttpJobPageFetcher implements JobPageFetcher {
       "job page fetched",
     );
     if (page.kind === "login_wall") return hops.stop(domain, "login_wall");
-    if (page.kind === "empty") throw new JobFetchError("permanent");
+    // Unreadable markup is never retried: a new fetch would spend quota on the same page.
+    if (page.kind === "empty" || page.kind === "unreadable") throw new JobFetchError("permanent");
     return { text: page.text };
   }
 }

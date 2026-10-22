@@ -156,15 +156,30 @@ describe("HttpJobPageFetcher", () => {
     expect(h.tripped).toEqual(["linkedin.com:login_wall"]);
   });
 
-  it("third party → linkedin.com/authwall: blocked, the LinkedIn breaker opens", async () => {
+  it("third party → linkedin.com/authwall: permanent, the LinkedIn breaker stays closed", async () => {
     const h = harness({
       "https://jobs.acme.example/r/1": { redirect: "https://www.linkedin.com/authwall?trk=x" },
     });
     expect(await rejection(h.fetch("https://jobs.acme.example/r/1"))).toEqual(
-      new JobFetchError("blocked"),
+      new JobFetchError("permanent"),
     );
-    expect(h.tripped).toEqual(["linkedin.com:login_redirect"]);
+    expect(h.tripped).toEqual([]);
     expect(h.sent).toEqual(["https://jobs.acme.example/r/1"]);
+  });
+
+  it("www.linkedin.com/jobs/view → /authwall: blocked, the LinkedIn breaker opens", async () => {
+    const h = harness({ [JOB]: { redirect: "/authwall?trk=x" } });
+    expect(await rejection(h.fetch(JOB))).toEqual(new JobFetchError("blocked"));
+    expect(h.tripped).toEqual(["linkedin.com:login_redirect"]);
+  });
+
+  it("hostile markup is permanent without a new request (QA #104)", async () => {
+    const h = harness({ "https://jobs.acme.example/deep": { body: "<div>".repeat(400_000) } });
+    expect(await rejection(h.fetch("https://jobs.acme.example/deep"))).toEqual(
+      new JobFetchError("permanent"),
+    );
+    expect(h.sent).toEqual(["https://jobs.acme.example/deep"]);
+    expect(h.tripped).toEqual([]);
   });
 
   it("defers when the first hop must wait for the domain interval", async () => {
@@ -182,9 +197,15 @@ describe("HttpJobPageFetcher", () => {
       "https://lnkd.in/x": {
         body: "<p>This link will take you to a page that is not on LinkedIn</p>",
       },
+      "https://lnkd.in./x": {
+        body: `<main>${"This link will take you to a page that is not on LinkedIn. ".repeat(10)}</main>`,
+      },
       "https://jobs.lever.co/d/1": { body: '<div id="root"></div>' },
     });
     expect(await rejection(h.fetch("https://lnkd.in/x"))).toEqual(new JobFetchError("permanent"));
+    h.advance(15_000); // same LinkedIn interval as the hop above
+    expect(await rejection(h.fetch("https://lnkd.in./x"))).toEqual(new JobFetchError("permanent"));
+    expect(h.sent).toContain("https://lnkd.in./x");
     expect(await rejection(h.fetch("https://jobs.lever.co/d/1"))).toEqual(
       new JobFetchError("permanent"),
     );
