@@ -106,7 +106,7 @@ const OPENING_WORDS = new Set(
   contributed contribute hired hire trained train tested test monitored monitor secured secure standardized
   streamlined rebuilt replaced replace consolidated reviewed review presented present negotiated planned
   prioritized organized organised acted served serve took handled oversaw directed headed spearheaded
-  exposed expose stored store loaded load called call ingested ingest queried query cleaned transformed exportei expus armazenei carreguei chamei ingeri consultei limpei transformei packaged package tuned tune configured configure debugged debug profiled benchmarked documented document
+  exposed expose provisioned provision guardei montei provisionei escalonei acompanhei stored store loaded load called call ingested ingest queried query cleaned transformed exportei expus armazenei carreguei chamei ingeri consultei limpei transformei packaged package tuned tune configured configure debugged debug profiled benchmarked documented document
   prototyped prototype validated validate modernized modernised upgraded upgrade resolved resolve fixed fix
   enabled enable released release rolled set saved save accelerated accelerate measured measure researched
   investigated investigate identified identify translated translate onboarded onboard used use leveraged
@@ -263,17 +263,24 @@ const DENY_FORMS: ReadonlyArray<{ words: readonly string[]; capitalizedOnly: boo
     .sort((a, b) => b.words.length - a.words.length);
 
 /**
- * Deny-term phrases found in analysed tokens: `any-case` terms in any spelling (`nubank`), `capitalized` terms
- * only when written as a name (`Rede`, never the common word `rede`).
+ * Deny-term phrases found in analysed tokens: `any-case` terms in any spelling and position (`nubank`),
+ * `capitalized` terms only when written as a name and not opening a sentence (`Rede`, never the common word
+ * `rede` nor "Rede de pipelines…"; Sentinela/Pena R2). `anyCase` ignores the `capitalized` mode: a deny term the
+ * posting itself cites is a name of the posting in any spelling (Crivo, PR #89).
  */
-function denyMatches(analysed: readonly Token[]): { start: number; words: readonly string[] }[] {
+function denyMatches(
+  analysed: readonly Token[],
+  anyCase = false,
+): { start: number; words: readonly string[] }[] {
   const matches: { start: number; words: readonly string[] }[] = [];
   for (let start = 0; start < analysed.length; start += 1) {
     const form = DENY_FORMS.find(
       (candidate) =>
         start + candidate.words.length <= analysed.length &&
         candidate.words.every((word, offset) => analysed[start + offset]?.word === word) &&
-        (!candidate.capitalizedOnly || analysed[start]?.nameLike === true),
+        (anyCase ||
+          !candidate.capitalizedOnly ||
+          (analysed[start]?.nameLike === true && analysed[start]?.opening !== true)),
     );
     if (form) {
       matches.push({ start, words: form.words });
@@ -282,6 +289,13 @@ function denyMatches(analysed: readonly Token[]): { start: number; words: readon
   }
   return matches;
 }
+
+/** Single-word `capitalized` deny terms: common words, accepted when they only open a sentence (R2). */
+const COMMON_WORD_DENY = new Set(
+  DENY_FORMS.filter((form) => form.capitalizedOnly && form.words.length === 1).map(
+    (form) => form.words[0] as string,
+  ),
+);
 
 /** Lexicon entries named anywhere in a text. */
 function lexiconEntries(text: string): Set<number> {
@@ -372,7 +386,7 @@ export function createEntityGuard(base: CvStructured, job: JobPostingExtracted):
       const analysed = analyse(text);
       // Clients the deny list knows are names in any spelling, even in a lowercase requirement.
       const requirementSpans = lexiconSpans(analysed.map((token) => token.word));
-      for (const match of denyMatches(analysed)) {
+      for (const match of denyMatches(analysed, true)) {
         if (coveringSpan(requirementSpans, match)) continue;
         for (const word of match.words) postingNames.add(word);
       }
@@ -419,7 +433,12 @@ export function createEntityGuard(base: CvStructured, job: JobPostingExtracted):
           return;
         }
         if (baseWords.has(token.word) || LANGUAGE_NAMES.has(token.word)) return;
-        if (!namedByPosting && token.opening && isCommon(token.word)) return;
+        if (
+          !namedByPosting &&
+          token.opening &&
+          (isCommon(token.word) || COMMON_WORD_DENY.has(token.word))
+        )
+          return;
         violations.push(token.word);
       });
       return [...new Set(violations)];

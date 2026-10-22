@@ -166,6 +166,138 @@ describe("a brand inside an allowed multi-word competence (Sentinela PR #89)", (
   });
 });
 
+describe("every qualified form that contains a denied brand passes when cited (Pena §6.6 R1)", () => {
+  const deny = CV_COMPETENCY_LEXICON.denyTerms.flatMap((g) => g.terms).map(fold);
+  const words = (text: string) => fold(text).split(/\s+/);
+  const containsDenied = (form: string) => {
+    const tokens = words(form);
+    return deny.some((term) => {
+      const t = term.split(/\s+/);
+      return tokens.some((_w, i) => t.every((word, k) => tokens[i + k] === word));
+    });
+  };
+  const affected = forms.filter((form) => form.includes(" ") && containsDenied(form));
+
+  it("covers the ~30 forms Pena listed (Amazon *, Google *, Microsoft *, Oracle *, SAP *, Delta Lake…)", () => {
+    expect(affected.length).toBeGreaterThanOrEqual(25);
+    for (const expected of [
+      "Amazon S3",
+      "Google Analytics",
+      "Delta Lake",
+      "Spring Boot",
+      "SAP HANA",
+      "Neon Postgres",
+      "HashiCorp Vault",
+      "Microsoft Fabric",
+      "OpenAI API",
+      "Salesforce CRM",
+    ]) {
+      expect(affected).toContain(expected);
+    }
+  });
+
+  for (const form of affected) {
+    it(`"${form}" passes when the cited requirement names it`, () => {
+      const guard = createEntityGuard(baseCv, postingWith(`Experiência com ${form}`));
+      expect(guard.newEntities(`Integrei dados com ${form}.`, ["req-9"])).toEqual([]);
+    });
+  }
+
+  it("Pena's R1 table passes with the cited requirement", () => {
+    for (const [form, text] of [
+      ["Amazon S3", "Armazenei dados no Amazon S3."],
+      ["Google Analytics", "Instrumentei eventos no Google Analytics."],
+      ["Delta Lake", "Modelei tabelas em Delta Lake."],
+      ["Spring Boot", "Desenvolvi serviços com Spring Boot."],
+      ["Neon Postgres", "Migrei para Neon Postgres."],
+      ["SAP HANA", "Integrei dados do SAP HANA."],
+      ["HashiCorp Vault", "Guardei segredos no HashiCorp Vault."],
+      ["Microsoft Fabric", "Montei relatórios no Microsoft Fabric."],
+      ["OpenAI API", "Integrei a OpenAI API."],
+      ["Salesforce CRM", "Integrei o Salesforce CRM."],
+    ] as const) {
+      const guard = createEntityGuard(baseCv, postingWith(`Experiência com ${form}`));
+      expect(guard.newEntities(text, ["req-9"]), text).toEqual([]);
+    }
+  });
+
+  it("one alone-brand case per deny group still fails", () => {
+    const g = createEntityGuard(
+      baseCv,
+      postingWith("Experiência com Amazon S3, Delta Lake e Spring Boot"),
+    );
+    const cases: Array<[group: string, text: string, expected: string]> = [
+      ["banks-fintechs", "Integrei pagamentos do Bradesco.", "bradesco"],
+      ["retail", "Armazenei dados na Amazon.", "amazon"],
+      ["telecom-industry-services", "Atendi a Petrobras.", "petrobras"],
+      ["big-tech-umbrella", "Integrei dados do SAP.", "sap"],
+      ["public-bodies-institutions", "Atendi o BACEN.", "bacen"],
+      ["credentials", "Obtive a PMP.", "pmp"],
+      ["common-word-names", "Voei pela Delta.", "delta"],
+      ["ambiguous-short-forms", "Desenvolvi com Spring.", "spring"],
+    ];
+    for (const [group, text, expected] of cases) {
+      expect(g.newEntities(text, ["req-9"]), group).toContain(expected);
+    }
+  });
+});
+
+describe("deny terms cited by the posting are its names in any spelling (Crivo, PR #89)", () => {
+  /** Replaces req-3 (the Kafka requirement the added fixture segment cites). */
+  function guardWithReq3(text: string) {
+    return createEntityGuard(baseCv, {
+      ...job,
+      requirements: job.requirements.map((r) =>
+        r.id === "req-3" ? { ...r, text, evidence: text } : r,
+      ),
+    });
+  }
+
+  it("Crivo's exact case: 'built integrations with Nubank API.' → ['nubank']", () => {
+    const g = guardWithReq3("nubank API integration with Kafka");
+    expect(g.newEntities("built integrations with Nubank API.", ["req-3"])).toEqual(["nubank"]);
+  });
+
+  it("regression: a capitalized-mode term cited lowercase by the posting, 'integrated with rede API.' → ['rede']", () => {
+    const g = guardWithReq3("rede API integration");
+    expect(g.newEntities("integrated with rede API.", ["req-3"])).toEqual(["rede"]);
+  });
+
+  it("R2 does not reopen it: a posting name opening the sentence is still rejected", () => {
+    const g = guardWithReq3("rede API integration");
+    expect(g.newEntities("Rede API integration shipped.", ["req-3"])).toEqual(["rede"]);
+  });
+});
+
+describe("capitalized deny terms never match at the opening of a sentence (Pena §6.6 R2)", () => {
+  it("'Via…', 'Meta de vendas…' and 'Rede de pipelines…' pass; the same names mid-sentence fail", () => {
+    const g = createEntityGuard(baseCv, postingWith("APIs REST e Python"));
+    expect(g.newEntities("Via API REST, integrei os sistemas.", ["req-9"])).toEqual([]);
+    expect(g.newEntities("Meta de latência cumprida com Python.", ["req-9"])).toEqual([]);
+    expect(g.newEntities("Rede de pipelines em Python.", ["req-9"])).toEqual([]);
+    expect(g.newEntities("Integrei pagamentos com a Rede.", ["req-9"])).toEqual(["rede"]);
+  });
+
+  it("any-case names are still rejected at the opening", () => {
+    const g = createEntityGuard(baseCv, postingWith("Python"));
+    expect(g.newEntities("Nubank pipelines in Python.", ["req-9"])).toEqual(["nubank"]);
+  });
+});
+
+describe("opening verbs from Pena's tests are not names (§6.6 R3)", () => {
+  it("Armazenei, Guardei, Montei, Provisionei open sentences", () => {
+    const g = createEntityGuard(baseCv, postingWith("Python"));
+    for (const text of [
+      "Armazenei dados com Python.",
+      "Guardei segredos com Python.",
+      "Montei relatórios com Python.",
+      "Provisionei ambientes com Python.",
+    ]) {
+      expect(g.newEntities(text, ["req-9"]), text).toEqual([]);
+    }
+  });
+});
+
 describe("Pena's evals (cv-competency-lexicon-review.md §7)", () => {
   const guard = (requirement: string) => createEntityGuard(baseCv, postingWith(requirement));
 
