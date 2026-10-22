@@ -148,6 +148,38 @@ Nenhuma saída de LLM, Telegram ou fonte externa pode iniciar esse fluxo diretam
 | G-06 | Restore de backup cifrado, varredura de secrets e scan Semgrep/Trivy/gitleaks com triagem documentada. | deploy | Estaleiro |
 | G-07 | Testes provam: bloqueio SSRF (faixas privadas, metadata, redirect para rede interna, DNS rebinding), nenhuma requisição de vaga com cookie/token/secret (canário), limite por domínio, recuo e circuit breaker em 429/999/403/login wall, rejeição de caminhos do LinkedIn fora de `/jobs/view/<id>`. | busca de vagas em produção | Pêndulo/Sentinela |
 
+### Evidência do G-07 (PR 3a da Carreira, 2026-10-22)
+
+Entregue para a revisão da Sentinela. O G-07 continua **fechado** até essa revisão, e o fetcher só passa a
+consumir a fila quando o PR 3b ligar o store de vagas. Testes em `apps/worker/test/`:
+
+- **SSRF (TM-08 parcial, TM-25)**: `safe-http-client.test.ts`, com servidor HTTP local e DNS falso. Cobre:
+  - faixas privadas, loopback, link-local/metadata, CGNAT, IPv4-mapped e ULA;
+  - `*.nip.io` e `metadata.google.internal`;
+  - IP literal, credencial na URL, porta não padrão e esquema fora de http/https;
+  - redirect para rede interna e DNS rebinding (um lookup por salto; a conexão vai ao IP validado);
+  - 4 redirects, 2 MB + 1 byte, gzip bomb, timeout e content type;
+  - `Set-Cookie` que nunca volta.
+
+  O TM-08 continua aberto: as fontes RSS ainda não usam o `SafeHttpClient`, e o egress firewall é do
+  Estaleiro.
+- **Canário (TM-27)**: `http-job-page-fetcher.test.ts` mostra que nenhum cookie, token ou segredo do ambiente
+  sai na requisição. `fetcher-architecture.test.ts` mostra que o fetcher não alcança o vault, a sessão, o
+  Prisma, `process.env` nem a API do LinkedIn.
+- **Limite, recuo e breaker (TM-26)**: `job-fetch-policy.test.ts` e `http-job-page-fetcher.test.ts`. Cobrem:
+  - 15 s, ou 5 s fora do LinkedIn, aplicados pelo domínio de destino de cada salto;
+  - a cota de 40 em 24 h;
+  - o `lnkd.in` → `/jobs/view` sem loop, com no máximo 2 unidades de cota;
+  - 429, 999, 403, redirect para login e login wall abrem o breaker por 24 h, e a vaga seguinte do domínio
+    falha sem requisição;
+  - o kill switch também vale em redirect.
+
+  A persistência e a concorrência estão em `packages/domain/test/fetch-domain-guard.integration.test.ts`.
+- **Caminhos do LinkedIn**: só `/jobs/view/<id numérico>`, normalizado. Perfil, busca, coleções, empresa e
+  feed são recusados.
+- **Injeção na página (TM-28)**: a fixture `fixtures/job-pages/injection.html` (texto e JSON-LD) chega como
+  texto puro, sem scripts e sem texto oculto. Ela entra no corpus da T-058.
+
 ## 9. Findings abertos
 
 Formato compatível com `.github/ISSUE_TEMPLATE/security.md`.
