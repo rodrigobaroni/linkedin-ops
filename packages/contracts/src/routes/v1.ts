@@ -996,6 +996,18 @@ export const routesV1 = defineRoutes({
     async: true,
     rateLimited: true,
   },
+  "career.jobs.pdf": {
+    method: "GET",
+    path: "/career/jobs/{id}/pdf",
+    summary:
+      "Tailored CV as a PDF, rendered on demand from the CV base version it was tailored from (READY only)",
+    tag: "career",
+    auth: "session",
+    params: IdParamsSchema,
+    responses: { 200: null },
+    responseContentType: "application/pdf",
+    rateLimited: true,
+  },
   "career.jobs.delete": {
     method: "DELETE",
     path: "/career/jobs/{id}",
