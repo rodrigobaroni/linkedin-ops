@@ -1,8 +1,21 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
-import { LlmError, type LlmRequest } from "@linkedin-ops/editorial-engine";
-import { OpenAiLlmClient, parseRetryAfter, type LlmCallEvent } from "../src/llm/openai.js";
+import {
+  LlmError,
+  buildCvExtractRequest,
+  buildCvTailorRequest,
+  buildJobExtractRequest,
+  resolveTargetLanguage,
+  type LlmRequest,
+} from "@linkedin-ops/editorial-engine";
+import {
+  OpenAiLlmClient,
+  parseRetryAfter,
+  toOpenAiStrictSchema,
+  type LlmCallEvent,
+} from "../src/llm/openai.js";
+import { baseCv, cvText, job, postingText } from "./fixtures.js";
 
 const API_KEY = "sk-test-canary-0123456789abcdef";
 const SECRET_INPUT = "CANARY-CV-CONTENT Ana Exemplo";
@@ -196,5 +209,43 @@ describe("parseRetryAfter", () => {
     expect(parseRetryAfter(new Date(10_000).toUTCString(), 4_000)).toBe(6000);
     expect(parseRetryAfter(null)).toBeNull();
     expect(parseRetryAfter("soon")).toBeNull();
+  });
+});
+
+describe("OpenAI strict-mode dialect (adapter)", () => {
+  it('never sends keywords next to $ref (OpenAI: "$ref cannot have keywords")', async () => {
+    const options = { model: "gpt-test", rng: { hex: (n: number) => "e".repeat(n) } };
+    const requests = [
+      buildCvExtractRequest({ cvText }, options).request,
+      buildJobExtractRequest({ jobText: postingText, sourceUrl: null }, options).request,
+      buildCvTailorRequest({ base: baseCv, job, target: resolveTargetLanguage("en") }, options)
+        .request,
+    ];
+    const { url, bodies } = await serve([completed({ ok: true })]);
+    for (const built of requests) await client(url).complete(built);
+    const offenders: string[] = [];
+    const visit = (node: unknown, path: string) => {
+      if (Array.isArray(node)) return node.forEach((child, i) => visit(child, `${path}/${i}`));
+      if (node === null || typeof node !== "object") return;
+      const record = node as Record<string, unknown>;
+      if ("$ref" in record && Object.keys(record).length > 1) offenders.push(path);
+      for (const [key, value] of Object.entries(record)) visit(value, `${path}/${key}`);
+    };
+    bodies.forEach((body, index) => visit(JSON.parse(body), String(index)));
+    expect(bodies).toHaveLength(3);
+    expect(offenders).toEqual([]);
+  });
+
+  it("toOpenAiStrictSchema keeps the $ref and drops its siblings only", () => {
+    expect(
+      toOpenAiStrictSchema({
+        properties: {
+          id: { $ref: "#/$defs/Id", description: "x" },
+          n: { type: "string", description: "kept" },
+        },
+      }),
+    ).toEqual({
+      properties: { id: { $ref: "#/$defs/Id" }, n: { type: "string", description: "kept" } },
+    });
   });
 });

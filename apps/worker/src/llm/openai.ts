@@ -58,6 +58,22 @@ interface ResponsesApiBody {
   usage?: { input_tokens?: number; output_tokens?: number };
 }
 
+/**
+ * OpenAI strict mode rejects keywords next to `$ref` ("$ref cannot have keywords {'description'}"), which Zod
+ * emits for `.describe()` on a registered schema. They are documentation only: the adapter drops them from the
+ * schema it sends (the contract schema is unchanged and still validates the output). Provider dialect lives
+ * here, not in the provider-neutral engine (ADR-0005).
+ */
+export function toOpenAiStrictSchema<T>(node: T): T {
+  if (Array.isArray(node)) return node.map((item: unknown) => toOpenAiStrictSchema(item)) as T;
+  if (node === null || typeof node !== "object") return node;
+  const record = node as Record<string, unknown>;
+  if (typeof record.$ref === "string") return { $ref: record.$ref } as T;
+  return Object.fromEntries(
+    Object.entries(record).map(([key, value]) => [key, toOpenAiStrictSchema(value)]),
+  ) as T;
+}
+
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export class OpenAiLlmClient implements LlmClient {
@@ -126,7 +142,7 @@ export class OpenAiLlmClient implements LlmClient {
             format: {
               type: "json_schema",
               name: request.outputSchema.name,
-              schema: request.outputSchema.schema,
+              schema: toOpenAiStrictSchema(request.outputSchema.schema),
               strict: true,
             },
           },

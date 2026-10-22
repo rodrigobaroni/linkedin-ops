@@ -10,7 +10,6 @@ import {
   LlmError,
   resolveTargetLanguage,
   sanitizeUntrustedText,
-  toOpenAiStrictSchema,
 } from "../src/index.js";
 import { baseCv, cvText, fixedRng, job, postingText } from "./fixtures/career.js";
 
@@ -116,40 +115,6 @@ describe("SimulatedLlmClient", () => {
     await expect(client.complete(cv)).rejects.toMatchObject({
       kind: "NOT_CONFIGURED",
       transient: false,
-    });
-  });
-});
-
-describe("OpenAI strict-mode dialect", () => {
-  it('never sends keywords next to $ref (OpenAI: "$ref cannot have keywords")', () => {
-    const requests = [
-      buildCvExtractRequest({ cvText }, options).request,
-      buildJobExtractRequest({ jobText: postingText, sourceUrl: null }, options).request,
-      buildCvTailorRequest({ base: baseCv, job, target: resolveTargetLanguage("en") }, options)
-        .request,
-    ];
-    const offenders: string[] = [];
-    const visit = (node: unknown, path: string) => {
-      if (Array.isArray(node)) return node.forEach((child, i) => visit(child, `${path}/${i}`));
-      if (node === null || typeof node !== "object") return;
-      const record = node as Record<string, unknown>;
-      if ("$ref" in record && Object.keys(record).length > 1) offenders.push(path);
-      for (const [key, value] of Object.entries(record)) visit(value, `${path}/${key}`);
-    };
-    for (const request of requests) visit(request.outputSchema.schema, request.promptId);
-    expect(offenders).toEqual([]);
-  });
-
-  it("toOpenAiStrictSchema keeps the $ref and drops its siblings only", () => {
-    expect(
-      toOpenAiStrictSchema({
-        properties: {
-          id: { $ref: "#/$defs/Id", description: "x" },
-          n: { type: "string", description: "kept" },
-        },
-      }),
-    ).toEqual({
-      properties: { id: { $ref: "#/$defs/Id" }, n: { type: "string", description: "kept" } },
     });
   });
 });

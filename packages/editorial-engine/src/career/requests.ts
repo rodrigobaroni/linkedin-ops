@@ -51,35 +51,19 @@ export interface BuiltRequest {
   preflightInjectionFlags: string[];
 }
 
-/**
- * OpenAI strict mode rejects keywords next to `$ref` ("$ref cannot have keywords {'description'}"), which Zod
- * emits for `.describe()` on a registered schema. They are documentation only: drop them from the copy sent to
- * the model (the contract schema is unchanged and still validates the output).
- */
-export function toOpenAiStrictSchema<T>(node: T): T {
-  if (Array.isArray(node)) return node.map((item: unknown) => toOpenAiStrictSchema(item)) as T;
-  if (node === null || typeof node !== "object") return node;
-  const record = node as Record<string, unknown>;
-  if (typeof record.$ref === "string") return { $ref: record.$ref } as T;
-  return Object.fromEntries(
-    Object.entries(record).map(([key, value]) => [key, toOpenAiStrictSchema(value)]),
-  ) as T;
-}
-
 function request(
   prompt: PromptDefinition,
   outputKey: Parameters<typeof structuredOutputJsonSchema>[0],
   model: string,
   input: string,
 ): LlmRequest {
-  const outputSchema = structuredOutputJsonSchema(outputKey);
   return {
     promptId: prompt.id,
     promptVersion: prompt.version,
     model,
     instructions: prompt.instructions,
     input,
-    outputSchema: { ...outputSchema, schema: toOpenAiStrictSchema(outputSchema.schema) },
+    outputSchema: structuredOutputJsonSchema(outputKey),
     maxOutputTokens: prompt.maxOutputTokens,
   };
 }
