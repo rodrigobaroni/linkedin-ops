@@ -3,6 +3,7 @@ import {
   ERROR_CODE_HTTP_STATUS,
   type ErrorCode,
   PROBLEM_CONTENT_TYPE,
+  defineRoutes,
   problemTypeFor,
   routesV1,
 } from "@linkedin-ops/contracts";
@@ -85,6 +86,31 @@ describe("createApiClient", () => {
     expect(headers.get("Content-Type")).toBe("application/json");
     expect(headers.get("X-Requested-With")).toBe("linkedin-ops");
     expect(headers.has(CSRF_TOKEN_HEADER)).toBe(false);
+  });
+
+  it("sends a declared multipart route's FormData as is: browser boundary, N4 header kept", async () => {
+    const routes = defineRoutes({
+      upload: {
+        method: "POST",
+        path: "/uploads",
+        summary: "test",
+        tag: "test",
+        auth: "session",
+        requestContentType: "multipart/form-data",
+        responses: { 204: null },
+      },
+    });
+    const { client, fetchMock } = setup([new Response(null, { status: 204 })]);
+    const formData = new FormData();
+    formData.append("file", new File(["%PDF-1.7"], "cv.pdf", { type: "application/pdf" }));
+    await client.request(routes.upload, { formData });
+    const { init, headers } = requestOf(fetchMock);
+    expect(init.body).toBe(formData);
+    // No manual Content-Type: fetch derives `multipart/form-data; boundary=…` from the FormData.
+    expect(headers.has("Content-Type")).toBe(false);
+    expect(headers.get("X-Requested-With")).toBe("linkedin-ops");
+    await expect(client.request(routes.upload)).rejects.toThrow(/multipart/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("adds X-CSRF-Token on elevated routes and when asked explicitly", async () => {

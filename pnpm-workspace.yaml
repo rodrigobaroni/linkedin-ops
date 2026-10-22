@@ -50,6 +50,10 @@ catalog:
   swagger-ui-dist: ^5.34.0
   # OIDC id_token verification for the LinkedIn connection (RS256 + JWKS; T-038, Sentinela A-2). No deps.
   jose: 6.2.12
+  # CV base upload (career module, PR 2): multipart parsing on the one route that declares it, and PDF text
+  # extraction in pure JS (pdf.js serverless build, no native binary; `@napi-rs/canvas` peer stays absent).
+  "@fastify/multipart": 10.1.2
+  unpdf: 1.8.1
 
 # pnpm 10 blocks install scripts by default. Only these packages may run them (T-005): the Prisma CLI and
 # its schema engine download, argon2's native binding, and esbuild (used by tsx and Vitest).

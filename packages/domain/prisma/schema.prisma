@@ -272,6 +272,21 @@ enum NotificationStatus {
   @@map("notification_status")
 }
 
+enum CvDraftStatus {
+  EXTRACTING
+  READY
+  FAILED
+
+  @@map("cv_draft_status")
+}
+
+enum CvExtractionFailure {
+  EXTRACTION_FAILED
+  TIMED_OUT
+
+  @@map("cv_extraction_failure")
+}
+
 // ───────────────────────────── 2.1 Identity and access ─────────────────────────────
 
 model User {
@@ -317,6 +332,7 @@ model User {
   notifications    Notification[]
   auditEvents      AuditEvent[]
   idempotencyKeys  IdempotencyKey[]
+  cvBases          CvBase[]
 
   @@map("users")
 }
@@ -1058,4 +1074,33 @@ model IdempotencyKey {
   @@unique([userId, route, key])
   @@index([expiresAt])
   @@map("idempotency_keys")
+}
+
+// ───────────────────────────── 2.8 Career (spec 2026-10-22 cv-tailoring) ─────────────────────────────
+
+/// The owner's CV as structured content (personal data: never logged). One row per version: at most one
+/// unconfirmed draft and at most one active version per user (partial unique indexes in the migration).
+/// The uploaded PDF is never stored; its text lives in `extracted_text` only while `cv.extract` runs.
+model CvBase {
+  id            String               @id @db.Uuid
+  userId        String               @map("user_id") @db.Uuid
+  version       Int
+  /// Draft lifecycle; a confirmed version is always `READY`.
+  status        CvDraftStatus
+  failureReason CvExtractionFailure? @map("failure_reason")
+  /// Structured CV (contracts schema, validated on write and read); null until `READY`.
+  content       Json?
+  /// Text extracted from the PDF, input of `cv.extract`; cleared when the draft leaves `EXTRACTING`.
+  extractedText String?              @map("extracted_text")
+  /// Activation is an explicit service step (deactivate the previous version in the same transaction).
+  isActive      Boolean              @default(false) @map("is_active")
+  /// null = draft (not yet reviewed and confirmed by the owner).
+  confirmedAt   DateTime?            @map("confirmed_at") @db.Timestamptz(3)
+  createdAt     DateTime             @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime             @map("updated_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, version])
+  @@map("cv_bases")
 }

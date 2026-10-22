@@ -6,6 +6,8 @@ import {
   AutonomyModeSchema,
   CurationRunStatusSchema,
   CurationRunTriggerSchema,
+  CvDraftStatusSchema,
+  CvExtractionFailureSchema,
   DraftStatusSchema,
   DraftVersionAuthorTypeSchema,
   LanguageSchema,
@@ -65,6 +67,8 @@ export const MIRRORED: Record<string, z.ZodEnum<Record<string, string>>> = {
   NotificationChannel: NotificationChannelSchema,
   NotificationKind: NotificationKindSchema,
   NotificationStatus: NotificationStatusSchema,
+  CvDraftStatus: CvDraftStatusSchema,
+  CvExtractionFailure: CvExtractionFailureSchema,
 };
 
 /** Enums that exist only in the database, with the reason there is no contract counterpart. */

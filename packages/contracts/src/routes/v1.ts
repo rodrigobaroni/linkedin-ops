@@ -47,6 +47,12 @@ import {
   DraftSubmitReviewInputSchema,
   PublishAcceptedSchema,
 } from "../resources/draft.js";
+import {
+  CvBaseSchema,
+  CvBaseStateSchema,
+  CvConfirmInputSchema,
+  CvUploadAcceptedSchema,
+} from "../resources/cv-base.js";
 import { DraftVersionCreateInputSchema, DraftVersionSchema } from "../resources/draft-version.js";
 import { HealthStatusSchema, ReadinessStatusSchema } from "../resources/health.js";
 import {
@@ -887,6 +893,45 @@ export const routesV1 = defineRoutes({
     roles: [UserRole.OWNER],
     query: AuditEventQuerySchema,
     responses: { 200: paginated(AuditEventSchema) },
+  },
+
+  // 2.13 Carreira: CV base (spec 2026-10-22 §7)
+  "career.cv.get": {
+    method: "GET",
+    path: "/career/cv",
+    summary: "Active CV base and the pending draft",
+    tag: "career",
+    auth: "session",
+    responses: { 200: CvBaseStateSchema },
+  },
+  "career.cv.upload": {
+    method: "POST",
+    path: "/career/cv",
+    summary: "Upload the CV PDF (multipart; PDF only, 5 MiB); text is structured by `cv.extract`",
+    tag: "career",
+    auth: "session",
+    requestContentType: "multipart/form-data",
+    responses: { 202: CvUploadAcceptedSchema },
+    async: true,
+    rateLimited: true,
+  },
+  "career.cv.confirm": {
+    method: "POST",
+    path: "/career/cv/confirm",
+    summary: "Confirm the reviewed draft as the active CV base",
+    tag: "career",
+    auth: "session",
+    body: CvConfirmInputSchema,
+    responses: { 200: CvBaseSchema },
+  },
+  "career.cv.delete": {
+    method: "DELETE",
+    path: "/career/cv",
+    summary: "Delete every CV base version and the draft",
+    tag: "career",
+    auth: "elevated",
+    roles: OWNER_ONLY,
+    responses: { 204: null },
   },
 });
 

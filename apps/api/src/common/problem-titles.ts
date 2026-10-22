@@ -26,6 +26,8 @@ export const PROBLEM_TITLES: Readonly<Record<ErrorCode, string>> = {
   SCHEDULE_IN_PAST: "Data de agendamento no passado",
   TIMEZONE_INVALID: "Fuso horário inválido",
   AUTONOMY_MODE_NOT_ENABLED: "Modo de autonomia não habilitado",
+  CV_PDF_UNREADABLE: "Não foi possível ler o PDF do CV",
+  CV_DRAFT_NOT_READY: "O rascunho de CV não pode ser confirmado",
   RATE_LIMITED: "Muitas requisições; tente novamente em instantes",
   PAYLOAD_TOO_LARGE: "Corpo da requisição grande demais",
   UNSUPPORTED_MEDIA_TYPE: "Tipo de conteúdo não suportado",

@@ -16,6 +16,7 @@ const REQUIRED_ROUTES = [
   "/historico",
   "/story-bank",
   "/voice-profile",
+  "/carreira/cv",
   "/fontes",
   "/analytics",
   "/notificacoes",
@@ -47,8 +48,8 @@ describe("navigation config", () => {
     expect(isActivePath("/hoje", "/curadoria")).toBe(false);
   });
 
-  it("groups follow the navigation map: primary, Memória editorial, secondary", () => {
-    expect(navGroups).toEqual(["primary", "editorialMemory", "secondary"]);
+  it("groups follow the navigation map: primary, Memória editorial, Carreira, secondary", () => {
+    expect(navGroups).toEqual(["primary", "editorialMemory", "career", "secondary"]);
     const byGroup = (group: string) =>
       navItems.filter((item) => item.group === group).map((item) => item.label);
     expect(byGroup("primary")).toEqual([
@@ -60,6 +61,7 @@ describe("navigation config", () => {
       "Histórico",
     ]);
     expect(byGroup("editorialMemory")).toEqual(["Story Bank", "Voice Profile"]);
+    expect(byGroup("career")).toEqual(["Meu CV"]);
     expect(byGroup("secondary")).toEqual(["Fontes", "Analytics", "Notificações", "Configurações"]);
   });
 });

@@ -10,6 +10,12 @@
  * Limits that strict mode may not enforce (`min`, `max`, `regex`) are still validated by Zod after parse.
  */
 import { z } from "zod";
+import {
+  CvExtractionOutputSchema,
+  CvHumanizationOutputSchema,
+  CvTailoringOutputSchema,
+  JobExtractionOutputSchema,
+} from "../career/schemas.js";
 import { toStructuredOutputSchema, type StructuredOutputSchema } from "../common/json-schema.js";
 import { HookFormulaSchema } from "../enums/draft.js";
 import { LanguageSchema } from "../enums/language.js";
@@ -34,6 +40,10 @@ export const PromptIdSchema = z
     "media",
     "quality",
     "voice-extract",
+    "cv-extract",
+    "job-extract",
+    "cv-tailor",
+    "cv-humanize",
   ])
   .meta({ id: "PromptId" });
 export const PromptId = PromptIdSchema.enum;
@@ -573,6 +583,10 @@ export const STRUCTURED_OUTPUTS = {
     "voice-extract",
     VoiceProfileExtractionSchema,
   ),
+  cvExtraction: define("CvExtraction", "cv-extract", CvExtractionOutputSchema),
+  jobExtraction: define("JobExtraction", "job-extract", JobExtractionOutputSchema),
+  cvTailoring: define("CvTailoring", "cv-tailor", CvTailoringOutputSchema),
+  cvHumanization: define("CvHumanization", "cv-humanize", CvHumanizationOutputSchema),
 } as const;
 export type StructuredOutputKey = keyof typeof STRUCTURED_OUTPUTS;
 

@@ -629,3 +629,136 @@ describe("voice profiles", () => {
     ).resolves.toBeTruthy();
   });
 });
+
+describe("cv bases (career PR 2, migration 20261022100000)", () => {
+  async function owner(): Promise<string> {
+    const id = newId();
+    await prisma.user.create({
+      data: { id, email: `cv-${id}@example.test`, passwordHash: "x", name: "CV owner" },
+    });
+    return id;
+  }
+  const now = () => new Date();
+  const content = { language: "pt-BR" };
+
+  function extracting(userId: string, version: number) {
+    return prisma.cvBase.create({
+      data: {
+        id: newId(),
+        userId,
+        version,
+        status: "EXTRACTING",
+        extractedText: "texto",
+        createdAt: now(),
+        updatedAt: now(),
+      },
+    });
+  }
+
+  function confirmed(userId: string, version: number, isActive: boolean) {
+    return prisma.cvBase.create({
+      data: {
+        id: newId(),
+        userId,
+        version,
+        status: "READY",
+        content,
+        isActive,
+        confirmedAt: now(),
+        createdAt: now(),
+        updatedAt: now(),
+      },
+    });
+  }
+
+  it("allows at most one draft and one active version per user", async () => {
+    const userId = await owner();
+    await extracting(userId, 1);
+    await expectRejects(extracting(userId, 2), UNIQUE);
+    await confirmed(userId, 2, true);
+    await expectRejects(confirmed(userId, 3, true), UNIQUE);
+    await expect(confirmed(userId, 3, false)).resolves.toBeTruthy();
+    // Another owner is independent.
+    await expect(extracting(await owner(), 1)).resolves.toBeTruthy();
+  });
+
+  it("each status carries exactly its payload (text while EXTRACTING, content when READY)", async () => {
+    const userId = await owner();
+    const base = { userId, createdAt: now(), updatedAt: now() };
+    await expectRejects(
+      prisma.cvBase.create({ data: { id: newId(), ...base, version: 1, status: "EXTRACTING" } }),
+      CHECK,
+    );
+    await expectRejects(
+      prisma.cvBase.create({
+        data: { id: newId(), ...base, version: 1, status: "READY", content, extractedText: "x" },
+      }),
+      CHECK,
+    );
+    await expectRejects(
+      prisma.cvBase.create({ data: { id: newId(), ...base, version: 1, status: "FAILED" } }),
+      CHECK,
+    );
+    await expectRejects(
+      prisma.cvBase.create({
+        data: { id: newId(), ...base, version: 1, status: "READY", content: ["not", "object"] },
+      }),
+      CHECK,
+    );
+    await expect(
+      prisma.cvBase.create({
+        data: { id: newId(), ...base, version: 1, status: "FAILED", failureReason: "TIMED_OUT" },
+      }),
+    ).resolves.toBeTruthy();
+  });
+
+  it("only a confirmed READY version can be active; versions start at 1", async () => {
+    const userId = await owner();
+    const base = { userId, createdAt: now(), updatedAt: now() };
+    await expectRejects(
+      prisma.cvBase.create({
+        data: { id: newId(), ...base, version: 1, status: "READY", content, isActive: true },
+      }),
+      CHECK,
+    );
+    await expectRejects(
+      prisma.cvBase.create({
+        data: {
+          id: newId(),
+          ...base,
+          version: 1,
+          status: "FAILED",
+          failureReason: "EXTRACTION_FAILED",
+          confirmedAt: now(),
+        },
+      }),
+      CHECK,
+    );
+    await expectRejects(confirmed(userId, 0, false), CHECK);
+  });
+
+  it("caps the stored PDF text", async () => {
+    const userId = await owner();
+    await expectRejects(
+      prisma.cvBase.create({
+        data: {
+          id: newId(),
+          userId,
+          version: 1,
+          status: "EXTRACTING",
+          extractedText: "x".repeat(60_001),
+          createdAt: now(),
+          updatedAt: now(),
+        },
+      }),
+      CHECK,
+    );
+  });
+
+  it("is deleted with its owner", async () => {
+    const userId = await owner();
+    await confirmed(userId, 1, true);
+    await prisma.user.delete({ where: { id: userId } });
+    expect(await prisma.cvBase.count({ where: { userId } })).toBe(0);
+  });
+});

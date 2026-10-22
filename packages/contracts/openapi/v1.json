@@ -18,6 +18,9 @@
       "name": "auth"
     },
     {
+      "name": "career"
+    },
+    {
       "name": "content-pillars"
     },
     {
@@ -7316,6 +7319,299 @@
           "OWNER"
         ]
       }
+    },
+    "/career/cv": {
+      "get": {
+        "operationId": "career.cv.get",
+        "summary": "Active CV base and the pending draft",
+        "tags": [
+          "career"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CvBaseState"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "AUTH_REQUIRED",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Problem Details (contracts.md §4)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "x-auth": "session"
+      },
+      "post": {
+        "operationId": "career.cv.upload",
+        "summary": "Upload the CV PDF (multipart; PDF only, 5 MiB); text is structured by `cv.extract`",
+        "tags": [
+          "career"
+        ],
+        "parameters": [
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "description": "CSRF defense in depth (ADR-0007 N4)",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "linkedin-ops"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CvUploadAccepted"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "AUTH_REQUIRED",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "CSRF_REJECTED | FORBIDDEN",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED (Retry-After in seconds)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Problem Details (contracts.md §4)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "x-auth": "session",
+        "x-async": true,
+        "x-rate-limited": true
+      },
+      "delete": {
+        "operationId": "career.cv.delete",
+        "summary": "Delete every CV base version and the draft",
+        "tags": [
+          "career"
+        ],
+        "parameters": [
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "description": "CSRF defense in depth (ADR-0007 N4)",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "linkedin-ops"
+              ]
+            }
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": true,
+            "description": "CSRF token bound to the session (ADR-0007 N2); the session must be elevated",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "401": {
+            "description": "AUTH_REQUIRED | AUTH_REAUTH_REQUIRED",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "CSRF_REJECTED | FORBIDDEN",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Problem Details (contracts.md §4)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "x-auth": "elevated",
+        "x-roles": [
+          "OWNER"
+        ]
+      }
+    },
+    "/career/cv/confirm": {
+      "post": {
+        "operationId": "career.cv.confirm",
+        "summary": "Confirm the reviewed draft as the active CV base",
+        "tags": [
+          "career"
+        ],
+        "parameters": [
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "description": "CSRF defense in depth (ADR-0007 N4)",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "linkedin-ops"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CvConfirmInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CvBase"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_FAILED",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "AUTH_REQUIRED",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "CSRF_REJECTED | FORBIDDEN",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Problem Details (contracts.md §4)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "x-auth": "session"
+      }
     }
   },
   "components": {
@@ -7325,6 +7621,62 @@
         "enum": [
           "USER",
           "SYSTEM"
+        ]
+      },
+      "AddedSegment": {
+        "type": "object",
+        "properties": {
+          "segmentId": {
+            "$ref": "#/components/schemas/CareerItemId"
+          },
+          "section": {
+            "$ref": "#/components/schemas/AddedSegmentSection"
+          },
+          "cvExperienceId": {
+            "nullable": true,
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CareerItemId"
+              }
+            ]
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "targetRequirementIds": {
+            "minItems": 1,
+            "maxItems": 10,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CareerItemId"
+            }
+          },
+          "additionNote": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          }
+        },
+        "required": [
+          "segmentId",
+          "section",
+          "cvExperienceId",
+          "text",
+          "targetRequirementIds",
+          "additionNote"
+        ],
+        "additionalProperties": false
+      },
+      "AddedSegmentSection": {
+        "type": "string",
+        "enum": [
+          "summary",
+          "experience-bullets",
+          "experience-skills",
+          "skills-technical",
+          "skills-behavioral"
         ]
       },
       "AlternativeHook": {
@@ -7814,6 +8166,19 @@
           "correction",
           "opposition",
           "ask"
+        ]
+      },
+      "CareerItemId": {
+        "type": "string",
+        "maxLength": 40,
+        "pattern": "^[a-z]+(?:-[a-z0-9]+)*$",
+        "description": "Stable item id, e.g. exp-1, exp-1-b-2, edu-1, req-3, seg-4."
+      },
+      "CareerLanguage": {
+        "type": "string",
+        "enum": [
+          "pt-BR",
+          "en"
         ]
       },
       "CarouselSlide": {
@@ -8553,6 +8918,823 @@
           }
         },
         "additionalProperties": false
+      },
+      "CvBase": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "description": "UUID (v7 preferred)"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "content": {
+            "$ref": "#/components/schemas/CvStructured"
+          },
+          "confirmedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "description": "ISO 8601 UTC instant with Z suffix"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "description": "ISO 8601 UTC instant with Z suffix"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "content",
+          "confirmedAt",
+          "createdAt"
+        ]
+      },
+      "CvBaseState": {
+        "type": "object",
+        "properties": {
+          "active": {
+            "nullable": true,
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CvBase"
+              }
+            ]
+          },
+          "draft": {
+            "nullable": true,
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CvDraft"
+              }
+            ]
+          }
+        },
+        "required": [
+          "active",
+          "draft"
+        ]
+      },
+      "CvCertification": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/CareerItemId"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "issuer": {
+            "nullable": true,
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "date": {
+            "nullable": true,
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "issuer",
+          "date"
+        ],
+        "additionalProperties": false
+      },
+      "CvConfirmInput": {
+        "type": "object",
+        "properties": {
+          "draftId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "description": "UUID (v7 preferred)"
+          },
+          "content": {
+            "$ref": "#/components/schemas/CvStructured"
+          }
+        },
+        "required": [
+          "draftId",
+          "content"
+        ],
+        "additionalProperties": false
+      },
+      "CvContact": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "nullable": true,
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "email": {
+            "nullable": true,
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "phone": {
+            "nullable": true,
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "location": {
+            "nullable": true,
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "links": {
+            "maxItems": 10,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "description": "Public profile/portfolio URLs as written."
+          }
+        },
+        "required": [
+          "name",
+          "email",
+          "phone",
+          "location",
+          "links"
+        ],
+        "additionalProperties": false
+      },
+      "CvDraft": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "description": "UUID (v7 preferred)"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "status": {
+            "$ref": "#/components/schemas/CvDraftStatus"
+          },
+          "failureReason": {
+            "nullable": true,
+            "description": "Set only when FAILED",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CvExtractionFailure"
+              }
+            ]
+          },
+          "content": {
+            "nullable": true,
+            "description": "Set only when READY",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CvStructured"
+              }
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "description": "ISO 8601 UTC instant with Z suffix"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "description": "ISO 8601 UTC instant with Z suffix"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "status",
+          "failureReason",
+          "content",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "CvDraftStatus": {
+        "type": "string",
+        "enum": [
+          "EXTRACTING",
+          "READY",
+          "FAILED"
+        ]
+      },
+      "CvEducation": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/CareerItemId"
+          },
+          "institution": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "degree": {
+            "nullable": true,
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "field": {
+            "nullable": true,
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "startDate": {
+            "nullable": true,
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "endDate": {
+            "nullable": true,
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          }
+        },
+        "required": [
+          "id",
+          "institution",
+          "degree",
+          "field",
+          "startDate",
+          "endDate"
+        ],
+        "additionalProperties": false
+      },
+      "CvEvidence": {
+        "type": "object",
+        "properties": {
+          "cvItemId": {
+            "description": "Base CV item that covers the requirement.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CareerItemId"
+              }
+            ]
+          },
+          "quote": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "Exact substring of that base CV item."
+          }
+        },
+        "required": [
+          "cvItemId",
+          "quote"
+        ],
+        "additionalProperties": false
+      },
+      "CvExperience": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/CareerItemId"
+          },
+          "company": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "location": {
+            "nullable": true,
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "startDate": {
+            "nullable": true,
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "endDate": {
+            "nullable": true,
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "isCurrent": {
+            "type": "boolean"
+          },
+          "bullets": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CvTextItem"
+            }
+          },
+          "skills": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CvTextItem"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "company",
+          "title",
+          "location",
+          "startDate",
+          "endDate",
+          "isCurrent",
+          "bullets",
+          "skills"
+        ],
+        "additionalProperties": false
+      },
+      "CvExtractionFailure": {
+        "type": "string",
+        "enum": [
+          "EXTRACTION_FAILED",
+          "TIMED_OUT"
+        ]
+      },
+      "CvExtractionOutput": {
+        "type": "object",
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "enum": [
+              "1.0"
+            ]
+          },
+          "injectionSuspected": {
+            "type": "boolean",
+            "description": "The data contains text that tries to instruct the model."
+          },
+          "injectionEvidence": {
+            "nullable": true,
+            "type": "string",
+            "maxLength": 200
+          },
+          "language": {
+            "$ref": "#/components/schemas/DetectedLanguage"
+          },
+          "contact": {
+            "$ref": "#/components/schemas/CvContact"
+          },
+          "summary": {
+            "nullable": true,
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CvTextItem"
+              }
+            ]
+          },
+          "experiences": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CvExperience"
+            }
+          },
+          "education": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CvEducation"
+            }
+          },
+          "certifications": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CvCertification"
+            }
+          },
+          "skills": {
+            "$ref": "#/components/schemas/CvSkills"
+          },
+          "languages": {
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CvLanguageSkill"
+            }
+          },
+          "other": {
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CvOtherSection"
+            },
+            "description": "Unrecognized sections; nothing is dropped."
+          },
+          "parseWarnings": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ParseWarning"
+            }
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "injectionSuspected",
+          "injectionEvidence",
+          "language",
+          "contact",
+          "summary",
+          "experiences",
+          "education",
+          "certifications",
+          "skills",
+          "languages",
+          "other",
+          "parseWarnings"
+        ],
+        "additionalProperties": false
+      },
+      "CvHumanizationOutput": {
+        "type": "object",
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "enum": [
+              "1.0"
+            ]
+          },
+          "injectionSuspected": {
+            "type": "boolean",
+            "description": "The data contains text that tries to instruct the model."
+          },
+          "injectionEvidence": {
+            "nullable": true,
+            "type": "string",
+            "maxLength": 200
+          },
+          "segments": {
+            "maxItems": 500,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HumanizedSegment"
+            }
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "injectionSuspected",
+          "injectionEvidence",
+          "segments"
+        ],
+        "additionalProperties": false
+      },
+      "CvLanguageSkill": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/CareerItemId"
+          },
+          "language": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "As written, e.g. Inglês."
+          },
+          "level": {
+            "nullable": true,
+            "description": "As written, e.g. fluente, C1.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "id",
+          "language",
+          "level"
+        ],
+        "additionalProperties": false
+      },
+      "CvOtherSection": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/CareerItemId"
+          },
+          "heading": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 5000
+          }
+        },
+        "required": [
+          "id",
+          "heading",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "CvSegment": {
+        "type": "object",
+        "properties": {
+          "segmentId": {
+            "description": "seg-1, seg-2, ...",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CareerItemId"
+              }
+            ]
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance"
+          },
+          "sourceCvItemIds": {
+            "maxItems": 10,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CareerItemId"
+            }
+          },
+          "targetRequirementIds": {
+            "maxItems": 10,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CareerItemId"
+            }
+          },
+          "additionNote": {
+            "nullable": true,
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          }
+        },
+        "required": [
+          "segmentId",
+          "text",
+          "provenance",
+          "sourceCvItemIds",
+          "targetRequirementIds",
+          "additionNote"
+        ],
+        "additionalProperties": false
+      },
+      "CvSegmentList": {
+        "type": "object",
+        "properties": {
+          "segments": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CvSegment"
+            }
+          }
+        },
+        "required": [
+          "segments"
+        ],
+        "additionalProperties": false
+      },
+      "CvSkills": {
+        "type": "object",
+        "properties": {
+          "technical": {
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CvTextItem"
+            }
+          },
+          "behavioral": {
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CvTextItem"
+            }
+          }
+        },
+        "required": [
+          "technical",
+          "behavioral"
+        ],
+        "additionalProperties": false
+      },
+      "CvStructured": {
+        "type": "object",
+        "properties": {
+          "language": {
+            "$ref": "#/components/schemas/DetectedLanguage"
+          },
+          "contact": {
+            "$ref": "#/components/schemas/CvContact"
+          },
+          "summary": {
+            "nullable": true,
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CvTextItem"
+              }
+            ]
+          },
+          "experiences": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CvExperience"
+            }
+          },
+          "education": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CvEducation"
+            }
+          },
+          "certifications": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CvCertification"
+            }
+          },
+          "skills": {
+            "$ref": "#/components/schemas/CvSkills"
+          },
+          "languages": {
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CvLanguageSkill"
+            }
+          },
+          "other": {
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CvOtherSection"
+            },
+            "description": "Unrecognized sections; nothing is dropped."
+          }
+        },
+        "required": [
+          "language",
+          "contact",
+          "summary",
+          "experiences",
+          "education",
+          "certifications",
+          "skills",
+          "languages",
+          "other"
+        ],
+        "additionalProperties": false
+      },
+      "CvTailoringOutput": {
+        "type": "object",
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "enum": [
+              "1.0"
+            ]
+          },
+          "targetLanguage": {
+            "$ref": "#/components/schemas/CareerLanguage"
+          },
+          "injectionSuspected": {
+            "type": "boolean",
+            "description": "The data contains text that tries to instruct the model."
+          },
+          "injectionEvidence": {
+            "nullable": true,
+            "type": "string",
+            "maxLength": 200
+          },
+          "matchAssessment": {
+            "type": "object",
+            "properties": {
+              "requirements": {
+                "maxItems": 60,
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/RequirementAssessment"
+                }
+              }
+            },
+            "required": [
+              "requirements"
+            ],
+            "additionalProperties": false
+          },
+          "tailoredCv": {
+            "$ref": "#/components/schemas/TailoringOutputCv"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "targetLanguage",
+          "injectionSuspected",
+          "injectionEvidence",
+          "matchAssessment",
+          "tailoredCv"
+        ],
+        "additionalProperties": false
+      },
+      "CvTextItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/CareerItemId"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "id",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "CvUploadAccepted": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "description": "Id of the resource the job acts on"
+          },
+          "status": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Current status of that resource"
+          },
+          "jobId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "pg-boss job id"
+          },
+          "draft": {
+            "$ref": "#/components/schemas/CvDraft"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "jobId",
+          "draft"
+        ]
+      },
+      "DetectedLanguage": {
+        "type": "string",
+        "enum": [
+          "pt-BR",
+          "en",
+          "other"
+        ]
       },
       "Draft": {
         "type": "object",
@@ -9537,6 +10719,8 @@
           "SCHEDULE_IN_PAST",
           "TIMEZONE_INVALID",
           "AUTONOMY_MODE_NOT_ENABLED",
+          "CV_PDF_UNREADABLE",
+          "CV_DRAFT_NOT_READY",
           "RATE_LIMITED",
           "PAYLOAD_TOO_LARGE",
           "UNSUPPORTED_MEDIA_TYPE",
@@ -9887,6 +11071,78 @@
           "factsChanged"
         ]
       },
+      "HumanizedSegment": {
+        "type": "object",
+        "properties": {
+          "segmentId": {
+            "$ref": "#/components/schemas/CareerItemId"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "changed": {
+            "type": "boolean"
+          },
+          "changeReason": {
+            "nullable": true,
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        },
+        "required": [
+          "segmentId",
+          "text",
+          "changed",
+          "changeReason"
+        ],
+        "additionalProperties": false
+      },
+      "HumanizerCheck": {
+        "type": "object",
+        "properties": {
+          "rulesVersion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "cv-banned-phrases@<version>"
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "regenerations": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2
+          },
+          "failedRuleIds": {
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "revertedSegmentIds": {
+            "maxItems": 500,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CareerItemId"
+            }
+          }
+        },
+        "required": [
+          "rulesVersion",
+          "passed",
+          "regenerations",
+          "failedRuleIds",
+          "revertedSegmentIds"
+        ],
+        "additionalProperties": false
+      },
       "IdParams": {
         "type": "object",
         "properties": {
@@ -9902,12 +11158,255 @@
         ],
         "additionalProperties": false
       },
+      "JobExtractionOutput": {
+        "type": "object",
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "enum": [
+              "1.0"
+            ]
+          },
+          "injectionSuspected": {
+            "type": "boolean",
+            "description": "The data contains text that tries to instruct the model."
+          },
+          "injectionEvidence": {
+            "nullable": true,
+            "type": "string",
+            "maxLength": 200
+          },
+          "isJobPosting": {
+            "type": "boolean"
+          },
+          "notAJobReason": {
+            "nullable": true,
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "language": {
+            "$ref": "#/components/schemas/DetectedLanguage"
+          },
+          "languageDetected": {
+            "$ref": "#/components/schemas/LanguageTag"
+          },
+          "title": {
+            "nullable": true,
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "company": {
+            "nullable": true,
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "location": {
+            "nullable": true,
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "workMode": {
+            "nullable": true,
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/JobWorkMode"
+              }
+            ]
+          },
+          "seniority": {
+            "nullable": true,
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "requirements": {
+            "maxItems": 60,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JobRequirement"
+            }
+          },
+          "keywords": {
+            "maxItems": 60,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "description": "Technical terms cited literally."
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "injectionSuspected",
+          "injectionEvidence",
+          "isJobPosting",
+          "notAJobReason",
+          "language",
+          "languageDetected",
+          "title",
+          "company",
+          "location",
+          "workMode",
+          "seniority",
+          "requirements",
+          "keywords"
+        ],
+        "additionalProperties": false
+      },
+      "JobPostingExtracted": {
+        "type": "object",
+        "properties": {
+          "language": {
+            "$ref": "#/components/schemas/DetectedLanguage"
+          },
+          "languageDetected": {
+            "$ref": "#/components/schemas/LanguageTag"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "company": {
+            "nullable": true,
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "location": {
+            "nullable": true,
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "workMode": {
+            "nullable": true,
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/JobWorkMode"
+              }
+            ]
+          },
+          "seniority": {
+            "nullable": true,
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "requirements": {
+            "minItems": 1,
+            "maxItems": 60,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JobRequirement"
+            }
+          },
+          "keywords": {
+            "maxItems": 60,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "description": "Technical terms cited literally."
+          }
+        },
+        "required": [
+          "language",
+          "languageDetected",
+          "title",
+          "company",
+          "location",
+          "workMode",
+          "seniority",
+          "requirements",
+          "keywords"
+        ],
+        "additionalProperties": false
+      },
+      "JobRequirement": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "description": "req-1, req-2, ...",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CareerItemId"
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/JobRequirementKind"
+          },
+          "category": {
+            "$ref": "#/components/schemas/JobRequirementCategory"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "Normalized requirement, in the posting's language."
+          },
+          "evidence": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Exact substring of the posting (checked by code)."
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "category",
+          "text",
+          "evidence"
+        ],
+        "additionalProperties": false
+      },
+      "JobRequirementCategory": {
+        "type": "string",
+        "enum": [
+          "technical",
+          "behavioral",
+          "education",
+          "certification",
+          "language",
+          "experience",
+          "other"
+        ]
+      },
+      "JobRequirementKind": {
+        "type": "string",
+        "enum": [
+          "mandatory",
+          "desirable"
+        ]
+      },
+      "JobWorkMode": {
+        "type": "string",
+        "enum": [
+          "onsite",
+          "hybrid",
+          "remote"
+        ]
+      },
       "Language": {
         "type": "string",
         "enum": [
           "pt-BR",
           "en"
         ]
+      },
+      "LanguageTag": {
+        "type": "string",
+        "pattern": "^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$"
       },
       "LinkedInCallbackQuery": {
         "type": "object",
@@ -10155,6 +11654,125 @@
         "required": [
           "title",
           "contentPillar"
+        ],
+        "additionalProperties": false
+      },
+      "MatchReport": {
+        "type": "object",
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "enum": [
+              "1.0"
+            ]
+          },
+          "scoringVersion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "baseScore": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "jobLanguage": {
+            "$ref": "#/components/schemas/LanguageTag"
+          },
+          "cvLanguage": {
+            "$ref": "#/components/schemas/CareerLanguage"
+          },
+          "requirements": {
+            "maxItems": 60,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MatchedRequirement"
+            }
+          },
+          "added": {
+            "maxItems": 200,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AddedSegment"
+            }
+          },
+          "humanizer": {
+            "$ref": "#/components/schemas/HumanizerCheck"
+          },
+          "warnings": {
+            "maxItems": 10,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MatchReportWarning"
+            }
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "scoringVersion",
+          "baseScore",
+          "jobLanguage",
+          "cvLanguage",
+          "requirements",
+          "added",
+          "humanizer",
+          "warnings"
+        ],
+        "additionalProperties": false
+      },
+      "MatchReportWarning": {
+        "type": "string",
+        "enum": [
+          "injection_suspected",
+          "language_fallback",
+          "job_echo"
+        ]
+      },
+      "MatchedRequirement": {
+        "type": "object",
+        "properties": {
+          "requirementId": {
+            "$ref": "#/components/schemas/CareerItemId"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "kind": {
+            "$ref": "#/components/schemas/JobRequirementKind"
+          },
+          "category": {
+            "$ref": "#/components/schemas/JobRequirementCategory"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RequirementStatus"
+          },
+          "cvEvidence": {
+            "maxItems": 5,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CvEvidence"
+            }
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "evidenceRejected": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "requirementId",
+          "text",
+          "kind",
+          "category",
+          "status",
+          "cvEvidence",
+          "rationale",
+          "evidenceRejected"
         ],
         "additionalProperties": false
       },
@@ -11295,6 +12913,26 @@
           "expired"
         ]
       },
+      "ParseWarning": {
+        "type": "object",
+        "properties": {
+          "field": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "field",
+          "message"
+        ],
+        "additionalProperties": false
+      },
       "PostDraft": {
         "type": "object",
         "properties": {
@@ -11475,7 +13113,19 @@
           "hooks",
           "media",
           "quality",
-          "voice-extract"
+          "voice-extract",
+          "cv-extract",
+          "job-extract",
+          "cv-tailor",
+          "cv-humanize"
+        ]
+      },
+      "Provenance": {
+        "type": "string",
+        "enum": [
+          "original",
+          "rewritten",
+          "added"
         ]
       },
       "Publication": {
@@ -12078,6 +13728,45 @@
           "id"
         ],
         "additionalProperties": false
+      },
+      "RequirementAssessment": {
+        "type": "object",
+        "properties": {
+          "requirementId": {
+            "$ref": "#/components/schemas/CareerItemId"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RequirementStatus"
+          },
+          "cvEvidence": {
+            "maxItems": 5,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CvEvidence"
+            }
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240,
+            "description": "Up to 240 characters, Brazilian Portuguese."
+          }
+        },
+        "required": [
+          "requirementId",
+          "status",
+          "cvEvidence",
+          "rationale"
+        ],
+        "additionalProperties": false
+      },
+      "RequirementStatus": {
+        "type": "string",
+        "enum": [
+          "met",
+          "partial",
+          "missing"
+        ]
       },
       "Schedule": {
         "type": "object",
@@ -13066,6 +14755,217 @@
           "image",
           "carousel"
         ]
+      },
+      "TailoredCvContent": {
+        "type": "object",
+        "properties": {
+          "language": {
+            "$ref": "#/components/schemas/CareerLanguage"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/CvSegmentList"
+          },
+          "experiences": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "cvExperienceId": {
+                  "$ref": "#/components/schemas/CareerItemId"
+                },
+                "bullets": {
+                  "$ref": "#/components/schemas/CvSegmentList"
+                },
+                "skills": {
+                  "$ref": "#/components/schemas/CvSegmentList"
+                }
+              },
+              "required": [
+                "cvExperienceId",
+                "bullets",
+                "skills"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "skills": {
+            "type": "object",
+            "properties": {
+              "technical": {
+                "$ref": "#/components/schemas/CvSegmentList"
+              },
+              "behavioral": {
+                "$ref": "#/components/schemas/CvSegmentList"
+              }
+            },
+            "required": [
+              "technical",
+              "behavioral"
+            ],
+            "additionalProperties": false
+          },
+          "educationIds": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CareerItemId"
+            }
+          },
+          "certificationIds": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CareerItemId"
+            }
+          },
+          "languageIds": {
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CareerItemId"
+            }
+          }
+        },
+        "required": [
+          "language",
+          "summary",
+          "experiences",
+          "skills",
+          "educationIds",
+          "certificationIds",
+          "languageIds"
+        ],
+        "additionalProperties": false
+      },
+      "TailoringOutputCv": {
+        "type": "object",
+        "properties": {
+          "summary": {
+            "$ref": "#/components/schemas/CvSegmentList"
+          },
+          "experiences": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "cvExperienceId": {
+                  "$ref": "#/components/schemas/CareerItemId"
+                },
+                "order": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100
+                },
+                "bullets": {
+                  "$ref": "#/components/schemas/CvSegmentList"
+                },
+                "skills": {
+                  "$ref": "#/components/schemas/CvSegmentList"
+                }
+              },
+              "required": [
+                "cvExperienceId",
+                "order",
+                "bullets",
+                "skills"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "skills": {
+            "type": "object",
+            "properties": {
+              "technical": {
+                "$ref": "#/components/schemas/CvSegmentList"
+              },
+              "behavioral": {
+                "$ref": "#/components/schemas/CvSegmentList"
+              }
+            },
+            "required": [
+              "technical",
+              "behavioral"
+            ],
+            "additionalProperties": false
+          },
+          "education": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "cvEducationId": {
+                  "$ref": "#/components/schemas/CareerItemId"
+                },
+                "order": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100
+                }
+              },
+              "required": [
+                "cvEducationId",
+                "order"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "certifications": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "cvCertificationId": {
+                  "$ref": "#/components/schemas/CareerItemId"
+                },
+                "order": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100
+                }
+              },
+              "required": [
+                "cvCertificationId",
+                "order"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "languages": {
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "cvLanguageId": {
+                  "$ref": "#/components/schemas/CareerItemId"
+                },
+                "order": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100
+                }
+              },
+              "required": [
+                "cvLanguageId",
+                "order"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "summary",
+          "experiences",
+          "skills",
+          "education",
+          "certifications",
+          "languages"
+        ],
+        "additionalProperties": false
       },
       "TrustLevel": {
         "type": "string",

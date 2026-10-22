@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { careerCases } from "./fixtures/career.js";
 import { jobCases } from "./fixtures/jobs.js";
 import { resourceCases } from "./fixtures/resources.js";
 import { structuredOutputCases } from "./fixtures/structured-outputs.js";
 
-const allCases = [...resourceCases, ...structuredOutputCases, ...jobCases];
+const allCases = [...resourceCases, ...structuredOutputCases, ...careerCases, ...jobCases];
 
 describe("every schema accepts its valid example and rejects invalid variants", () => {
   for (const schemaCase of allCases) {

@@ -24,6 +24,20 @@ describe("jobs/queues catalogue (contracts.md §6.1)", () => {
     }
   });
 
+  it("job.fetch retries once after at least 60 s, without backoff (ADR-0008 §4)", () => {
+    expect(QUEUES["job.fetch"]).toMatchObject({
+      retryLimit: 1,
+      retryBackoff: false,
+      retryDelaySeconds: 60,
+    });
+  });
+
+  it("career queues retry the AI steps twice with backoff (spec §9)", () => {
+    for (const name of ["cv.extract", "cv.tailor"] as const) {
+      expect(QUEUES[name]).toMatchObject({ retryLimit: 2, retryBackoff: true });
+    }
+  });
+
   it("singleton keys follow the catalogue", () => {
     const parse = <N extends keyof typeof QUEUES>(name: N) =>
       QUEUES[name].payload.parse(jobPayloads[name]) as never;
@@ -44,6 +58,12 @@ describe("jobs/queues catalogue (contracts.md §6.1)", () => {
     );
     expect(QUEUES["media.upload-linkedin"].singletonKeyFrom?.(parse("media.upload-linkedin"))).toBe(
       jobPayloads["media.upload-linkedin"].mediaAssetId,
+    );
+    expect(QUEUES["cv.extract"].singletonKeyFrom?.(parse("cv.extract"))).toBe(
+      jobPayloads["cv.extract"].cvBaseId,
+    );
+    expect(QUEUES["job.fetch"].singletonKeyFrom?.(parse("job.fetch"))).toBe(
+      jobPayloads["job.fetch"].jobPostingId,
     );
   });
 

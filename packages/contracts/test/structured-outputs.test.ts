@@ -50,6 +50,10 @@ describe("Structured Outputs JSON Schema (OpenAI strict mode)", () => {
     expect(STRUCTURED_OUTPUTS.mediaSuggestion.promptId).toBe("media");
     expect(STRUCTURED_OUTPUTS.qualityEvaluation.promptId).toBe("quality");
     expect(STRUCTURED_OUTPUTS.voiceProfileExtraction.promptId).toBe("voice-extract");
+    expect(STRUCTURED_OUTPUTS.cvExtraction.promptId).toBe("cv-extract");
+    expect(STRUCTURED_OUTPUTS.jobExtraction.promptId).toBe("job-extract");
+    expect(STRUCTURED_OUTPUTS.cvTailoring.promptId).toBe("cv-tailor");
+    expect(STRUCTURED_OUTPUTS.cvHumanization.promptId).toBe("cv-humanize");
   });
 
   it("shared $defs match docs/editorial/structured-outputs.md §1.1", () => {
@@ -92,6 +96,29 @@ describe("Structured Outputs JSON Schema (OpenAI strict mode)", () => {
     expect(JSON.stringify(properties.altText)).toContain('"maxLength":300');
     expect(structuredOutputJsonSchema("mediaSuggestion").schema.required as string[]).toContain(
       "altText",
+    );
+  });
+});
+
+describe("Career outputs (docs/editorial/career-prompts.md v1.0.0)", () => {
+  it("cv-tailor never asks the model for a score; the assessment is per requirement", () => {
+    const schema = structuredOutputJsonSchema("cvTailoring").schema;
+    expect(JSON.stringify(schema)).not.toMatch(/score/i);
+    const properties = schema.properties as Record<string, unknown>;
+    expect(Object.keys(properties)).toContain("matchAssessment");
+  });
+
+  it("provenance enum is original | rewritten | added", () => {
+    const defs = structuredOutputJsonSchema("cvTailoring").schema.$defs as Record<
+      string,
+      Record<string, unknown>
+    >;
+    expect(defs.Provenance?.enum).toEqual(["original", "rewritten", "added"]);
+  });
+
+  it("cv-humanize output has no provenance field", () => {
+    expect(JSON.stringify(structuredOutputJsonSchema("cvHumanization").schema)).not.toContain(
+      "provenance",
     );
   });
 });

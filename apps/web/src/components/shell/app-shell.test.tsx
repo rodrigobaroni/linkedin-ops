@@ -58,12 +58,14 @@ describe("AppShell", () => {
       "Histórico",
       "Story Bank",
       "Voice Profile",
+      "Meu CV",
       "Fontes",
       "Analytics",
       "Notificações",
       "Configurações",
     ]);
     expect(within(sidebar).getByText(messages.nav.editorialMemory)).toBeInTheDocument();
+    expect(within(sidebar).getByText(messages.nav.career)).toBeInTheDocument();
   });
 
   it("marks the active route with aria-current, including nested paths", async () => {
@@ -121,6 +123,12 @@ describe("AppShell", () => {
       .filter((item) => !["/hoje", "/publicar", "/curadoria"].includes(item.href))
       .map((item) => item.label);
     expect(drawerLinks).toEqual(expected);
+    // Grouped like the sidebar: the "Carreira" list is named by its heading.
+    const career = within(drawerNav).getByRole("list", { name: messages.nav.career });
+    expect(within(career).getByRole("link", { name: "Meu CV" })).toHaveAttribute(
+      "href",
+      "/carreira/cv",
+    );
     expect(within(dialog).getByText("Modo Assistido")).toBeInTheDocument();
     expect(within(dialog).getByRole("link", { name: /LinkedIn: Conectado/ })).toBeInTheDocument();
     expect(
