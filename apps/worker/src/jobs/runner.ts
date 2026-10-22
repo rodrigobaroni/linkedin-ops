@@ -2,12 +2,16 @@
  * Wraps a typed handler into a pg-boss `perJobResults` handler (ADR-0002 §4, §7, §9):
  * - the payload is validated with the catalogue's Zod schema before anything runs (invalid → dead letter);
  * - `PermanentJobError` → dead letter at once; other errors → retried up to `retryLimit`, then dead letter;
+ * - `CancelledJobError` caused by the worker's own shutdown (`shutdown` signal, raised before pg-boss stops) → the
+ *   payload is re-enqueued as a fresh job and this one completes, so a shutdown never consumes a retry nor
+ *   reaches the dead letter (falls back to a retry if the re-enqueue fails). A cancellation that pg-boss itself
+ *   raised (job expired) follows pg-boss's retry; in both cases the item is never marked failed;
  * - each outcome is logged with queue, job id, attempt, duration and error class, never the payload.
  */
 import { QUEUES, type QueueName, type QueuePayload } from "@linkedin-ops/contracts";
 import type { Job, JobResult } from "pg-boss";
 import type { Logger } from "pino";
-import { PermanentJobError, RetryableJobError } from "./errors.js";
+import { CancelledJobError, PermanentJobError, RetryableJobError } from "./errors.js";
 
 export interface JobContext {
   jobId: string;
@@ -24,10 +28,17 @@ export type JobHandler<N extends QueueName> = (
   context: JobContext,
 ) => Promise<void>;
 
+/** Delay before a cancelled job runs again (lets a restarting worker come back first). */
+export const CANCELLED_REQUEUE_DELAY_SECONDS = 30;
+
+export type Requeue<N extends QueueName> = (payload: QueuePayload<N>) => Promise<unknown>;
+
 export function createJobRunner<N extends QueueName>(
   queue: N,
   handler: JobHandler<N>,
   logger: Logger,
+  requeue: Requeue<N> | null = null,
+  shutdown: AbortSignal | null = null,
   now: () => number = Date.now,
 ): (jobs: Job<unknown>[]) => Promise<JobResult[]> {
   const definition = QUEUES[queue];
@@ -52,18 +63,34 @@ export function createJobRunner<N extends QueueName>(
           jobId: job.id,
           retryCount: job.retryCount,
           isLastAttempt: job.retryCount >= definition.retryLimit,
-          signal: job.signal,
+          signal: shutdown === null ? job.signal : AbortSignal.any([job.signal, shutdown]),
           logger: jobLogger,
         });
         jobLogger.info({ outcome: "completed", durationMs: now() - started }, "job completed");
         results.push({ id: job.id, status: "completed" });
       } catch (error) {
+        const byShutdown = shutdown?.aborted === true && !job.signal.aborted;
+        if (error instanceof CancelledJobError && byShutdown && requeue !== null) {
+          try {
+            await requeue(payload);
+            jobLogger.info(
+              { outcome: "requeued", durationMs: now() - started, errorClass: "CANCELLED" },
+              "job cancelled and re-enqueued",
+            );
+            results.push({ id: job.id, status: "completed", output: { cancelled: true } });
+            continue;
+          } catch {
+            jobLogger.warn({ errorClass: "CANCELLED:REQUEUE_FAILED" }, "re-enqueue failed");
+          }
+        }
         const permanent = error instanceof PermanentJobError;
         const errorClass = permanent
           ? `PERMANENT:${error.reason}`
           : error instanceof RetryableJobError
             ? `TRANSIENT:${error.reason}`
-            : `TRANSIENT:${error instanceof Error ? error.name : "unknown"}`;
+            : error instanceof CancelledJobError
+              ? "CANCELLED"
+              : `TRANSIENT:${error instanceof Error ? error.name : "unknown"}`;
         jobLogger.warn(
           { outcome: permanent ? "deadletter" : "failed", durationMs: now() - started, errorClass },
           "job failed",

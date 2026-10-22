@@ -47,6 +47,7 @@ const EXTERNAL_DATABASE_URL = process.env.WORKER_IT_DATABASE_URL;
 const uuid = (n: number) => `018f6b1e-7c2a-7b3c-9d4e-${n.toString(16).padStart(12, "0")}`;
 
 let container: StartedPostgreSqlContainer | undefined;
+let databaseUrl = "";
 let boss: PgBoss | undefined;
 let lifecycle: WorkerLifecycle | undefined;
 const events: string[] = [];
@@ -126,6 +127,7 @@ beforeAll(async () => {
     container = await new PostgreSqlContainer(POSTGRES_IMAGE).start();
     connectionString = container.getConnectionUri();
   }
+  databaseUrl = connectionString;
   boss = new PgBoss({ connectionString, schema: PGBOSS_SCHEMA_NAME });
   const career = createCareerHandlers({
     llm,
@@ -248,6 +250,20 @@ describe("worker on pg-boss (ADR-0002)", () => {
     await lifecycle?.stop("SIGTERM");
     expect(hangAborted).toBe(true);
     expect(events).not.toContain(`failed:${posting}:ai`);
-    expect(events.some((e) => e.startsWith(`tailored:${posting}`))).toBe(false);
+    expect(events.filter((e) => e.includes(posting))).toEqual([]);
+    // The cancelled job was re-enqueued as a fresh job (no retry consumed, nothing dead-lettered).
+    const inspector = new PgBoss({ connectionString: databaseUrl, schema: PGBOSS_SCHEMA_NAME });
+    await inspector.start();
+    try {
+      const jobs = await inspector.findJobs<{ jobPostingId: string }>("cv.tailor", {
+        data: { jobPostingId: posting },
+      });
+      expect(jobs.map((j) => j.state).sort()).toEqual(["completed", "created"]);
+      expect(jobs.find((j) => j.state === "created")?.retryCount).toBe(0);
+      const dead = await inspector.findJobs("cv.tailor.dlq", { data: { jobPostingId: posting } });
+      expect(dead).toEqual([]);
+    } finally {
+      await inspector.stop({ graceful: false });
+    }
   });
 });

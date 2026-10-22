@@ -1,7 +1,7 @@
 import { pino } from "pino";
 import { describe, expect, it } from "vitest";
 import { SimulatedLlmClient, type SimulatedOutput } from "@linkedin-ops/editorial-engine";
-import { PermanentJobError, RetryableJobError } from "../src/jobs/errors.js";
+import { CancelledJobError, PermanentJobError, RetryableJobError } from "../src/jobs/errors.js";
 import type { JobContext } from "../src/jobs/runner.js";
 import { createCareerHandlers, isLinkedInUrl } from "../src/career/handlers.js";
 import {
@@ -362,7 +362,7 @@ describe("cv.tailor", () => {
     expect(events).toEqual(["job:tailored"]);
   });
 
-  it("an aborted LLM call (shutdown) is retryable and does not fail the posting", async () => {
+  it("a cancellation on the LAST attempt never fails the posting (Crivo PR89-4)", async () => {
     const { LlmError } = await import("@linkedin-ops/editorial-engine");
     const { h, events } = handlers({
       "cv-tailor": () => {
@@ -370,8 +370,33 @@ describe("cv.tailor", () => {
       },
     });
     await expect(
-      h["cv.tailor"]({ ...envelope, jobPostingId: IDS.posting }, context()),
-    ).rejects.toBeInstanceOf(RetryableJobError);
+      h["cv.tailor"](
+        { ...envelope, jobPostingId: IDS.posting },
+        context({ retryCount: 2, isLastAttempt: true }),
+      ),
+    ).rejects.toBeInstanceOf(CancelledJobError);
+    expect(events).toEqual([]);
+  });
+
+  it("a job whose signal is aborted mid-fetch is cancelled, not failed, even on the last attempt", async () => {
+    const controller = new AbortController();
+    const fetcher: JobPageFetcher = {
+      fetchJobText: () => {
+        controller.abort();
+        return Promise.reject(new JobFetchError("transient"));
+      },
+    };
+    const { h, events } = handlers(
+      {},
+      fakeStores({ kind: "url", url: "https://jobs.example.com/1" }),
+      fetcher,
+    );
+    await expect(
+      h["job.fetch"](
+        { ...envelope, jobPostingId: IDS.posting },
+        context({ isLastAttempt: true, signal: controller.signal }),
+      ),
+    ).rejects.toBeInstanceOf(CancelledJobError);
     expect(events).toEqual([]);
   });
 

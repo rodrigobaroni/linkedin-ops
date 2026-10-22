@@ -2,7 +2,7 @@ import { Writable } from "node:stream";
 import { pino } from "pino";
 import { describe, expect, it } from "vitest";
 import type { Job } from "pg-boss";
-import { PermanentJobError, RetryableJobError } from "../src/jobs/errors.js";
+import { CancelledJobError, PermanentJobError, RetryableJobError } from "../src/jobs/errors.js";
 import { createJobRunner } from "../src/jobs/runner.js";
 import { REDACTED_PATHS } from "../src/logger.js";
 
@@ -86,5 +86,63 @@ describe("createJobRunner (ADR-0002 §7)", () => {
     );
     await run([job(PAYLOAD)]);
     expect(lines.join()).not.toContain("CANARY");
+  });
+
+  it("on worker shutdown, re-enqueues the job instead of consuming a retry, even on the last attempt", async () => {
+    const { logger } = capture();
+    const requeued: unknown[] = [];
+    const shutdown = new AbortController();
+    const run = createJobRunner(
+      "cv.extract",
+      (_p, ctx) => {
+        shutdown.abort();
+        expect(ctx.signal.aborted).toBe(true);
+        return Promise.reject(new CancelledJobError());
+      },
+      logger,
+      (payload) => (requeued.push(payload), Promise.resolve()),
+      shutdown.signal,
+    );
+    await expect(run([job(PAYLOAD, 2)])).resolves.toEqual([
+      { id: "job-1", status: "completed", output: { cancelled: true } },
+    ]);
+    expect(requeued).toEqual([PAYLOAD]);
+  });
+
+  it("a cancellation raised by pg-boss (job expired) follows pg-boss's retry, without re-enqueue", async () => {
+    const { logger } = capture();
+    const requeued: unknown[] = [];
+    const expired = new AbortController();
+    expired.abort();
+    const run = createJobRunner(
+      "cv.extract",
+      () => Promise.reject(new CancelledJobError()),
+      logger,
+      (payload) => (requeued.push(payload), Promise.resolve()),
+      new AbortController().signal,
+    );
+    const expiredJob = { ...job(PAYLOAD), signal: expired.signal };
+    await expect(run([expiredJob])).resolves.toEqual([{ id: "job-1", status: "failed" }]);
+    expect(requeued).toEqual([]);
+  });
+
+  it("falls back to a retry when the re-enqueue fails, and without a requeue", async () => {
+    const { logger } = capture();
+    const stopped = new AbortController();
+    stopped.abort();
+    const failing = createJobRunner(
+      "cv.extract",
+      () => Promise.reject(new CancelledJobError()),
+      logger,
+      () => Promise.reject(new Error("db down")),
+      stopped.signal,
+    );
+    await expect(failing([job(PAYLOAD)])).resolves.toEqual([{ id: "job-1", status: "failed" }]);
+    const none = createJobRunner(
+      "cv.extract",
+      () => Promise.reject(new CancelledJobError()),
+      logger,
+    );
+    await expect(none([job(PAYLOAD)])).resolves.toEqual([{ id: "job-1", status: "failed" }]);
   });
 });

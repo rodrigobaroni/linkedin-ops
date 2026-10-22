@@ -22,3 +22,14 @@ export class RetryableJobError extends Error {
     this.reason = reason;
   }
 }
+
+/**
+ * Operational cancellation (worker shutdown, job expiry): not a failure of the item. The runner re-enqueues the
+ * payload instead of consuming a retry, and handlers never mark the item failed for it (Crivo PR89-4).
+ */
+export class CancelledJobError extends Error {
+  constructor() {
+    super("Job cancelled");
+    this.name = "CancelledJobError";
+  }
+}

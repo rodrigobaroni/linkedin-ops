@@ -24,7 +24,7 @@ import {
   type LlmClient,
   type Rng,
 } from "@linkedin-ops/editorial-engine";
-import { PermanentJobError, RetryableJobError } from "../jobs/errors.js";
+import { CancelledJobError, PermanentJobError, RetryableJobError } from "../jobs/errors.js";
 import type { JobContext, JobHandler } from "../jobs/runner.js";
 import { runLlmStep, runLlmStepWithRegenerations } from "./llm-step.js";
 import {
@@ -59,13 +59,17 @@ export interface CareerHandlers {
   "cv.tailor": JobHandler<"cv.tailor">;
 }
 
-/** Marks the item failed when this error ends the job for good, then rethrows for the runner. */
+/**
+ * Marks the item failed when this error ends the job for good, then rethrows for the runner. A cancellation
+ * (shutdown, expiry) is never a failure of the item, not even on the last attempt (Crivo PR89-4).
+ */
 async function failIfFinal(
   error: unknown,
   context: JobContext,
   markFailed: (reason: CareerFailureReason) => Promise<void>,
   reason: CareerFailureReason,
 ): Promise<never> {
+  if (error instanceof CancelledJobError || context.signal.aborted) throw new CancelledJobError();
   if (error instanceof PermanentJobError || context.isLastAttempt) await markFailed(reason);
   throw error;
 }

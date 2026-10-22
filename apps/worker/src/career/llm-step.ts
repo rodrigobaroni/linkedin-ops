@@ -9,7 +9,7 @@ import {
   type LlmClient,
   type Result,
 } from "@linkedin-ops/editorial-engine";
-import { PermanentJobError, RetryableJobError } from "../jobs/errors.js";
+import { CancelledJobError, PermanentJobError, RetryableJobError } from "../jobs/errors.js";
 
 export interface LlmStepOutcome<T> {
   value: T;
@@ -28,12 +28,8 @@ export async function runLlmStep<T>(
   } catch (error) {
     if (error instanceof LlmError) {
       // ABORTED = shutdown or job expiry: the job runs again later, the posting is not failed.
-      if (
-        error.transient ||
-        error.kind === "INVALID_OUTPUT" ||
-        error.kind === "INCOMPLETE" ||
-        error.kind === "ABORTED"
-      ) {
+      if (error.kind === "ABORTED" || signal.aborted) throw new CancelledJobError();
+      if (error.transient || error.kind === "INVALID_OUTPUT" || error.kind === "INCOMPLETE") {
         throw new RetryableJobError(`llm:${error.kind}`);
       }
       throw new PermanentJobError(`llm:${error.kind}`);

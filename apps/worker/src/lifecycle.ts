@@ -1,8 +1,9 @@
 /**
  * Worker lifecycle (ADR-0002 amendment; Crivo PR89-4): start pg-boss, register the handlers, keep the heartbeat,
- * and stop exactly once on SIGTERM/SIGINT: heartbeat first, then a graceful pg-boss stop that waits up to
- * `stopTimeoutMs` for jobs in flight and then aborts their `job.signal` (in-flight LLM calls end as ABORTED and
- * the jobs run again later).
+ * and stop exactly once on SIGTERM/SIGINT: heartbeat first; then the worker's own shutdown signal aborts the
+ * handlers in flight (LLM calls end as ABORTED) so each job is re-enqueued and settles as completed *before*
+ * pg-boss stops; then a graceful pg-boss stop (up to `stopTimeoutMs`). Without that first step pg-boss would fail
+ * the in-flight jobs on its own timeout, consuming a retry.
  */
 import type { PgBoss } from "pg-boss";
 import type { Logger } from "pino";
@@ -13,7 +14,10 @@ import { registerWorkers } from "./worker.js";
 export const STOP_TIMEOUT_MS = 30_000;
 export const STOP_SIGNALS = ["SIGTERM", "SIGINT"] as const;
 
-type Boss = Pick<PgBoss, "start" | "stop" | "getQueue" | "createQueue" | "updateQueue" | "work">;
+type Boss = Pick<
+  PgBoss,
+  "start" | "stop" | "getQueue" | "createQueue" | "updateQueue" | "work" | "send"
+>;
 
 export interface SignalSource {
   once(event: (typeof STOP_SIGNALS)[number], listener: () => void): unknown;
@@ -43,8 +47,9 @@ export async function startWorkerLifecycle(
   const signals = options.signals ?? process;
   const stopTimeoutMs = options.stopTimeoutMs ?? STOP_TIMEOUT_MS;
 
+  const shutdown = new AbortController();
   await boss.start();
-  await registerWorkers({ boss, logger, career: options.career });
+  await registerWorkers({ boss, logger, career: options.career, shutdown: shutdown.signal });
   const probe = () => boss.getQueue("cv.tailor");
   const heartbeat =
     options.heartbeat?.(probe) ??
@@ -64,6 +69,7 @@ export async function startWorkerLifecycle(
       for (const [signal, listener] of listeners) signals.off(signal, listener);
       logger.info({ reason }, "worker stopping");
       heartbeat.stop();
+      shutdown.abort();
       await boss.stop({ graceful: true, timeout: stopTimeoutMs });
       logger.info("worker stopped");
     })();
