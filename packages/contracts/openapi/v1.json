@@ -11438,6 +11438,7 @@
           "JOB_POSTING_URL_REJECTED",
           "TAILORED_CV_NOT_READY",
           "TAILORED_CV_STALE",
+          "TAILORED_CV_TOO_LARGE",
           "RATE_LIMITED",
           "PAYLOAD_TOO_LARGE",
           "UNSUPPORTED_MEDIA_TYPE",

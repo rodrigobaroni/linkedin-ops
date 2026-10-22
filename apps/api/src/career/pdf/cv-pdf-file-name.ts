@@ -1,6 +1,28 @@
 /** Longest slug kept per part, so the whole name stays well under every file system limit. */
 const MAX_PART_LENGTH = 40;
 
+/** Latin letters NFKD does not decompose to ASCII (they would vanish from the name instead). */
+const TRANSLITERATION: Readonly<Record<string, string>> = {
+  ß: "ss",
+  ẞ: "SS",
+  æ: "ae",
+  Æ: "AE",
+  œ: "oe",
+  Œ: "OE",
+  ø: "o",
+  Ø: "O",
+  ł: "l",
+  Ł: "L",
+  đ: "d",
+  Đ: "D",
+  ð: "d",
+  Ð: "D",
+  þ: "th",
+  Þ: "Th",
+  ı: "i",
+};
+const TRANSLITERABLE = new RegExp(`[${Object.keys(TRANSLITERATION).join("")}]`, "gu");
+
 export interface CvPdfFileNameParts {
   /** `contact.name` of the base CV; omitted from the name when absent. */
   readonly name: string | null;
@@ -21,6 +43,7 @@ export function cvPdfFileName(parts: CvPdfFileNameParts): string {
 
 function slug(text: string): string {
   return text
+    .replace(TRANSLITERABLE, (char) => TRANSLITERATION[char] ?? "")
     .normalize("NFKD")
     .replace(/\p{M}/gu, "")
     .replace(/[^A-Za-z0-9]+/g, "-")

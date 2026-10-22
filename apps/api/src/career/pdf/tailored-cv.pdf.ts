@@ -35,6 +35,28 @@ export class TailoredCvRenderError extends Error {
 }
 
 /**
+ * The tailored CV exceeds `MAX_RENDERED_CHARS`: the schema allows far more text than any CV, and layout cost
+ * grows with it on the event loop. Carries the limit only, never content.
+ */
+export class TailoredCvTooLargeError extends Error {
+  constructor(readonly limit: number) {
+    super(`Tailored CV exceeds ${limit} printable characters`);
+    this.name = "TailoredCvTooLargeError";
+  }
+}
+
+/**
+ * Upper bound of printed characters per document (~12 dense A4 pages; a real CV has well under 10 000).
+ * Together with `breakLongTokens` it keeps a render linear and short (ADR-0009, consequences).
+ */
+export const MAX_RENDERED_CHARS = 30_000;
+/** A run without break opportunities longer than this gets one every `TOKEN_CHUNK` characters. */
+const LONG_TOKEN = 60;
+const TOKEN_CHUNK = 40;
+const ZERO_WIDTH_SPACE = "\u200B";
+const LONG_TOKEN_PATTERN = new RegExp(`[^\\s\\u200B]{${LONG_TOKEN + 1},}`, "gu");
+
+/**
  * Read at module load, so a missing font fails the API at boot, not at the first download. Resolved relative
  * to this module: `src/career/pdf` and `dist/career/pdf` sit at the same depth (the runtime image copies
  * `apps/api/assets` explicitly).
@@ -124,6 +146,15 @@ export async function renderTailoredCvPdf(input: TailoredCvPdfInput): Promise<Bu
   doc.registerFont("regular", FONTS.regular);
   doc.registerFont("semibold", FONTS.semibold);
 
+  let printed = 0;
+  /** `printable` + long-token breaks, counted against `MAX_RENDERED_CHARS` before anything is laid out. */
+  const prepare = (text: string): string => {
+    const shown = printable(text);
+    printed += shown.length;
+    if (printed > MAX_RENDERED_CHARS) throw new TailoredCvTooLargeError(MAX_RENDERED_CHARS);
+    return breakLongTokens(shown);
+  };
+
   const chunks: Buffer[] = [];
   const done = new Promise<Buffer>((resolve, reject) => {
     doc.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -143,7 +174,7 @@ export async function renderTailoredCvPdf(input: TailoredCvPdfInput): Promise<Bu
     color: string,
     options: PDFKit.Mixins.TextOptions = {},
   ): void => {
-    const shown = printable(text);
+    const shown = prepare(text);
     if (shown === "") return;
     document.add(
       doc.struct(tag, {}, () => {
@@ -181,7 +212,7 @@ export async function renderTailoredCvPdf(input: TailoredCvPdfInput): Promise<Bu
   };
 
   const list = (entries: readonly string[]): void => {
-    const items = entries.map(printable).filter((item) => item !== "");
+    const items = entries.map(prepare).filter((item) => item !== "");
     if (items.length === 0) return;
     const listStruct = doc.struct("L");
     document.add(listStruct);
@@ -319,6 +350,23 @@ export function printable(text: string): string {
     if (char === "\n" || isDrawable(char.codePointAt(0) ?? 0)) shown += char;
   }
   return shown.trim();
+}
+
+/**
+ * pdfkit breaks an unbreakable run character by character, re-measuring the line each time: quadratic in the
+ * run length (a 20 000-character token took seconds). A zero-width space every `TOKEN_CHUNK` characters of a
+ * run longer than `LONG_TOKEN` (long URLs, pasted garbage) gives the line breaker opportunities; it draws
+ * nothing and is present in Source Sans 3.
+ */
+export function breakLongTokens(text: string): string {
+  return text.replace(LONG_TOKEN_PATTERN, (token) => {
+    const chars = Array.from(token);
+    const parts: string[] = [];
+    for (let i = 0; i < chars.length; i += TOKEN_CHUNK) {
+      parts.push(chars.slice(i, i + TOKEN_CHUNK).join(""));
+    }
+    return parts.join(ZERO_WIDTH_SPACE);
+  });
 }
 
 function isDrawable(codePoint: number): boolean {
