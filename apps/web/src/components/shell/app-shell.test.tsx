@@ -59,6 +59,7 @@ describe("AppShell", () => {
       "Story Bank",
       "Voice Profile",
       "Meu CV",
+      "Vagas",
       "Fontes",
       "Analytics",
       "Notificações",
@@ -74,6 +75,29 @@ describe("AppShell", () => {
     const current = within(sidebar).getAllByRole("link", { current: "page" });
     expect(current).toHaveLength(1);
     expect(current[0]).toHaveTextContent("Estúdio");
+  });
+
+  it("marks 'Vagas' as current in the sidebar and in the 'Mais' drawer on /carreira/vagas", async () => {
+    await renderShell("/carreira/vagas");
+    const sidebar = screen.getByRole("navigation", { name: messages.nav.primary });
+    const current = within(sidebar).getAllByRole("link", { current: "page" });
+    expect(current).toHaveLength(1);
+    expect(current[0]).toHaveTextContent("Vagas");
+    expect(current[0]).toHaveAttribute("href", "/carreira/vagas");
+
+    const bottom = screen.getByRole("navigation", { name: messages.nav.bottom });
+    const more = within(bottom).getByRole("button", { name: messages.nav.more });
+    expect(more).toHaveAttribute("aria-current", "true");
+    await userEvent.click(more);
+    const dialog = await screen.findByRole("dialog", { name: messages.nav.more });
+    const career = within(dialog).getByRole("list", { name: messages.nav.career });
+    expect(within(career).getByRole("link", { name: "Vagas", current: "page" })).toHaveAttribute(
+      "href",
+      "/carreira/vagas",
+    );
+    expect(within(career).getByRole("link", { name: "Meu CV" })).not.toHaveAttribute(
+      "aria-current",
+    );
   });
 
   it("shows the autonomy mode badge with a textual label (mocked ASSISTED)", async () => {
@@ -128,6 +152,10 @@ describe("AppShell", () => {
     expect(within(career).getByRole("link", { name: "Meu CV" })).toHaveAttribute(
       "href",
       "/carreira/cv",
+    );
+    expect(within(career).getByRole("link", { name: "Vagas" })).toHaveAttribute(
+      "href",
+      "/carreira/vagas",
     );
     expect(within(dialog).getByText("Modo Assistido")).toBeInTheDocument();
     expect(within(dialog).getByRole("link", { name: /LinkedIn: Conectado/ })).toBeInTheDocument();

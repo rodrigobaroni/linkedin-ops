@@ -19,6 +19,7 @@ import {
 } from "@linkedin-ops/ui";
 import { useQueryClient } from "@tanstack/react-query";
 import { CircleCheckIcon } from "lucide-react";
+import Link from "next/link";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { formatDateTime } from "@/components/publish/use-publishing";
 import { PageHeader } from "@/components/shell/page-header";
@@ -198,6 +199,8 @@ export function CareerCvScreen({ pollInitialMs }: CareerCvScreenProps) {
           key={draft.id}
           draftId={draft.id}
           content={draft.content}
+          injectionSuspected={draft.injectionSuspected}
+          injectionEvidence={draft.injectionEvidence ?? null}
           onConfirmed={() => requestFocus(CONFIRMED_TITLE_ID)}
           onReplacePdf={startReplace}
         />
@@ -289,6 +292,9 @@ function ConfirmedCv({
             </p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
+            <Button asChild className="max-sm:w-full max-md:h-11">
+              <Link href="/carreira/vagas">{copy.confirmed.viewJobs}</Link>
+            </Button>
             {canReplace ? (
               <Button variant="outline" className="max-sm:w-full max-md:h-11" onClick={onReplace}>
                 {copy.confirmed.replace}

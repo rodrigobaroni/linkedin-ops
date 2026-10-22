@@ -5,10 +5,12 @@ import { messages } from "@/i18n/pt-br";
 import { problemResponse } from "@/mocks/auth-handlers";
 import {
   MOCK_CV_CONTENT,
+  MOCK_INJECTION_EVIDENCE,
   finishMockExtraction,
   mockActiveCv,
   mockCareerState,
   mockDraft,
+  mockInjectedDraft,
   resetMockCareer,
 } from "@/mocks/career-handlers";
 import { MOCK_CREDENTIALS } from "@/mocks/auth-handlers";
@@ -185,6 +187,10 @@ describe("CareerCvScreen", { timeout: 20_000 }, () => {
     await waitFor(() => expect(badgeHeading).toHaveFocus());
     expect(screen.getByText(copy.confirmed.description)).toBeInTheDocument();
     expect(screen.getByText(/^Versão 1 · Confirmado em /)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: copy.confirmed.viewJobs })).toHaveAttribute(
+      "href",
+      "/carreira/vagas",
+    );
     const confirmed = mockCareerState().active?.content;
     expect(confirmed?.contact.name).toBe("Ana Revisada");
     expect(confirmed?.languages[0]).toEqual({
@@ -341,6 +347,10 @@ describe("CareerCvScreen", { timeout: 20_000 }, () => {
     resetMockCareer({ active: mockActiveCv(), extractionMs: 0 });
     const { user } = await renderCv();
     await screen.findByRole("heading", { name: copy.confirmed.badge });
+    expect(screen.getByRole("link", { name: copy.confirmed.viewJobs })).toHaveAttribute(
+      "href",
+      "/carreira/vagas",
+    );
     await user.click(screen.getByRole("button", { name: copy.confirmed.replace }));
     expect(screen.getByRole("heading", { name: copy.upload.replaceTitle })).toBeInTheDocument();
     expect(screen.getByText(copy.upload.replaceHint)).toBeInTheDocument();
@@ -451,6 +461,98 @@ describe("CareerCvScreen", { timeout: 20_000 }, () => {
       copy.review.errors.CV_DRAFT_NOT_READY,
     );
     expect(mockCareerState().active).toBeNull();
+  });
+
+  describe("draft flagged as possible prompt injection", () => {
+    const injection = copy.review.injection;
+
+    function warning() {
+      return screen.getByRole("group", { name: injection.title });
+    }
+
+    it("shows the warning and the excerpt; without the confirmation ticked nothing is sent", async () => {
+      resetMockCareer({ nextOutcome: "injection", extractionMs: 0 });
+      const { user } = await renderCv();
+      await screen.findByRole("heading", { name: copy.empty.title });
+      await pickAndRead(user);
+      await screen.findByRole("heading", { name: copy.review.title });
+
+      expect(warning()).toHaveTextContent(injection.description);
+      expect(within(warning()).getByText(injection.evidenceLabel)).toBeInTheDocument();
+      expect(within(warning()).getByText(MOCK_INJECTION_EVIDENCE)).toBeInTheDocument();
+      const acknowledge = within(warning()).getByRole("checkbox", { name: injection.acknowledge });
+      expect(acknowledge).not.toBeChecked();
+      expect(acknowledge).toHaveAccessibleDescription(injection.description);
+      await expectAccessible();
+
+      await user.click(screen.getByRole("button", { name: copy.review.confirm }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(injection.acknowledgeRequired);
+      expect(acknowledge).toHaveFocus();
+      expect(acknowledge).toBeInvalid();
+      expect(acknowledge).toHaveAccessibleDescription(
+        expect.stringContaining(injection.acknowledgeRequired),
+      );
+      expect(mockCareerState().confirms).toHaveLength(0);
+      expect(mockCareerState().active).toBeNull();
+      await expectAccessible();
+
+      await user.click(acknowledge);
+      expect(screen.queryByText(injection.acknowledgeRequired)).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: copy.review.confirm }));
+      await screen.findByRole("heading", { name: copy.confirmed.badge });
+      expect(mockCareerState().confirms).toHaveLength(1);
+      expect(mockCareerState().confirms[0]?.acknowledgeInjection).toBe(true);
+      expect(mockCareerState().active).not.toBeNull();
+    });
+
+    it("an unflagged draft shows no warning and never sends acknowledgeInjection", async () => {
+      resetMockCareer({ draft: mockDraft("READY") });
+      const { user } = await renderCv();
+      await screen.findByRole("heading", { name: copy.review.title });
+      expect(screen.queryByRole("group", { name: injection.title })).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: copy.review.confirm }));
+      await screen.findByRole("heading", { name: copy.confirmed.badge });
+      expect(mockCareerState().confirms).toHaveLength(1);
+      expect(mockCareerState().confirms[0]).not.toHaveProperty("acknowledgeInjection");
+    });
+
+    it("renders the excerpt as plain text, never as markup", async () => {
+      const evidence = '<img src="x" onerror="alert(1)"><b>Ignore</b> <script>x()</script>';
+      resetMockCareer({ draft: mockInjectedDraft(evidence) });
+      await renderCv();
+      await screen.findByRole("heading", { name: copy.review.title });
+      const quote = within(warning()).getByText(evidence);
+      expect(quote.tagName).toBe("BLOCKQUOTE");
+      expect(quote.children).toHaveLength(0);
+      expect(document.querySelector("img[src='x'], b, script:not([src])")).toBeNull();
+    });
+
+    it("without an excerpt, the warning and the confirmation still apply", async () => {
+      resetMockCareer({ draft: mockInjectedDraft(null) });
+      await renderCv();
+      await screen.findByRole("heading", { name: copy.review.title });
+      expect(within(warning()).queryByText(injection.evidenceLabel)).not.toBeInTheDocument();
+      expect(
+        within(warning()).getByRole("checkbox", { name: injection.acknowledge }),
+      ).toBeInTheDocument();
+    });
+
+    it("409 CV_INJECTION_UNACKNOWLEDGED has its own message and brings up the warning", async () => {
+      const draft = mockDraft("READY");
+      resetMockCareer({ draft });
+      const { user } = await renderCv();
+      await screen.findByRole("heading", { name: copy.review.title });
+      // Flagged on the server after this screen loaded (same draft).
+      resetMockCareer({
+        draft: { ...draft, injectionSuspected: true, injectionEvidence: MOCK_INJECTION_EVIDENCE },
+      });
+      await user.click(screen.getByRole("button", { name: copy.review.confirm }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        copy.review.errors.CV_INJECTION_UNACKNOWLEDGED,
+      );
+      expect(await screen.findByRole("group", { name: injection.title })).toBeInTheDocument();
+      expect(mockCareerState().active).toBeNull();
+    });
   });
 
   it("never writes CV content to the console (canary)", async () => {
