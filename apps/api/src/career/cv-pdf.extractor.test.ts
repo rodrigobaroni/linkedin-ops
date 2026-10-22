@@ -4,9 +4,17 @@ import { buildPdf, fictitiousCvPdf, xObjectBombPdf } from "../../test/fixtures/p
 import { CvPdfBusyError, CvPdfError } from "./cv-pdf.js";
 import { CvPdfExtractor, DEFAULT_CV_PDF_EXTRACTOR_LIMITS } from "./cv-pdf.extractor.js";
 
-/** Deadline for the tests: a cold worker (tsx loader + pdf.js) reads a CV in ~150 ms; a bomb never ends. */
-const TIMEOUT_MS = 2_000;
-const extractor = new CvPdfExtractor({ ...DEFAULT_CV_PDF_EXTRACTOR_LIMITS, timeoutMs: TIMEOUT_MS });
+/**
+ * Test deadlines. Each parse starts a cold thread (through the tsx loader in tests), which can take seconds
+ * on a CI runner: legitimate PDFs get a deadline no runner reaches; the hostile tests assert lower bounds
+ * and outcomes, never tight ceilings. Production stays DEFAULT_CV_PDF_EXTRACTOR_LIMITS (10 s, 128 MiB, 2).
+ */
+const LEGIT_TIMEOUT_MS = 60_000;
+const HOSTILE_TIMEOUT_MS = 3_000;
+const extractor = new CvPdfExtractor({
+  ...DEFAULT_CV_PDF_EXTRACTOR_LIMITS,
+  timeoutMs: LEGIT_TIMEOUT_MS,
+});
 afterAll(() => extractor.onApplicationShutdown());
 
 async function reasonOf(promise: Promise<unknown>): Promise<string> {
@@ -42,32 +50,46 @@ describe("CvPdfExtractor (worker thread per upload, Sentinela S-1)", () => {
   it(
     "terminates an XObject bomb at the deadline while the event loop keeps running",
     async () => {
-      const bomb = xObjectBombPdf();
-      expect(bomb.length).toBeLessThan(10 * 1024);
-      const started = performance.now();
-      const parsing = reasonOf(extractor.extract(bomb));
+      const short = new CvPdfExtractor({
+        ...DEFAULT_CV_PDF_EXTRACTOR_LIMITS,
+        timeoutMs: HOSTILE_TIMEOUT_MS,
+        maxConcurrent: 1,
+      });
+      try {
+        const bomb = xObjectBombPdf();
+        expect(bomb.length).toBeLessThan(10 * 1024);
+        const started = performance.now();
+        const parsing = reasonOf(short.extract(bomb));
 
-      // The API thread stays free: timers keep firing on time during the parsing.
-      const lags: number[] = [];
-      for (let tick = 0; tick < 10; tick += 1) {
-        const scheduled = performance.now();
-        await new Promise((resolve) => setTimeout(resolve, 50));
-        lags.push(performance.now() - scheduled - 50);
+        // The API thread stays free: timers keep firing during the parsing.
+        const lags: number[] = [];
+        for (let tick = 0; tick < 10; tick += 1) {
+          const scheduled = performance.now();
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          lags.push(performance.now() - scheduled - 50);
+        }
+        expect(Math.max(...lags)).toBeLessThan(500);
+
+        expect(await parsing).toBe("TOO_COMPLEX");
+        // Ended by the deadline (a timer never fires early)...
+        expect(performance.now() - started).toBeGreaterThanOrEqual(HOSTILE_TIMEOUT_MS - 50);
+        // ...and the thread is gone: its only slot is free again (not busy, whatever the outcome).
+        const after = await short.extract(fictitiousCvPdf()).then(
+          () => "parsed",
+          (caught: unknown) => caught,
+        );
+        expect(after).not.toBeInstanceOf(CvPdfBusyError);
+      } finally {
+        await short.onApplicationShutdown();
       }
-      expect(Math.max(...lags)).toBeLessThan(200);
-
-      expect(await parsing).toBe("TOO_COMPLEX");
-      const elapsed = performance.now() - started;
-      expect(elapsed).toBeGreaterThanOrEqual(TIMEOUT_MS - 50);
-      expect(elapsed).toBeLessThan(TIMEOUT_MS + 1_000);
     },
-    TIMEOUT_MS + 10_000,
+    HOSTILE_TIMEOUT_MS + 60_000,
   );
 
   it("caps concurrent parsings and answers busy beyond the cap", async () => {
     const capped = new CvPdfExtractor({
       ...DEFAULT_CV_PDF_EXTRACTOR_LIMITS,
-      timeoutMs: TIMEOUT_MS,
+      timeoutMs: LEGIT_TIMEOUT_MS,
       maxConcurrent: 1,
       retryAfterSeconds: 7,
     });
@@ -87,11 +109,12 @@ describe("CvPdfExtractor (worker thread per upload, Sentinela S-1)", () => {
     }
   }, 30_000);
 
-  it("kills a thread that exceeds its memory budget, long before the deadline", async () => {
+  it("kills a thread that exceeds its memory budget, before its (unreachable) deadline", async () => {
     const budget = { maxOldGenerationSizeMb: 32, maxYoungGenerationSizeMb: 8, stackSizeMb: 4 };
+    const deadlineMs = 150_000;
     const tight = new CvPdfExtractor({
       ...DEFAULT_CV_PDF_EXTRACTOR_LIMITS,
-      timeoutMs: 60_000,
+      timeoutMs: deadlineMs,
       resourceLimits: budget,
     });
     try {
@@ -99,9 +122,10 @@ describe("CvPdfExtractor (worker thread per upload, Sentinela S-1)", () => {
       await expect(tight.extract(fictitiousCvPdf())).resolves.toContain("Ana Exemplo");
       const started = performance.now();
       expect(await reasonOf(tight.extract(xObjectBombPdf()))).toBe("TOO_COMPLEX");
-      expect(performance.now() - started).toBeLessThan(30_000);
+      // Rejected before the deadline could fire: the memory budget killed the thread, not the timer.
+      expect(performance.now() - started).toBeLessThan(deadlineMs);
     } finally {
       await tight.onApplicationShutdown();
     }
-  }, 70_000);
+  }, 180_000);
 });

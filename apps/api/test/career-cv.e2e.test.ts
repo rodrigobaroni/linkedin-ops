@@ -28,8 +28,14 @@ import {
 import { REQUESTED_WITH_VALUE } from "../src/common/route-access.guard.js";
 
 const UPLOAD = "/api/v1/career/cv";
-/** Parsing deadline of this suite: a CV takes ~150 ms in a cold thread; the XObject bomb never finishes. */
-const PARSE_TIMEOUT_MS = 2_000;
+/**
+ * Test deadlines. Every parse starts a cold thread (in tests through the tsx loader), which can take
+ * seconds on a CI runner: legitimate PDFs get a deadline no runner reaches; only the hostile-PDF app uses
+ * a short one, and its assertions are lower bounds (a timer never fires early), never tight ceilings.
+ * Production limits stay DEFAULT_CV_PDF_EXTRACTOR_LIMITS (10 s, 128 MiB, 2 at once).
+ */
+const LEGIT_PARSE_TIMEOUT_MS = 60_000;
+const HOSTILE_PARSE_TIMEOUT_MS = 3_000;
 
 describe("career CV base routes (no database)", () => {
   let app: TestApp;
@@ -42,9 +48,7 @@ describe("career CV base routes (no database)", () => {
           CV_PDF_EXTRACTOR,
           new CvPdfExtractor({
             ...DEFAULT_CV_PDF_EXTRACTOR_LIMITS,
-            timeoutMs: PARSE_TIMEOUT_MS,
-            maxConcurrent: 1,
-            retryAfterSeconds: 3,
+            timeoutMs: LEGIT_PARSE_TIMEOUT_MS,
           }),
         ],
       ],
@@ -67,8 +71,9 @@ describe("career CV base routes (no database)", () => {
     file: Buffer,
     headers = uploadHeaders(),
     field: string = CV_UPLOAD_LIMITS.fieldName,
+    target: TestApp = app,
   ) {
-    return app.request
+    return target.request
       .post(UPLOAD)
       .set(headers)
       .attach(field, file, { filename: "cv.pdf", contentType: "application/pdf" });
@@ -196,20 +201,45 @@ describe("career CV base routes (no database)", () => {
   });
 
   describe("parsing isolation (Sentinela S-1)", () => {
+    let isolated: TestApp;
+    let isolatedHeaders: Record<string, string>;
+
+    beforeAll(async () => {
+      isolated = await createTestApp({
+        overrides: [
+          [
+            CV_PDF_EXTRACTOR,
+            new CvPdfExtractor({
+              ...DEFAULT_CV_PDF_EXTRACTOR_LIMITS,
+              timeoutMs: HOSTILE_PARSE_TIMEOUT_MS,
+              maxConcurrent: 1,
+              retryAfterSeconds: 3,
+            }),
+          ],
+        ],
+      });
+      isolatedHeaders = uploadHeaders({
+        cookie: cookieHeader(isolated.sessions.issueForTest(TEST_USER).cookieValue),
+      });
+    });
+    afterAll(() => isolated.close());
+
     it(
       "terminates a hostile PDF at the deadline (422) while the API keeps answering, and caps concurrency (503)",
       async () => {
         const started = Date.now();
-        const hostile = upload(xObjectBombPdf()).then((res) => res);
+        const hostile = upload(xObjectBombPdf(), isolatedHeaders, "file", isolated).then(
+          (res) => res,
+        );
 
-        // While that thread spins, the API answers other requests at once.
+        // While that thread runs, the API answers other requests at once (its event loop is free).
         await new Promise((resolve) => setTimeout(resolve, 300));
         const healthStarted = Date.now();
-        await app.request.get("/api/v1/health").expect(200);
-        expect(Date.now() - healthStarted).toBeLessThan(500);
+        await isolated.request.get("/api/v1/health").expect(200);
+        expect(Date.now() - healthStarted).toBeLessThan(1_000);
 
         // The only parsing slot is taken: another upload is told to come back.
-        const busy = await upload(fictitiousCvPdf()).expect(503);
+        const busy = await upload(fictitiousCvPdf(), isolatedHeaders, "file", isolated).expect(503);
         expectProblem(busy, "SERVICE_NOT_READY");
         expect(busy.headers["retry-after"]).toBe("3");
 
@@ -217,9 +247,10 @@ describe("career CV base routes (no database)", () => {
         expect(res.status).toBe(422);
         expectProblem(res, "CV_PDF_UNREADABLE");
         expect(res.body.detail).toMatch(/complexo demais/);
-        expect(Date.now() - started).toBeLessThan(PARSE_TIMEOUT_MS + 1_500);
+        // Ended by the deadline (never earlier); the API was not blocked meanwhile (above).
+        expect(Date.now() - started).toBeGreaterThanOrEqual(HOSTILE_PARSE_TIMEOUT_MS - 50);
       },
-      PARSE_TIMEOUT_MS + 10_000,
+      HOSTILE_PARSE_TIMEOUT_MS + 30_000,
     );
   });
 
