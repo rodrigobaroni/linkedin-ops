@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { messages } from "@/i18n/pt-br";
@@ -338,17 +338,51 @@ describe("CareerCvScreen", { timeout: 20_000 }, () => {
     expect(mockCareerState().active).toBeNull();
   });
 
-  it("cancelling the password keeps the CV", async () => {
-    resetMockCareer({ active: mockActiveCv() });
-    const { user } = await renderCv();
-    await screen.findByRole("heading", { name: copy.confirmed.badge });
-    await user.click(screen.getByRole("button", { name: copy.confirmed.remove }));
-    const dialog = await screen.findByRole("dialog", { name: copy.remove.title });
-    await user.click(within(dialog).getByRole("button", { name: copy.remove.confirm }));
-    const reauth = await screen.findByRole("dialog", { name: messages.auth.reauth.title });
-    await user.click(within(reauth).getByRole("button", { name: messages.auth.reauth.cancel }));
-    expect(await screen.findByText(copy.remove.cancelled)).toBeInTheDocument();
-    expect(mockCareerState().active).not.toBeNull();
+  describe("closing the delete flow returns focus to 'Apagar CV'", () => {
+    type User = ReturnType<typeof userEvent.setup>;
+    const closers: [string, (user: User, dialog: HTMLElement) => Promise<void>][] = [
+      ["Escape", (user) => user.keyboard("{Escape}")],
+      [
+        "Cancelar",
+        (user, dialog) =>
+          user.click(within(dialog).getAllByRole("button", { name: /^Cancelar$/ })[0]!),
+      ],
+    ];
+
+    // `fireEvent.click` does not move focus, like WebKit (the Maestri portal, Safari) on a button click:
+    // focus must come back to the trigger explicitly, not to whatever `document.activeElement` was.
+    async function openDelete() {
+      resetMockCareer({ active: mockActiveCv() });
+      const { user } = await renderCv();
+      await screen.findByRole("heading", { name: copy.confirmed.badge });
+      fireEvent.click(screen.getByRole("button", { name: copy.confirmed.remove }));
+      const dialog = await screen.findByRole("dialog", { name: copy.remove.title });
+      return { user, dialog };
+    }
+
+    it.each(closers)("confirmation dialog, %s", async (_how, close) => {
+      const { user, dialog } = await openDelete();
+      await close(user, dialog);
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: copy.confirmed.remove })).toHaveFocus(),
+      );
+      expect(mockCareerState().active).not.toBeNull();
+    });
+
+    it.each(closers)("password dialog, %s", async (_how, close) => {
+      const { user, dialog } = await openDelete();
+      fireEvent.click(within(dialog).getByRole("button", { name: copy.remove.confirm }));
+      const reauth = await screen.findByRole("dialog", { name: messages.auth.reauth.title });
+      await close(user, reauth);
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      // The status is announced, but focus goes back to the trigger, not to the status.
+      expect(await screen.findByText(copy.remove.cancelled)).toBeInTheDocument();
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: copy.confirmed.remove })).toHaveFocus(),
+      );
+      expect(mockCareerState().active).not.toBeNull();
+    });
   });
 
   it("a draft replaced in another tab cannot be confirmed (409 CV_DRAFT_NOT_READY)", async () => {

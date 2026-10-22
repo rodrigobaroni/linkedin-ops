@@ -96,7 +96,8 @@ export function CareerCvScreen({ pollInitialMs }: CareerCvScreenProps) {
   });
 
   useEffect(() => {
-    if (notice) noticeRef.current?.focus();
+    // A cancelled delete is the exception: focus goes back to "Apagar CV" and the status is announced.
+    if (notice && notice.kind !== "deleteCancelled") noticeRef.current?.focus();
   }, [notice]);
 
   async function upload(file: File) {
@@ -334,7 +335,9 @@ function NoticeAlert({ notice }: { notice: Notice | null }) {
 
 /**
  * "Apagar CV": confirmation dialog, then the 🔐 flow (`DELETE /career/cv` destroys personal data and, in
- * cascade, the analyses made with it). No native `confirm()`: the dialog traps and returns focus.
+ * cascade, the analyses made with it). No native `confirm()`. Focus returns to this button explicitly when
+ * either dialog is dismissed: WebKit (the Maestri portal, Safari) does not focus a clicked button, so the
+ * previously focused element would be the body.
  */
 function DeleteCvButton({ onDone }: { onDone: (notice: Notice) => void }) {
   const api = useCareerCvApi();
@@ -343,8 +346,11 @@ function DeleteCvButton({ onDone }: { onDone: (notice: Notice) => void }) {
   const [open, setOpen] = useState(false);
   const [removing, setRemoving] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
+  /** Set when "Apagar CV" in the dialog was chosen: the password dialog takes focus instead. */
+  const confirmed = useRef(false);
 
   async function remove() {
+    confirmed.current = true;
     setOpen(false);
     setRemoving(true);
     try {
@@ -372,13 +378,23 @@ function DeleteCvButton({ onDone }: { onDone: (notice: Notice) => void }) {
         variant="outline"
         className="text-destructive max-sm:w-full max-md:h-11"
         disabled={removing}
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          confirmed.current = false;
+          setOpen(true);
+        }}
       >
         {removing ? <Spinner /> : null}
         {removing ? copy.remove.removing : copy.confirmed.remove}
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-md" hideClose>
+        <DialogContent
+          className="sm:max-w-md"
+          hideClose
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            if (!confirmed.current) buttonRef.current?.focus();
+          }}
+        >
           <DialogHeader className="pr-0">
             <DialogTitle>{copy.remove.title}</DialogTitle>
             <DialogDescription>{copy.remove.description}</DialogDescription>
