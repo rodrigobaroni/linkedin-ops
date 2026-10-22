@@ -14,6 +14,8 @@ import {
   JobPostingNotFoundError,
   JobPostingTextRequiredError,
   JobPostingUrlTooLongError,
+  TailoredCvNotReadyError,
+  TailoredCvStaleError,
   type CareerAuditMeta,
   type CvTailorEnqueue,
   type JobFetchEnqueue,
@@ -28,11 +30,20 @@ import { API_LOGGER } from "../logging/logger.js";
 import type { AuthenticatedSession } from "../session/session.service.js";
 import { CAREER_RATE_LIMITS, type CareerRateLimits } from "./cv-base.service.js";
 import { JOB_POSTING_QUEUE, type JobPostingQueue } from "./career.queue.js";
+import { cvPdfFileName } from "./pdf/cv-pdf-file-name.js";
+import { TailoredCvRenderError, renderTailoredCvPdf } from "./pdf/tailored-cv.pdf.js";
 
 export const JOB_POSTINGS = Symbol("JOB_POSTINGS");
 
 const QUEUE_UNAVAILABLE = "Não foi possível iniciar o processamento das vagas; tente de novo";
 const BUSY = "Esta vaga ainda está sendo processada; aguarde o fim para reprocessar";
+const STALE = "O CV adaptado referencia itens que não existem mais no CV base; reprocesse a vaga";
+
+/** A rendered tailored CV: `fileName` is ASCII letters, digits and hyphens plus `.pdf` (header-safe). */
+export interface TailoredCvPdf {
+  fileName: string;
+  body: Buffer;
+}
 
 /**
  * Batches and job postings of the career module (spec 2026-10-22 §5 and §7, PR 3b). The API validates,
@@ -45,6 +56,7 @@ const BUSY = "Esta vaga ainda está sendo processada; aguarde o fim para reproce
 export class JobPostingService {
   readonly #batchLimiter: FixedWindowLimiter;
   readonly #reprocessLimiter: FixedWindowLimiter;
+  readonly #pdfLimiter: FixedWindowLimiter;
 
   constructor(
     @Inject(JOB_POSTINGS) private readonly postings: PrismaJobPostings,
@@ -54,6 +66,7 @@ export class JobPostingService {
   ) {
     this.#batchLimiter = new FixedWindowLimiter(limits.batchPerUser, limits.windowMs);
     this.#reprocessLimiter = new FixedWindowLimiter(limits.reprocessPerUser, limits.windowMs);
+    this.#pdfLimiter = new FixedWindowLimiter(limits.pdfPerUser, limits.windowMs);
   }
 
   async createBatch(
@@ -107,6 +120,47 @@ export class JobPostingService {
     try {
       return toDetail(await this.postings.get(userId, id));
     } catch (error) {
+      throw mapPostingError(error);
+    }
+  }
+
+  /**
+   * Renders the tailored CV on demand (spec §5 item 7) from the CV base version it was tailored from
+   * (`tailored_cvs.cv_base_id`, never the active one). Only `READY` postings; another owner's posting is a
+   * `404`. Nothing of the CV reaches logs, audit or Problem Details: a stale reference audits its id only.
+   */
+  async pdf(
+    session: AuthenticatedSession,
+    id: string,
+    correlationId: string,
+  ): Promise<TailoredCvPdf> {
+    this.#pdfLimiter.consume(session.userId, "Muitos downloads de PDF; tente de novo mais tarde");
+    try {
+      const source = await this.postings.tailoredCvSource(session.userId, id);
+      const body = await renderTailoredCvPdf({ content: source.content, base: source.base });
+      return {
+        fileName: cvPdfFileName({
+          name: source.base.contact.name,
+          company: source.company,
+          title: source.title,
+        }),
+        body,
+      };
+    } catch (error) {
+      if (error instanceof TailoredCvStaleError || error instanceof TailoredCvRenderError) {
+        await this.postings.recordStaleTailoredCv(
+          session.userId,
+          id,
+          error.missingItemId,
+          userMeta(session, correlationId),
+        );
+        throw new ProblemError("TAILORED_CV_STALE", { detail: STALE });
+      }
+      if (error instanceof TailoredCvNotReadyError) {
+        throw new ProblemError("TAILORED_CV_NOT_READY", {
+          detail: "O CV adaptado desta vaga ainda não está pronto",
+        });
+      }
       throw mapPostingError(error);
     }
   }

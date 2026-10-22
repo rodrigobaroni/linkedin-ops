@@ -1,4 +1,4 @@
-import { Controller, Inject, Req, Res } from "@nestjs/common";
+import { Controller, Inject, Req, Res, StreamableFile } from "@nestjs/common";
 import {
   API_V1_BASE_PATH,
   type JobPostingAccepted,
@@ -15,6 +15,9 @@ import { ContractRoute } from "../common/contract-route.decorator.js";
 import { ContractBody, ContractParams, ContractQuery } from "../common/zod-validation.pipe.js";
 import { sessionOf } from "../linkedin/request-session.js";
 import { JobPostingService } from "./job-posting.service.js";
+
+/** `cvPdfFileName` output; anything else never reaches a header (no quote, CR/LF, `;` or path). */
+const SAFE_FILE_NAME = /^[A-Za-z0-9-]{1,200}\.pdf$/;
 
 /** "Vagas" endpoints (spec 2026-10-22 §7, PR 3b): batches, list, detail, pasted text, retry, deletion. */
 @Controller()
@@ -74,6 +77,21 @@ export class JobPostingController {
     const accepted = await this.postings.retry(sessionOf(request), params.id, request.id);
     reply.header("location", `${API_V1_BASE_PATH}/career/jobs/${params.id}`);
     return accepted;
+  }
+
+  /** Binary download: `Cache-Control: no-store` comes with the `career` tag (`ContractRoute`). */
+  @ContractRoute("career.jobs.pdf")
+  async pdf(
+    @ContractParams() params: { id: string },
+    @Req() request: FastifyRequest,
+  ): Promise<StreamableFile> {
+    const file = await this.postings.pdf(sessionOf(request), params.id, request.id);
+    if (!SAFE_FILE_NAME.test(file.fileName)) throw new Error("Unsafe PDF file name");
+    return new StreamableFile(file.body, {
+      type: "application/pdf",
+      disposition: `attachment; filename="${file.fileName}"`,
+      length: file.body.length,
+    });
   }
 
   @ContractRoute("career.jobs.delete")

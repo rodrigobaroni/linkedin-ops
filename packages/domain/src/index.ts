@@ -107,6 +107,8 @@ export {
   JobPostingNotFoundError,
   JobPostingTextRequiredError,
   JobPostingUrlTooLongError,
+  TailoredCvNotReadyError,
+  TailoredCvStaleError,
   JOB_POSTING_URL_MAX_CHARS,
   JOB_POSTING_FAILED_TEXT_RETENTION_MS,
   JOB_POSTING_INJECTION_EVIDENCE_MAX_CHARS,
@@ -122,6 +124,7 @@ export {
   type JobFetchJob,
   type JobPostingRecord,
   type JobPostingSummaryRecord,
+  type TailoredCvSource,
   type TailoringRecord,
 } from "./career/job-postings.js";
 export { PrismaJobPostingStore } from "./career/prisma-job-posting-store.js";
