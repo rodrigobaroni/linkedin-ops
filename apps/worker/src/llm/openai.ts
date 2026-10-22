@@ -19,7 +19,8 @@ import {
 
 export const OPENAI_DEFAULT_BASE_URL = "https://api.openai.com";
 export const OPENAI_DEFAULT_TIMEOUT_MS = 90_000;
-export const OPENAI_DEFAULT_MAX_RETRIES = 2;
+/** One retry per call: the queue retries the job too, so the ceiling multiplies (see the worker README). */
+export const OPENAI_DEFAULT_MAX_RETRIES = 1;
 const RETRY_BASE_DELAY_MS = 1_000;
 const RETRY_MAX_DELAY_MS = 30_000;
 

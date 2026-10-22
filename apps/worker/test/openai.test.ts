@@ -129,6 +129,12 @@ describe("OpenAiLlmClient (Responses API, Structured Outputs)", () => {
     expect(events.map((e) => e.attempt)).toEqual([1, 2, 3]);
   });
 
+  it("retries a transient error once by default", async () => {
+    const { url, bodies } = await serve([json(503, {})]);
+    await expect(client(url).complete(request)).rejects.toMatchObject({ kind: "UNAVAILABLE" });
+    expect(bodies).toHaveLength(2);
+  });
+
   it("does not retry auth or bad-request errors", async () => {
     const { url, bodies } = await serve([json(401, {})]);
     await expect(client(url).complete(request)).rejects.toMatchObject({
