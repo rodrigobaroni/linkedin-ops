@@ -566,6 +566,139 @@ export function titlesFromCredentials(
   return [...found];
 }
 
+/**
+ * Words that head a role title once a role introducer presents them (issue #93): the role nouns plus leadership,
+ * seniority and C-level terms. Wider than `ROLE_NOUNS`, which only cuts titles out of credentials.
+ */
+const ROLE_TITLE_WORDS = new Set([
+  ...ROLE_NOUNS,
+  ...`
+  lider head chefe coordenador coordenadora coordinator diretor diretora director supervisor supervisora
+  presidente president cto ceo cfo coo cio cpo vp intern estagiario estagiaria trainee senior pleno junior sr jr
+  `
+    .split(/\s+/u)
+    .filter(Boolean),
+]);
+/** What may follow a title's head and still be the title: seniority ("engenheiro sênior") and one complement. */
+const ROLE_SENIORITY = new Set(["senior", "pleno", "junior", "sr", "jr"]);
+const ROLE_COMPLEMENT = new Set(["de", "da", "do", "dos", "das", "of"]);
+/** Words that list another role after the first ("engenheira e tech lead"). */
+const ROLE_CONJUNCTIONS = new Set(["e", "and", "ou", "or", "&"]);
+/** Words before or after `como`/`as` that make it a comparison, not a role ("bem como", "such as", "as well"). */
+const COMPARISON_BEFORE = new Set(["assim", "bem", "tanto", "such", "well"]);
+const COMPARISON_AFTER = new Set(["well", "soon", "long", "much", "far"]);
+/** How many words after an introducer (an article skipped) may hold the title's head; after a list separator. */
+const ROLE_WINDOW = 4;
+const ROLE_LIST_WINDOW = 2;
+
+interface RoleWord {
+  word: string;
+  /** Punctuation right after the word: a comma may list another role, anything else ends the phrase. */
+  pause: "comma" | "stop" | null;
+}
+
+/** Folded words of a text for the role check: split on spaces, slashes and dashes, with the trailing pause. */
+function roleWords(text: string): RoleWord[] {
+  const result: RoleWord[] = [];
+  for (const raw of text.normalize("NFKC").split(/[\s/\u2013\u2014-]+/u)) {
+    const word = fold(raw.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}+#]+$/gu, ""));
+    if (word.length === 0) continue;
+    const trail = /[^\p{L}\p{N}+#]+$/u.exec(raw)?.[0] ?? "";
+    result.push({
+      word,
+      pause: /[.!?;:)]/u.test(trail) ? "stop" : trail.includes(",") ? "comma" : null,
+    });
+  }
+  return result;
+}
+
+/** Position right after a role introducer starting at `start` of `words`, or -1. */
+function introducerEnd(words: readonly RoleWord[], start: number): number {
+  for (const phrase of ROLE_INTRODUCERS) {
+    const end = start + phrase.length;
+    if (!phrase.every((word, offset) => words[start + offset]?.word === word)) continue;
+    if (
+      phrase.some((_word, offset) => offset < phrase.length - 1 && words[start + offset]?.pause)
+    ) {
+      continue;
+    }
+    if (words[end - 1]?.pause) continue;
+    if (phrase.length === 1 && COMPARISON_BEFORE.has(words[start - 1]?.word ?? "")) continue;
+    if (phrase.length === 1 && COMPARISON_AFTER.has(words[end]?.word ?? "")) continue;
+    return end;
+  }
+  return -1;
+}
+
+/**
+ * Role phrases a text presents with a role introducer (issue #93; Pena review §6.10.2), folded: from the first
+ * word after the introducer (an article skipped) up to the last role title word within `ROLE_WINDOW` words, then
+ * any seniority and one complement ("tech lead", "product manager", "coordenador de engenharia", "engenheiro de
+ * dados sênior"), without a credential's words up to its last marker. A comma or conjunction right after it lists another role, whose head must come within
+ * `ROLE_LIST_WINDOW` words ("engenheira de software, tech lead e mentora"). Without a role title word ("como
+ * parte do time", "as part of") there is no phrase.
+ */
+function introducedRoles(text: string): string[][] {
+  const words = roleWords(text);
+  const phrases: string[][] = [];
+  for (let index = 0; index < words.length; index += 1) {
+    let start = introducerEnd(words, index);
+    let window = ROLE_WINDOW;
+    while (start >= 0 && start < words.length) {
+      if (ARTICLES.has(words[start]?.word ?? "") && !words[start]?.pause) start += 1;
+      let head = -1;
+      for (let at = start; at < Math.min(words.length, start + window); at += 1) {
+        if (ROLE_TITLE_WORDS.has(words[at]?.word ?? "")) head = at;
+        if (words[at]?.pause) break;
+      }
+      if (head < 0) break;
+      let end = head + 1;
+      const open = () => end < words.length && !words[end - 1]?.pause;
+      while (open() && ROLE_SENIORITY.has(words[end]?.word ?? "")) end += 1;
+      if (open() && ROLE_COMPLEMENT.has(words[end]?.word ?? "") && end + 1 < words.length) {
+        end += 2;
+        while (open() && ROLE_SENIORITY.has(words[end]?.word ?? "")) end += 1;
+      }
+      // A credential naming the role ("como AWS Certified Solutions Architect") is `newCredentials`'s call; the
+      // role is what follows its last marker.
+      const phrase = words.slice(start, end).map((word) => word.word);
+      const marker = phrase.findLastIndex(
+        (word, at) =>
+          at < phrase.length - 1 && (CREDENTIAL_WORD.test(word) || word === "professional"),
+      );
+      phrases.push(phrase.slice(marker + 1));
+      const pause = words[end - 1]?.pause;
+      if (pause === "comma") start = end;
+      else if (!pause && ROLE_CONJUNCTIONS.has(words[end]?.word ?? "")) start = end + 1;
+      else break;
+      window = ROLE_LIST_WINDOW;
+    }
+  }
+  return phrases;
+}
+
+/**
+ * Role titles `text` presents with a role introducer that the base CV does not have (D4 hard limit 1, issue #93):
+ * "Atuei como tech lead…", "Worked as a product manager…", "Fui contratado como coordenador de engenharia". A
+ * role phrase passes only inside one of the base CV's experience `titles` (any case), or inside a role phrase
+ * that `reference` itself introduces (the cited base items of a rewritten segment, the humanizer's text before):
+ * keeping a role the base CV states is not creating one. Fails closed: a comparison it misreads as a role costs a
+ * regeneration or a reverted segment.
+ */
+export function inventedRoleTitles(
+  text: string,
+  titles: readonly string[],
+  reference = "",
+): string[] {
+  const allowed = [
+    ...titles.map((title) => roleWords(title).map((word) => word.word)),
+    ...introducedRoles(reference),
+  ];
+  return introducedRoles(text)
+    .filter((phrase) => !allowed.some((source) => containsPhrase(source, phrase)))
+    .map((phrase) => phrase.join(" "));
+}
+
 function containsPhrase(words: readonly string[], phrase: readonly string[]): boolean {
   for (let start = 0; start + phrase.length <= words.length; start += 1) {
     if (phrase.every((word, offset) => words[start + offset] === word)) return true;

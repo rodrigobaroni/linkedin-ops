@@ -467,7 +467,11 @@ describe("credentials in rewritten and changed original segments (Sentinela, PR 
     const result = run(baseWith("Operei clusters Kubernetes."), {
       bullet: "Operei clusters Kubernetes como certified Kubernetes administrator.",
     });
-    expect(issues(result)).toEqual(["seg-2: hard limit, credential not in cited base items"]);
+    // "como … administrator" also presents a role the base CV does not have (issue #93).
+    expect(issues(result)).toEqual([
+      "seg-2: hard limit, credential not in cited base items",
+      "seg-2: hard limit, invented role title",
+    ]);
   });
 
   it("negative: a different credential than the one in the source", () => {
@@ -630,8 +634,83 @@ describe("a credential never becomes an invented title (Sentinela S-1, PR #91)",
     const base = baseWith("Trabalhei com pagamentos.", {
       certifications: ["Google Professional Data Engineer"],
     });
-    expect(
-      issues(run(base, { bullet: "Trabalhei com pagamentos como backend engineer." })),
-    ).toEqual([]);
+    const result = issues(run(base, { bullet: "Trabalhei com pagamentos como backend engineer." }));
+    expect(result).not.toContain(ROLE);
+    // It is still a role the base CV does not have as a title (issue #93).
+    expect(result).toEqual(["seg-2: hard limit, invented role title"]);
+  });
+});
+
+describe("a role introducer never presents an invented title (issue #93, Pena §6.10.2)", () => {
+  /** The base CV with its only experience titled `title` and, when given, its bullet (exp-1-b-1) set to `bullet`. */
+  function baseWith(title: string, bullet?: string): CvStructured {
+    const [experience] = baseCv.experiences;
+    const bullets =
+      bullet === undefined ? experience!.bullets : [{ id: "exp-1-b-1", text: bullet }];
+    return { ...baseCv, experiences: [{ ...experience!, title, bullets }] };
+  }
+  /** seg-1 is the rewritten summary, seg-2 the rewritten bullet, seg-3 the added bullet, seg-4 the skill. */
+  function run(
+    base: CvStructured,
+    texts: { summary?: string; bullet?: string; added?: string; skill?: string },
+  ) {
+    const output = tailoringOutput();
+    const [summary] = output.tailoredCv.summary.segments;
+    const [bullet, added] = output.tailoredCv.experiences[0]?.bullets.segments ?? [];
+    const [skill] = output.tailoredCv.experiences[0]?.skills.segments ?? [];
+    if (summary && texts.summary !== undefined) summary.text = texts.summary;
+    if (bullet && texts.bullet !== undefined) bullet.text = texts.bullet;
+    if (added && texts.added !== undefined) added.text = texts.added;
+    if (skill && texts.skill !== undefined) skill.text = texts.skill;
+    return parseCvTailorResponse(output, { base, job, target });
+  }
+  const issues = (result: ReturnType<typeof run>) => (result.ok ? [] : result.error.issues);
+  const base = baseWith("Engenheira de software sênior");
+
+  it.each([
+    ["bullet", "seg-2", "Atuei como tech lead do time de dados."],
+    ["bullet", "seg-2", "Worked as a product manager for payments."],
+    ["bullet", "seg-2", "Fui contratado como coordenador de engenharia."],
+    ["added", "seg-3", "Atuei como tech lead do time de dados."],
+    ["added", "seg-3", "Worked as a product manager for payments."],
+    ["summary", "seg-1", "Atuei como head de dados em pagamentos."],
+    ["skill", "seg-4", "PostgreSQL como gerente de banco de dados"],
+    ["bullet", "seg-2", "Atuei como engenheira e tech lead do time de dados."],
+    ["bullet", "seg-2", "Atuei como engenheira de software, tech lead e mentora."],
+    ["bullet", "seg-2", "Atuei como líder técnica do time."],
+    ["bullet", "seg-2", "In the role of engineering manager, I led payments."],
+    ["bullet", "seg-2", "Atuei como engenheira de dados em pagamentos."],
+  ])("canary: the %s %s '%s' is rejected", (key, segmentId, text) => {
+    expect(issues(run(base, { [key]: text }))).toContain(
+      `${segmentId}: hard limit, invented role title`,
+    );
+  });
+
+  it("positive: the role is the base CV's experience title, in any case", () => {
+    const pt = baseWith("Engenheiro de Dados");
+    expect(issues(run(pt, { bullet: "Atuei como engenheiro de dados." }))).toEqual([]);
+    expect(issues(run(pt, { added: "Atuei como Engenheiro de Dados em pagamentos." }))).toEqual([]);
+  });
+
+  it("positive: a sub-phrase of the experience title passes", () => {
+    expect(issues(run(base, { bullet: "Atuei como engenheira de software no time." }))).toEqual([]);
+    expect(issues(run(base, { bullet: "Atuei como engenheira em pagamentos." }))).toEqual([]);
+  });
+
+  it.each([
+    "Atuei como parte do time de pagamentos.",
+    "Worked as part of the payments team.",
+    "Atuei como referência técnica do time.",
+  ])("positive: '%s' (no role noun) passes", (text) => {
+    expect(issues(run(base, { bullet: text }))).toEqual([]);
+  });
+
+  it("positive: a role the cited base item already introduces passes in a rewritten segment", () => {
+    const own = baseWith("Engenheira de software sênior", "Atuei como tech lead do time de dados.");
+    expect(issues(run(own, { bullet: "Atuei como tech lead do time de dados." }))).toEqual([]);
+    // An added segment cites no base item: only an experience title covers it.
+    expect(issues(run(own, { added: "Atuei como tech lead do time de dados." }))).toContain(
+      "seg-3: hard limit, invented role title",
+    );
   });
 });
