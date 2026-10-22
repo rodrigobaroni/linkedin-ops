@@ -10,6 +10,9 @@ import {
   CvExtractionFailureSchema,
   DraftStatusSchema,
   DraftVersionAuthorTypeSchema,
+  JobPostingFailureSchema,
+  JobPostingSourceKindSchema,
+  JobPostingStatusSchema,
   LanguageSchema,
   LinkedInUploadStatusSchema,
   MediaAssetStatusSchema,
@@ -69,6 +72,9 @@ export const MIRRORED: Record<string, z.ZodEnum<Record<string, string>>> = {
   NotificationStatus: NotificationStatusSchema,
   CvDraftStatus: CvDraftStatusSchema,
   CvExtractionFailure: CvExtractionFailureSchema,
+  JobPostingStatus: JobPostingStatusSchema,
+  JobPostingFailure: JobPostingFailureSchema,
+  JobPostingSourceKind: JobPostingSourceKindSchema,
 };
 
 /** Enums that exist only in the database, with the reason there is no contract counterpart. */
