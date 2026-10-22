@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { pino } from "pino";
 import { describe, expect, it } from "vitest";
 import { STOP_TIMEOUT_MS, startWorkerLifecycle } from "../src/lifecycle.js";
+import { registerWorkers } from "../src/worker.js";
 
 function fakeBoss() {
   const calls: string[] = [];
@@ -17,7 +18,7 @@ function fakeBoss() {
     getQueue: () => Promise.resolve(null),
     createQueue: () => Promise.resolve(),
     updateQueue: () => Promise.resolve(),
-    work: () => Promise.resolve("w"),
+    work: (queue: string) => (calls.push(`work:${queue}`), Promise.resolve("w")),
   };
   return { boss, calls, stops, release: () => release() };
 }
@@ -59,4 +60,41 @@ describe("worker lifecycle (Crivo PR89-4)", () => {
       expect(signals.listenerCount("SIGTERM") + signals.listenerCount("SIGINT")).toBe(0);
     });
   }
+});
+
+describe("registerWorkers", () => {
+  it("consumes only the queues with a wired handler; the others are provisioned only", async () => {
+    const fake = fakeBoss();
+    const created: string[] = [];
+    const boss = {
+      ...fake.boss,
+      createQueue: (name: string) => (created.push(name), Promise.resolve()),
+    };
+    const ids = await registerWorkers({
+      boss: boss as never,
+      logger: pino({ level: "silent" }),
+      career: { "cv.extract": () => Promise.resolve() },
+    });
+    expect(ids).toEqual(["w"]);
+    expect(fake.calls).toEqual(["work:cv.extract"]);
+    expect(created).toEqual(expect.arrayContaining(["cv.extract", "job.fetch", "cv.tailor"]));
+  });
+
+  it("onStopped runs after pg-boss stopped", async () => {
+    const signals = new EventEmitter();
+    const fake = fakeBoss();
+    const lifecycle = await startWorkerLifecycle({
+      boss: fake.boss as never,
+      logger: pino({ level: "silent" }),
+      career: null,
+      signals: signals as never,
+      heartbeat: () => ({ stop: () => undefined }),
+      onStopped: () => (fake.calls.push("onStopped"), Promise.resolve()),
+    });
+    const stopping = lifecycle.stop("manual");
+    expect(fake.calls).toEqual(["start", "stop"]);
+    fake.release();
+    await stopping;
+    expect(fake.calls).toEqual(["start", "stop", "onStopped"]);
+  });
 });

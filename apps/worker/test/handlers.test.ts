@@ -4,14 +4,13 @@ import { SimulatedLlmClient, type SimulatedOutput } from "@linkedin-ops/editoria
 import { CancelledJobError, PermanentJobError, RetryableJobError } from "../src/jobs/errors.js";
 import type { JobContext } from "../src/jobs/runner.js";
 import { createCareerHandlers, isLinkedInUrl } from "../src/career/handlers.js";
+import type { CvBaseDraftStore, JobPostingSource, JobPostingStore } from "@linkedin-ops/domain";
 import {
   JobFetchError,
   unavailableJobPageFetcher,
-  type CvBaseDraftStore,
   type JobPageFetcher,
-  type JobPostingSource,
-  type JobPostingStore,
 } from "../src/career/ports.js";
+import { wireCareer } from "../src/career/wiring.js";
 import {
   IDS,
   baseCv,
@@ -43,12 +42,17 @@ function fakeStores(source: JobPostingSource | null = { kind: "pasted", text: po
   const saved: Record<string, unknown> = {};
   const cvStore: CvBaseDraftStore = {
     loadForExtraction: () => Promise.resolve({ text: cvText }),
-    completeExtraction: (_id, result) => (
+    completeExtraction: (_id, result, meta) => (
       (saved.cv = result),
+      (saved.cvMeta = meta),
       events.push("cv:extracted"),
       Promise.resolve()
     ),
-    markFailed: (_id, reason) => (events.push(`cv:failed:${reason}`), Promise.resolve()),
+    markFailed: (_id, reason, meta) => (
+      (saved.cvMeta = meta),
+      events.push(`cv:failed:${reason}`),
+      Promise.resolve()
+    ),
   };
   let fetchedText: string | null = null;
   const jobStore: JobPostingStore = {
@@ -120,6 +124,8 @@ describe("cv.extract", () => {
       cv: baseCv,
       generation: { model: "simulated:gpt-test", promptVersions: { "cv-extract": "1.0.0" } },
     });
+    // The store audits the write as this job (actor WORKER).
+    expect(saved.cvMeta).toEqual({ jobId: "job-1", correlationId: envelope.correlationId });
   });
 
   it("fails a document that is not a CV", async () => {
@@ -134,7 +140,7 @@ describe("cv.extract", () => {
   });
 
   it("retries invalid model output and marks `ai` only on the last attempt", async () => {
-    const { h, events } = handlers({ "cv-extract": { nonsense: true } });
+    const { h, events, saved } = handlers({ "cv-extract": { nonsense: true } });
     const payload = { ...envelope, cvBaseId: IDS.cvBase };
     await expect(h["cv.extract"](payload, context())).rejects.toBeInstanceOf(RetryableJobError);
     expect(events).toEqual([]);
@@ -142,6 +148,23 @@ describe("cv.extract", () => {
       RetryableJobError,
     );
     expect(events).toEqual(["cv:failed:ai"]);
+    expect(saved.cvMeta).toEqual({ jobId: "job-1", correlationId: envelope.correlationId });
+  });
+
+  it("a cancellation on the LAST attempt never fails the draft", async () => {
+    const { LlmError } = await import("@linkedin-ops/editorial-engine");
+    const { h, events } = handlers({
+      "cv-extract": () => {
+        throw new LlmError("ABORTED");
+      },
+    });
+    await expect(
+      h["cv.extract"](
+        { ...envelope, cvBaseId: IDS.cvBase },
+        context({ retryCount: 2, isLastAttempt: true }),
+      ),
+    ).rejects.toBeInstanceOf(CancelledJobError);
+    expect(events).toEqual([]);
   });
 
   it("exits quietly when the draft is no longer extracting (idempotent)", async () => {
@@ -411,5 +434,22 @@ describe("cv.tailor", () => {
       h["cv.tailor"]({ ...envelope, jobPostingId: IDS.posting }, context()),
     ).rejects.toBeInstanceOf(PermanentJobError);
     expect(events).toEqual(["job:failed:ai"]);
+  });
+});
+
+describe("wireCareer", () => {
+  const env = { openai: null, jobFetchLinkedIn: "disabled" as const };
+  const llm = new SimulatedLlmClient({});
+
+  it("wires only cv.extract until a JobPostingStore exists (career PR 3)", () => {
+    const { cvStore, jobStore } = fakeStores();
+    const onlyCv = wireCareer(env, pino({ level: "silent" }), { cvStore }, llm);
+    expect(Object.keys(onlyCv ?? {})).toEqual(["cv.extract"]);
+    const all = wireCareer(env, pino({ level: "silent" }), { cvStore, jobStore }, llm);
+    expect(Object.keys(all ?? {}).sort()).toEqual(["cv.extract", "cv.tailor", "job.fetch"]);
+  });
+
+  it("is null without OpenAI credentials and no override", () => {
+    expect(wireCareer(env, pino({ level: "silent" }), fakeStores())).toBeNull();
   });
 });
