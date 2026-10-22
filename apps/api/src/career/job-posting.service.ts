@@ -12,6 +12,8 @@ import {
   CvBaseRequiredError,
   JobPostingBusyError,
   JobPostingNotFoundError,
+  JobPostingTextRequiredError,
+  JobPostingUrlTooLongError,
   type CareerAuditMeta,
   type CvTailorEnqueue,
   type JobFetchEnqueue,
@@ -72,19 +74,25 @@ export class JobPostingService {
         userMeta(session, correlationId),
         this.fetchEnqueue(session, correlationId),
       );
-      const [firstJobId] = created.jobIds;
-      if (firstJobId === undefined) throw new Error("batch created without jobs");
+      const firstJobId = created.jobIds[0] ?? null;
       return {
         id: created.batchId,
-        status: "FETCHING",
+        status: firstJobId === null ? "FAILED" : "FETCHING",
         jobId: firstJobId,
         batchId: created.batchId,
         cvBaseId: created.cvBaseId,
         duplicatesMerged: created.duplicatesMerged,
+        blocked: created.blocked,
         postings: created.postings.map(toSummary),
         jobIds: created.jobIds,
       };
     } catch (error) {
+      if (error instanceof JobPostingUrlTooLongError) {
+        // Positions only: the links are the owner's data.
+        throw new ProblemError("JOB_POSTING_URL_REJECTED", {
+          detail: `Link longo demais depois de normalizado (posição ${error.positions.join(", ")}); envie o link curto da vaga`,
+        });
+      }
       if (error instanceof CvBaseRequiredError) {
         throw new ProblemError("CV_BASE_REQUIRED", {
           detail: "Envie e confirme seu CV em Meu CV antes de enviar vagas",
@@ -234,6 +242,12 @@ class CareerEnqueueError extends Error {
 function mapPostingError(error: unknown): unknown {
   if (error instanceof JobPostingNotFoundError) {
     return new ProblemError("NOT_FOUND", { detail: "Vaga não encontrada" });
+  }
+  if (error instanceof JobPostingTextRequiredError) {
+    return new ProblemError("JOB_POSTING_URL_REJECTED", {
+      detail:
+        "Este link do LinkedIn não é de uma vaga e não pode ser buscado; cole o texto da vaga",
+    });
   }
   if (error instanceof JobPostingBusyError) {
     return new ProblemError("JOB_POSTING_INVALID_TRANSITION", { detail: BUSY });

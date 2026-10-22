@@ -11343,6 +11343,7 @@
           "CV_INJECTION_UNACKNOWLEDGED",
           "CV_BASE_REQUIRED",
           "JOB_POSTING_INVALID_TRANSITION",
+          "JOB_POSTING_URL_REJECTED",
           "RATE_LIMITED",
           "PAYLOAD_TOO_LARGE",
           "UNSUPPORTED_MEDIA_TYPE",
@@ -15826,14 +15827,16 @@
           "status": {
             "type": "string",
             "enum": [
-              "FETCHING"
+              "FETCHING",
+              "FAILED"
             ],
-            "description": "Initial status of every posting of the batch"
+            "description": "FETCHING when at least one posting was queued; FAILED when every link was blocked"
           },
           "jobId": {
+            "nullable": true,
+            "description": "First job.fetch of the batch (null when none)",
             "type": "string",
-            "minLength": 1,
-            "description": "First job.fetch of the batch (all of them in jobIds)"
+            "minLength": 1
           },
           "batchId": {
             "type": "string",
@@ -15853,6 +15856,12 @@
             "maximum": 9007199254740991,
             "description": "Links that normalized to one already in the batch"
           },
+          "blocked": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "LinkedIn links that are not a job view, created FAILED/FETCH_BLOCKED without a job"
+          },
           "postings": {
             "minItems": 1,
             "maxItems": 20,
@@ -15862,7 +15871,6 @@
             }
           },
           "jobIds": {
-            "minItems": 1,
             "maxItems": 20,
             "type": "array",
             "items": {
@@ -15878,6 +15886,7 @@
           "batchId",
           "cvBaseId",
           "duplicatesMerged",
+          "blocked",
           "postings",
           "jobIds"
         ]

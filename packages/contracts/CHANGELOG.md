@@ -31,6 +31,10 @@ versioning: internal SemVer (see `README.md`).
   (`FETCHING | ANALYZING | READY | FAILED`), `JobPostingFailure` (`FETCH | FETCH_BLOCKED | NOT_A_JOB | AI |
   TIMED_OUT`) and `JobPostingSourceKind` (`LINKEDIN | OTHER | PASTED`); `ErrorCode` gains `CV_BASE_REQUIRED` (412)
   and `JOB_POSTING_INVALID_TRANSITION` (409) (contracts.md §2.14, §4).
+- `TailoringBatchAccepted` gains `blocked` (LinkedIn links that are not a job view, created
+  `FAILED`/`FETCH_BLOCKED` without a job, ADR-0008 §1); `status` becomes `FETCHING | FAILED` and `jobId` nullable
+  (every link blocked). `ErrorCode` gains `JOB_POSTING_URL_REJECTED` (422): a link that outgrows 2048 characters
+  once normalized, or a retry that would fetch a blocked link.
 - `job.fetch` and `cv.tailor` payloads gain `attempt` (int ≥ 1): the posting's processing cycle, so a late job of
   an earlier cycle is a no-op (career PR 3b; no job of these queues was produced before).
 - Queues `cv.extract` (`{ cvBaseId }`, retry 2 with backoff), `job.fetch` (`{ jobPostingId }`, retry 1 after 60 s,

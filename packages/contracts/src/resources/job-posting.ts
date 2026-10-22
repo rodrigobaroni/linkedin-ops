@@ -130,18 +130,27 @@ export const JobPostingDetailSchema = JobPostingSummarySchema.extend({
 export type JobPostingDetail = z.infer<typeof JobPostingDetailSchema>;
 
 /**
- * `202` of `POST /career/batches`, extending `AsyncAccepted`: `id` is the batch, `status` the initial status of
- * every posting and `jobId` the first `job.fetch`; `jobIds` lists one job per posting, in `postings` order.
+ * `202` of `POST /career/batches`, extending `AsyncAccepted`: `id` is the batch, `status` is `FETCHING` when at
+ * least one posting was queued and `FAILED` when every link was blocked, `jobId` the first `job.fetch` (null
+ * when none). A LinkedIn link that is not a job view becomes a posting `FAILED`/`FETCH_BLOCKED` with no job
+ * (ADR-0008 §1: never fetched, no quota spent; the web offers pasting the text). `jobIds` lists one job per
+ * queued posting, in `postings` order.
  */
 export const TailoringBatchAcceptedSchema = AsyncAcceptedSchema.extend({
   id: UuidSchema.describe("Id of the batch"),
-  status: z.literal("FETCHING").describe("Initial status of every posting of the batch"),
-  jobId: z.string().min(1).describe("First job.fetch of the batch (all of them in jobIds)"),
+  status: z
+    .enum(["FETCHING", "FAILED"])
+    .describe("FETCHING when at least one posting was queued; FAILED when every link was blocked"),
+  jobId: z.string().min(1).nullable().describe("First job.fetch of the batch (null when none)"),
   batchId: UuidSchema,
   cvBaseId: UuidSchema.describe("CV base active when the batch was created"),
   duplicatesMerged: z.int().min(0).describe("Links that normalized to one already in the batch"),
+  blocked: z
+    .int()
+    .min(0)
+    .describe("LinkedIn links that are not a job view, created FAILED/FETCH_BLOCKED without a job"),
   postings: z.array(JobPostingSummarySchema).min(1).max(JOB_POSTING_LIMITS.maxLinks),
-  jobIds: z.array(z.string().min(1)).min(1).max(JOB_POSTING_LIMITS.maxLinks),
+  jobIds: z.array(z.string().min(1)).max(JOB_POSTING_LIMITS.maxLinks),
 }).meta({ id: "TailoringBatchAccepted" });
 export type TailoringBatchAccepted = z.infer<typeof TailoringBatchAcceptedSchema>;
 

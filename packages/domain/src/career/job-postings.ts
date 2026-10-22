@@ -16,6 +16,7 @@ import { newId } from "../ids.js";
 import { CV_EXTRACTION_STALE_MS, type CvAuditMeta } from "./cv-bases.js";
 import { FETCH_QUOTA_WINDOW_MS, JOB_FETCH_PASTED_GROUP, jobFetchGroupId } from "./fetch-domain.js";
 import {
+  isFetchableJobPostingUrl,
   jobPostingSourceOf,
   jobPostingUrlHash,
   normalizeJobPostingUrl,
@@ -31,6 +32,8 @@ const QUEUE_LATENCY_MARGIN_MS = 10 * 60 * 1000;
 export const TAILORING_BATCH_MAX_LINKS = 20;
 /** Longest posting text kept (`job_postings_page_text_check`, the engine's `JOB_TEXT_MAX_CHARS`). */
 export const JOB_POSTING_TEXT_MAX_CHARS = 20_000;
+/** Longest normalized link kept (`job_postings_url_check`); normalizing may grow a link (percent-encoding). */
+export const JOB_POSTING_URL_MAX_CHARS = 2048;
 /** Longest injection excerpt kept with a posting (`job_postings_injection_evidence_check`). */
 export const JOB_POSTING_INJECTION_EVIDENCE_MAX_CHARS = 500;
 
@@ -120,9 +123,35 @@ export interface CreatedBatch {
   batchId: string;
   cvBaseId: string;
   postings: JobPostingSummaryRecord[];
+  /** One `job.fetch` per posting created `FETCHING`, in `postings` order (none for a blocked link). */
   jobIds: string[];
   /** Links of the request that normalized to one already in the batch. */
   duplicatesMerged: number;
+  /** LinkedIn links that are not a job view: created `FAILED`/`FETCH_BLOCKED`, with no job (ADR-0008 §1). */
+  blocked: number;
+}
+
+/**
+ * Links whose normalized form exceeds `JOB_POSTING_URL_MAX_CHARS` (it can grow past the contract bound, e.g.
+ * `é` → `%C3%A9`). Checked before any transaction; `positions` are 1-based, in request order (the links
+ * themselves are personal data and never go into the error).
+ */
+export class JobPostingUrlTooLongError extends Error {
+  constructor(readonly positions: number[]) {
+    super(`Job links too long once normalized: ${positions.join(", ")}`);
+    this.name = "JobPostingUrlTooLongError";
+  }
+}
+
+/**
+ * Reprocessing would fetch a link `job.fetch` may not read (a LinkedIn page that is not a job view, and no
+ * text to re-read): the owner has to paste the text.
+ */
+export class JobPostingTextRequiredError extends Error {
+  constructor() {
+    super("This posting link cannot be fetched; paste its text");
+    this.name = "JobPostingTextRequiredError";
+  }
 }
 
 /** A batch needs a confirmed, active CV base (spec §9). */
@@ -189,14 +218,17 @@ export class PrismaJobPostings {
     enqueueFetch: JobFetchEnqueue,
   ): Promise<CreatedBatch> {
     const distinct = new Map<string, string>();
-    for (const raw of urls) {
+    const tooLong: number[] = [];
+    urls.forEach((raw, index) => {
       const url = normalizeJobPostingUrl(raw);
+      if (url.length > JOB_POSTING_URL_MAX_CHARS) tooLong.push(index + 1);
       const hash = jobPostingUrlHash(url);
       if (!distinct.has(hash)) distinct.set(hash, url);
-    }
+    });
     if (distinct.size === 0 || urls.length > TAILORING_BATCH_MAX_LINKS) {
       throw new RangeError(`A batch has 1 to ${TAILORING_BATCH_MAX_LINKS} links`);
     }
+    if (tooLong.length > 0) throw new JobPostingUrlTooLongError(tooLong);
     const now = this.now();
     return this.prisma.$transaction(async (tx) => {
       await lockOwner(tx, userId);
@@ -211,7 +243,9 @@ export class PrismaJobPostings {
       });
       const postings: JobPostingSummaryRecord[] = [];
       const jobIds: string[] = [];
+      let blocked = 0;
       for (const [urlHash, url] of distinct) {
+        const fetchable = isFetchableJobPostingUrl(url);
         const row = await tx.jobPosting.create({
           data: {
             id: newId(),
@@ -220,12 +254,19 @@ export class PrismaJobPostings {
             url,
             urlHash,
             source: jobPostingSourceOf(url),
-            status: "FETCHING",
+            // ADR-0008 §1: never a fetch (nor quota) for a LinkedIn page that is not a job view.
+            ...(fetchable
+              ? { status: "FETCHING" as const }
+              : { status: "FAILED" as const, failureReason: "FETCH_BLOCKED" as const }),
             createdAt: now,
             updatedAt: now,
           },
         });
         postings.push(toSummary(row, null));
+        if (!fetchable) {
+          blocked += 1;
+          continue;
+        }
         jobIds.push(
           await enqueueFetch(sqlExecutor(tx), {
             jobPostingId: row.id,
@@ -237,9 +278,9 @@ export class PrismaJobPostings {
       const duplicatesMerged = urls.length - distinct.size;
       await audit(tx, userId, meta, "tailoring_batch.created", "tailoring_batch", batchId, {
         before: null,
-        after: { cvBaseId: active.id, postings: postings.length, duplicatesMerged },
+        after: { cvBaseId: active.id, postings: postings.length, duplicatesMerged, blocked },
       });
-      return { batchId, cvBaseId: active.id, postings, jobIds, duplicatesMerged };
+      return { batchId, cvBaseId: active.id, postings, jobIds, duplicatesMerged, blocked };
     });
   }
 
@@ -340,7 +381,10 @@ export class PrismaJobPostings {
         const job = { jobPostingId: row.id, attempt: updated.attempt };
         return { updated, jobId: await enqueue.tailor(sqlExecutor(tx), job) };
       }
-      // A pasted posting whose text expired falls back to its link.
+      // A pasted posting whose text expired falls back to its link, if the link may be fetched at all.
+      if (row.pageText === null && !isFetchableJobPostingUrl(row.url)) {
+        throw new JobPostingTextRequiredError();
+      }
       const source =
         row.source === "PASTED" && row.pageText === null ? jobPostingSourceOf(row.url) : row.source;
       const updated = await tx.jobPosting.update({

@@ -419,6 +419,44 @@ describe("POST /career/batches", () => {
     expect(await prisma.tailoringBatch.count({ where: { userId: actor.userId } })).toBe(1);
   });
 
+  it("never queues a LinkedIn link that is not a job view: FAILED/FETCH_BLOCKED, no job (ADR-0008 §1)", async () => {
+    const actor = await newActor();
+    const before = await careerJobCount();
+    const only = TailoringBatchAcceptedSchema.parse(
+      (
+        await post(actor, "/career/batches", {
+          urls: ["https://www.linkedin.com/in/fulano/", "https://www.linkedin.com/feed/"],
+        }).expect(202)
+      ).body,
+    );
+    expect(only).toMatchObject({ status: "FAILED", jobId: null, jobIds: [], blocked: 2 });
+    expect(only.postings.map((p) => [p.status, p.failureReason])).toEqual([
+      ["FAILED", "FETCH_BLOCKED"],
+      ["FAILED", "FETCH_BLOCKED"],
+    ]);
+    expect(await careerJobCount()).toBe(before);
+    const id = only.postings[0]!.id;
+    const retry = await post(actor, `/career/jobs/${id}/retry`).expect(422);
+    expect(retry.body.code).toBe("JOB_POSTING_URL_REJECTED");
+    expect(await careerJobCount()).toBe(before);
+    await post(actor, `/career/jobs/${id}/text`, { text: POSTING_TEXT }).expect(202);
+    expect((await jobsOf(id)).map((job) => job.groupId)).toEqual(["pasted"]);
+  });
+
+  it("answers 422 for a link that outgrows the bound once normalized, before the transaction", async () => {
+    const actor = await newActor();
+    const base = "https://acme.gupy.io/";
+    const grows = `${base}${"é".repeat(2040 - base.length)}`;
+    const before = await careerJobCount();
+    const res = await post(actor, "/career/batches", { urls: [link(60), grows] }).expect(422);
+    expect(res.body.code).toBe("JOB_POSTING_URL_REJECTED");
+    expect(res.body.detail).toContain("posição 2");
+    expect(JSON.stringify(res.body)).not.toContain("gupy");
+    expect(await prisma.tailoringBatch.count({ where: { userId: actor.userId } })).toBe(0);
+    expect(await careerJobCount()).toBe(before);
+    expect(logs.text).not.toContain("Failing row");
+  });
+
   it("refuses a batch without a confirmed CV base (412) and stores nothing", async () => {
     const actor = await newActor({ withCv: false });
     const before = await careerJobCount();

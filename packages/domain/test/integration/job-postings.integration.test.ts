@@ -21,6 +21,8 @@ import {
   JOB_POSTING_STALE_MS,
   JobPostingBusyError,
   JobPostingNotFoundError,
+  JobPostingTextRequiredError,
+  JobPostingUrlTooLongError,
   PrismaJobPostings,
   type CareerAuditMeta,
   type CvTailorEnqueue,
@@ -304,6 +306,44 @@ describe("createBatch", () => {
     ).rejects.toThrow("queue down after insert");
     expect(await prisma.tailoringBatch.count({ where: { userId } })).toBe(0);
     expect(await prisma.jobPosting.count({ where: { userId } })).toBe(0);
+    expect(await jobs()).toHaveLength(before);
+  });
+
+  it("creates a LinkedIn link that is not a job view as FAILED/FETCH_BLOCKED, with no job (ADR-0008 §1)", async () => {
+    const { userId } = await ownerWithCv();
+    const created = await batchOf(userId, [
+      "https://www.linkedin.com/in/fulano/?trk=x",
+      "https://www.linkedin.com/jobs/view/909/",
+    ]);
+    expect(created.blocked).toBe(1);
+    const [blocked, fetchable] = created.postings;
+    expect(blocked).toMatchObject({ status: "FAILED", failureReason: "FETCH_BLOCKED" });
+    expect(fetchable).toMatchObject({ status: "FETCHING" });
+    expect(await jobs(blocked!.id)).toEqual([]);
+    expect(created.jobIds).toHaveLength(1);
+    expect((await auditOf(created.batchId))[0]?.after).toMatchObject({ blocked: 1 });
+
+    // Reprocessing it would fetch it: refused until the text is pasted, which needs no fetch.
+    const enqueue = { fetch: enqueueFetch, tailor: enqueueTailor };
+    await expect(
+      postings.retry(userId, blocked!.id, userMeta(userId), enqueue),
+    ).rejects.toBeInstanceOf(JobPostingTextRequiredError);
+    expect(await jobs(blocked!.id)).toEqual([]);
+    await postings.pasteText(userId, blocked!.id, POSTING_TEXT, userMeta(userId), enqueueFetch);
+    expect((await jobs(blocked!.id)).map((j) => j.groupId)).toEqual(["pasted"]);
+  });
+
+  it("refuses links that outgrow the bound once normalized, before any transaction", async () => {
+    const { userId } = await ownerWithCv();
+    // 2 046 characters as sent; percent-encoding `é` (→ %C3%A9) makes it far longer than 2 048.
+    const grows = `https://acme.gupy.io/${"é".repeat(2046 - "https://acme.gupy.io/".length)}`;
+    expect(grows.length).toBeLessThanOrEqual(2048);
+    const before = (await jobs()).length;
+    await expect(batchOf(userId, ["https://acme.gupy.io/jobs/ok", grows])).rejects.toSatisfy(
+      (error: unknown) =>
+        error instanceof JobPostingUrlTooLongError && error.positions.join() === "2",
+    );
+    expect(await prisma.tailoringBatch.count({ where: { userId } })).toBe(0);
     expect(await jobs()).toHaveLength(before);
   });
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isFetchableJobPostingUrl,
   jobPostingSourceOf,
   jobPostingUrlHash,
   normalizeJobPostingUrl,
@@ -15,6 +16,9 @@ describe("normalizeJobPostingUrl", () => {
       "https://www.linkedin.com/jobs/search/?currentJobId=4012345678&geoId=106057199&keywords=backend",
       "https://www.linkedin.com/jobs/collections/recommended/?currentJobId=4012345678#top",
       "https://www.linkedin.com:443/jobs/view/4012345678/?eBP=abc&lipi=urn%3Ali",
+      "https://www.linkedin.com/JOBS/VIEW/4012345678",
+      "https://www.linkedin.com/Jobs/View/Senior-Engineer-at-Corp-4012345678//",
+      "https://www.linkedin.com//jobs//view//4012345678///",
     ]) {
       expect(normalizeJobPostingUrl(raw), raw).toBe(canonical);
     }
@@ -72,5 +76,25 @@ describe("jobPostingSourceOf", () => {
     expect(jobPostingSourceOf("https://lnkd.in/abc")).toBe("LINKEDIN");
     expect(jobPostingSourceOf("https://acme.gupy.io/jobs/1")).toBe("OTHER");
     expect(jobPostingSourceOf("https://notlinkedin.com/jobs/view/1")).toBe("OTHER");
+  });
+});
+
+describe("isFetchableJobPostingUrl (ADR-0008 §1)", () => {
+  it("fetches only LinkedIn job views, shorteners and other sites", () => {
+    const fetchable = (raw: string) => isFetchableJobPostingUrl(normalizeJobPostingUrl(raw));
+    expect(fetchable("https://www.linkedin.com/jobs/view/1/")).toBe(true);
+    expect(fetchable("https://www.linkedin.com/JOBS/view/1")).toBe(true);
+    expect(fetchable("https://www.linkedin.com/jobs/search/?currentJobId=1")).toBe(true);
+    expect(fetchable("https://lnkd.in/abc")).toBe(true);
+    expect(fetchable("https://acme.gupy.io/jobs/1")).toBe(true);
+    for (const raw of [
+      "https://www.linkedin.com/in/fulano/",
+      "https://www.linkedin.com/feed/",
+      "https://www.linkedin.com/jobs/search/?keywords=backend",
+      "https://www.linkedin.com/jobs/view/abc/",
+      "https://www.linkedin.com/company/acme/jobs/",
+    ]) {
+      expect(fetchable(raw), raw).toBe(false);
+    }
   });
 });

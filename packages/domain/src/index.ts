@@ -105,6 +105,9 @@ export {
   CvBaseRequiredError,
   JobPostingBusyError,
   JobPostingNotFoundError,
+  JobPostingTextRequiredError,
+  JobPostingUrlTooLongError,
+  JOB_POSTING_URL_MAX_CHARS,
   JOB_POSTING_FAILED_TEXT_RETENTION_MS,
   JOB_POSTING_INJECTION_EVIDENCE_MAX_CHARS,
   JOB_POSTING_STALE_MS,
@@ -122,6 +125,7 @@ export {
 } from "./career/job-postings.js";
 export { PrismaJobPostingStore } from "./career/prisma-job-posting-store.js";
 export {
+  isFetchableJobPostingUrl,
   jobPostingSourceOf,
   jobPostingUrlHash,
   normalizeJobPostingUrl,

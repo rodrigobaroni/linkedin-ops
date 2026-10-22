@@ -31,6 +31,7 @@ export const PROBLEM_TITLES: Readonly<Record<ErrorCode, string>> = {
   CV_INJECTION_UNACKNOWLEDGED: "Confirme que revisou o trecho suspeito do CV",
   CV_BASE_REQUIRED: "Envie e confirme seu CV antes",
   JOB_POSTING_INVALID_TRANSITION: "A vaga ainda está sendo processada",
+  JOB_POSTING_URL_REJECTED: "Link de vaga não aceito",
   RATE_LIMITED: "Muitas requisições; tente novamente em instantes",
   PAYLOAD_TOO_LARGE: "Corpo da requisição grande demais",
   UNSUPPORTED_MEDIA_TYPE: "Tipo de conteúdo não suportado",

@@ -29,8 +29,13 @@ const JOB_TRACKING_PARAMETERS = new Set([
   "src",
 ]);
 
-/** `/jobs/view/<id>` and its slug form `/jobs/view/<title>-at-<company>-<id>`. */
-const LINKEDIN_JOB_VIEW = /^\/jobs\/view\/(?:[^/]*-)?(\d{1,20})\/?$/;
+/**
+ * `/jobs/view/<id>` and its slug form `/jobs/view/<title>-at-<company>-<id>`, in any case and with repeated
+ * slashes (`/JOBS//view/123//`), as LinkedIn serves them all.
+ */
+const LINKEDIN_JOB_VIEW = /^\/+jobs\/+view\/+(?:[^/]*-)?(\d{1,20})\/*$/i;
+/** The only LinkedIn form `job.fetch` may read (ADR-0008 §1). */
+const LINKEDIN_CANONICAL_JOB = /^https:\/\/www\.linkedin\.com\/jobs\/view\/\d{1,20}\/$/;
 /** Search, collections and recommendations pages carry the posting in `currentJobId`. */
 const LINKEDIN_JOB_ID = /^\d{1,20}$/;
 
@@ -85,6 +90,17 @@ export function jobPostingUrlHash(normalizedUrl: string): string {
 /** Hosts of `linkedin.com` itself (not shorteners, which are only rate-limited as LinkedIn). */
 function isLinkedInHost(host: string): boolean {
   return host === JOB_FETCH_LINKEDIN_DOMAIN || host.endsWith(`.${JOB_FETCH_LINKEDIN_DOMAIN}`);
+}
+
+/**
+ * Whether `job.fetch` may be enqueued for a normalized link (ADR-0008 §1): on `linkedin.com` only a job view
+ * (`/jobs/view/<id>/`) is read; any other LinkedIn page (profile, feed, search without `currentJobId`) never
+ * gets a fetch and fails at once as `FETCH_BLOCKED`, offering to paste the text. Shorteners (`lnkd.in`) and
+ * other sites are fetchable; the fetcher re-applies the rules at every hop.
+ */
+export function isFetchableJobPostingUrl(normalizedUrl: string): boolean {
+  const host = new URL(normalizedUrl).hostname;
+  return !isLinkedInHost(host) || LINKEDIN_CANONICAL_JOB.test(normalizedUrl);
 }
 
 /** Source kind of a fetched link: LinkedIn when its group (eTLD+1, `lnkd.in` included) is `linkedin.com`. */
