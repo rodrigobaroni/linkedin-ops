@@ -34,6 +34,8 @@ export {
   OPENAI_API_KEY_MIN_LENGTH,
   type RuntimeEnv,
   type OpenAiConfig,
+  type AnthropicConfig,
+  ANTHROPIC_DEFAULT_MODEL,
   type JobFetchLinkedInMode,
   type RetentionPurgeMode,
   type WorkerRuntimeEnv,

@@ -112,6 +112,8 @@ services:
       # Mandatory in production, checked by validateWorkerEnv (a missing key must not stop the api deploy).
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
       JOB_FETCH_LINKEDIN: ${JOB_FETCH_LINKEDIN:-enabled}
       RETENTION_PURGE: ${RETENTION_PURGE:-dry-run}
     # Liveness without HTTP: heartbeat file written while pg-boss runs and the database answers (ADR-0002).

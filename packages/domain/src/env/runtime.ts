@@ -62,6 +62,15 @@ export interface OpenAiConfig {
   model: string;
 }
 
+/** Claude model used when `ANTHROPIC_MODEL` is unset (ADR-0011). */
+export const ANTHROPIC_DEFAULT_MODEL = "claude-opus-5-5";
+
+/** Anthropic credentials of the worker (ADR-0011). Never log `apiKey`, never send it anywhere but the Anthropic API. */
+export interface AnthropicConfig {
+  apiKey: string;
+  model: string;
+}
+
 export interface RuntimeEnv {
   nodeEnv: RuntimeEnvironment;
   /** Origin (`scheme://host[:port]`) the browser uses; `Origin` of every mutation must equal it (ADR-0007 N4). */
@@ -104,8 +113,10 @@ export interface WorkerRuntimeEnv {
   logLevel: LogLevel;
   /** PostgreSQL connection string (pg-boss). Never log it. */
   databaseUrl: string;
-  /** Mandatory in production; `null` elsewhere when unset (Career jobs then fail closed as not configured). */
+  /** `null` when unset. In production the worker needs this or `anthropic` (Career jobs otherwise fail closed). */
   openai: OpenAiConfig | null;
+  /** ADR-0011: preferred over `openai` when both are set; `null` when `ANTHROPIC_API_KEY` is unset. */
+  anthropic: AnthropicConfig | null;
   /** ADR-0008 kill switch: `disabled` sends LinkedIn job URLs straight to paste-text. */
   jobFetchLinkedIn: JobFetchLinkedInMode;
   /** T-063 daily purge: `dry-run` unless explicitly `enabled` (deleting is irreversible). */
@@ -446,10 +457,11 @@ function parseOpenAi(
   env: EnvironmentLike,
   nodeEnv: RuntimeEnvironment,
   issues: string[],
+  required: boolean = nodeEnv === "production",
 ): OpenAiConfig | null {
   const apiKey = read(env, "OPENAI_API_KEY");
   const model = read(env, "OPENAI_MODEL");
-  if (apiKey === undefined && model === undefined && nodeEnv !== "production") return null;
+  if (apiKey === undefined && model === undefined && !required) return null;
   const before = issues.length;
   if (apiKey === undefined) {
     issues.push("OPENAI_API_KEY is required for the worker in production (and with OPENAI_MODEL)");
@@ -467,6 +479,41 @@ function parseOpenAi(
   }
   if (issues.length > before || apiKey === undefined || model === undefined) return null;
   return { apiKey, model };
+}
+
+/**
+ * `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` (worker only, ADR-0011). The key alone enables Claude; the model
+ * defaults to `ANTHROPIC_DEFAULT_MODEL`. A model without a key is refused. Messages never contain the values.
+ */
+function parseAnthropic(
+  env: EnvironmentLike,
+  nodeEnv: RuntimeEnvironment,
+  issues: string[],
+): AnthropicConfig | null {
+  const apiKey = read(env, "ANTHROPIC_API_KEY");
+  const model = read(env, "ANTHROPIC_MODEL") ?? ANTHROPIC_DEFAULT_MODEL;
+  if (apiKey === undefined) {
+    if (read(env, "ANTHROPIC_MODEL") !== undefined) {
+      issues.push("ANTHROPIC_MODEL is set but ANTHROPIC_API_KEY is not");
+    }
+    return null;
+  }
+  const before = issues.length;
+  if (/\s/.test(apiKey) || apiKey.length < OPENAI_API_KEY_MIN_LENGTH) {
+    issues.push(
+      `ANTHROPIC_API_KEY must be a single token of at least ${OPENAI_API_KEY_MIN_LENGTH} characters`,
+    );
+  } else if (nodeEnv !== "development" && PLACEHOLDER_PATTERN.test(apiKey)) {
+    issues.push(
+      "ANTHROPIC_API_KEY is still the change-me placeholder (allowed in development only)",
+    );
+  }
+  if (!OPENAI_MODEL_PATTERN.test(model)) {
+    issues.push(
+      "ANTHROPIC_MODEL must be a model id (letters, digits, . _ : -; up to 100 characters)",
+    );
+  }
+  return issues.length > before ? null : { apiKey, model };
 }
 
 /**
@@ -558,12 +605,15 @@ export function validateWorkerEnv(env: EnvironmentLike): WorkerRuntimeEnv {
 
   const logLevel = parseEnum("LOG_LEVEL", read(env, "LOG_LEVEL"), LOG_LEVELS, issues) ?? "info";
   const databaseUrl = parseDatabaseUrl(read(env, "DATABASE_URL"), nodeEnv, issues);
-  const openai = parseOpenAi(env, nodeEnv, issues);
+  const anthropic = parseAnthropic(env, nodeEnv, issues);
+  // In production one LLM provider is mandatory: OpenAI is required only when Claude is not configured.
+  const anthropicKeySet = read(env, "ANTHROPIC_API_KEY") !== undefined;
+  const openai = parseOpenAi(env, nodeEnv, issues, nodeEnv === "production" && !anthropicKeySet);
   const jobFetchLinkedIn = parseJobFetchLinkedIn(env, issues);
   const retentionPurge =
     parseEnum("RETENTION_PURGE", read(env, "RETENTION_PURGE"), RETENTION_PURGE_MODES, issues) ??
     "dry-run";
 
   if (issues.length > 0 || databaseUrl === null) throw new RuntimeEnvError(issues);
-  return { nodeEnv, logLevel, databaseUrl, openai, retentionPurge, jobFetchLinkedIn };
+  return { nodeEnv, logLevel, databaseUrl, openai, anthropic, retentionPurge, jobFetchLinkedIn };
 }

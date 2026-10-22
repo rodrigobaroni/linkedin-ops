@@ -14,3 +14,4 @@ or to the baseline repository structure requires an ADR with motivation, alterna
 - [ADR-0007](0007-auth-and-session-model.md) — Authentication, session and authorization model
 - [ADR-0008](0008-anonymous-job-page-fetching.md) — Anonymous fetching of public job pages (Career module)
 - [ADR-0009](0009-tailored-cv-pdf-rendering.md) — Tailored CV PDF rendering with pdfkit (Career module)
+- [ADR-0011](0011-claude-llm-provider.md) — Claude (Anthropic) as the worker LLM provider (0010 reserved for the erasure draft)

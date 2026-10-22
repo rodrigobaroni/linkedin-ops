@@ -3,7 +3,8 @@ import { randomBytes } from "node:crypto";
 import type { CvBaseDraftStore, JobPostingStore, WorkerRuntimeEnv } from "@linkedin-ops/domain";
 import type { LlmClient, Rng } from "@linkedin-ops/editorial-engine";
 import type { Logger } from "pino";
-import { OpenAiLlmClient } from "../llm/openai.js";
+import { AnthropicLlmClient } from "../llm/anthropic.js";
+import { OpenAiLlmClient, type LlmCallEvent } from "../llm/openai.js";
 import { createCareerHandlers, type WiredCareerHandlers } from "./handlers.js";
 import { unavailableJobPageFetcher, type JobPageFetcher } from "./ports.js";
 
@@ -36,25 +37,27 @@ function unwired(): Promise<never> {
 }
 
 /**
- * `null` when OpenAI is not configured (allowed outside production only; `validateWorkerEnv` makes it
- * mandatory for the worker in production).
+ * `null` when no LLM provider is configured (allowed outside production only; `validateWorkerEnv` makes one
+ * mandatory for the worker in production). Claude is preferred when both are set (ADR-0011).
  */
 export function wireCareer(
-  env: Pick<WorkerRuntimeEnv, "openai" | "jobFetchLinkedIn">,
+  env: Pick<WorkerRuntimeEnv, "openai" | "jobFetchLinkedIn"> &
+    Partial<Pick<WorkerRuntimeEnv, "anthropic">>,
   logger: Logger,
   stores: CareerStores,
   llmOverride?: LlmClient,
 ): WiredCareerHandlers | null {
-  if (env.openai === null && llmOverride === undefined) return null;
+  const anthropic = env.anthropic ?? null;
+  if (anthropic === null && env.openai === null && llmOverride === undefined) return null;
+  const onEvent = (event: LlmCallEvent) => logger.info({ llm: event }, "llm call");
   const llm =
     llmOverride ??
-    new OpenAiLlmClient({
-      apiKey: env.openai?.apiKey ?? "",
-      onEvent: (event) => logger.info({ llm: event }, "llm call"),
-    });
+    (anthropic !== null
+      ? new AnthropicLlmClient({ apiKey: anthropic.apiKey, onEvent })
+      : new OpenAiLlmClient({ apiKey: env.openai?.apiKey ?? "", onEvent }));
   const handlers = createCareerHandlers({
     llm,
-    model: env.openai?.model ?? "simulated",
+    model: anthropic?.model ?? env.openai?.model ?? "simulated",
     rng: cryptoRng,
     cvStore: stores.cvStore,
     jobStore: stores.jobStore ?? unwiredJobStore,
