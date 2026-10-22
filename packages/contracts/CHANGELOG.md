@@ -22,6 +22,15 @@ versioning: internal SemVer (see `README.md`).
 - `cv.extract` wiring: `CvDraft` gains required `parseWarnings` (`[]` until `READY`) and `injectionSuspected`, and
   optional `injectionEvidence` (≤ 500 characters); `CvConfirmInput` gains optional `acknowledgeInjection`, required to confirm a draft flagged
   `injectionSuspected` (ADR-0005 §4, fail closed); `ErrorCode` gains `CV_INJECTION_UNACKNOWLEDGED` (409).
+- Job postings (career PR 3b): routes `career.batches.create` (`202 TailoringBatchAccepted`, extends
+  `AsyncAccepted`; 1–20 links), `career.jobs.list` (cursor = last id), `career.jobs.get`, `career.jobs.pasteText`
+  and `career.jobs.retry` (`202 JobPostingAccepted`) and `career.jobs.delete`; resources `TailoringBatchInput`,
+  `JobPostingUrl` (http(s) with a domain, no credentials, ≤ 2048), `JobPostingTextInput` (200–20 000 characters),
+  `JobPostingListQuery`, `JobPostingSummary`, `JobPostingDetail`, `JobPostingTailoring` (with
+  `generatedWithPreviousCv`) and `JOB_POSTING_LIMITS`; enums `JobPostingStatus`
+  (`FETCHING | ANALYZING | READY | FAILED`), `JobPostingFailure` (`FETCH | FETCH_BLOCKED | NOT_A_JOB | AI |
+  TIMED_OUT`) and `JobPostingSourceKind` (`LINKEDIN | OTHER | PASTED`); `ErrorCode` gains `CV_BASE_REQUIRED` (412)
+  and `JOB_POSTING_INVALID_TRANSITION` (409) (contracts.md §2.14, §4).
 - Queues `cv.extract` (`{ cvBaseId }`, retry 2 with backoff), `job.fetch` (`{ jobPostingId }`, retry 1 after 60 s,
   ADR-0008 §4) and `cv.tailor` (`{ jobPostingId }`, retry 2 with backoff). Payloads carry ids only.
 - `openapi/document.ts` (`buildOpenApiDocument`, `serializeOpenApiDocument`): OpenAPI 3.0.3 generated from `routes/v1.ts`
