@@ -164,14 +164,19 @@ const RAW_TEXT = new Set([
   "iframe",
   "noembed",
 ]);
-/** `[^<>]*` keeps every attempt bounded by the next `<`, so a run of `<a` without `>` stays linear. */
-const TAG = /<(\/?)([a-zA-Z][a-zA-Z0-9:-]*)[^<>]*>/g;
+/**
+ * Attributes are unquoted text without `<`/`>` or quoted values, which may contain both, as in the parser
+ * (`<div a="<">` is one element). Unquoted text stops at the next `<`, so a run of `<a` without `>` stays linear.
+ */
+const TAG = /<(\/?)([a-zA-Z][a-zA-Z0-9:-]*)(?:[^<>"']|"[^"]*"|'[^']*')*>/g;
+/** Inside SVG or MathML, `title`, `style` and `script` are not raw text (foreign content). */
+const FOREIGN = ["svg", "math"];
 
 /**
  * Linear pre-scan of `html` against the ceilings, mirroring the parser closely enough to over-estimate depth,
  * never to under-estimate it: an end tag only closes an element that is open (an unmatched `</span>` closes
  * nothing, as in the parser), `<div/>` opens a `div` (HTML has no self-closing elements), and a raw-text
- * element's content is skipped. Returns `html` unchanged; throws `MarkupLimitError`.
+ * element's content is skipped (outside SVG and MathML only). Returns `html` unchanged; throws `MarkupLimitError`.
  */
 export function prescanned(html: string): string {
   const lower = html.toLowerCase();
@@ -187,7 +192,7 @@ export function prescanned(html: string): string {
     }
     elements += 1;
     if (elements > MAX_MARKUP_ELEMENTS) throw new MarkupLimitError();
-    if (RAW_TEXT.has(name)) {
+    if (RAW_TEXT.has(name) && !FOREIGN.some((tag) => open.includes(tag))) {
       const end = lower.indexOf(`</${name}`, TAG.lastIndex);
       if (end === -1) break;
       TAG.lastIndex = end;

@@ -69,6 +69,20 @@ describe("job page extraction under hostile markup (QA #104)", () => {
     });
   });
 
+  it.each([
+    ["'<' inside a quoted attribute", repeatTo('<div a="<">', 512 * KB)],
+    ["'>' inside a quoted attribute", repeatTo("<div a='>'>", 512 * KB)],
+    ["<svg><title> followed by nesting", `<svg><title>${repeatTo("<div>", 512 * KB)}`],
+    ["<math><style> followed by nesting", `<math><style>${repeatTo("<span>", 512 * KB)}`],
+  ])("the pre-scan still counts elements with %s", (_name, body) => {
+    expect(extractJobPageText(body, "text/html")).toEqual({ kind: "unreadable" });
+  });
+
+  it("an HTML <title> is still raw text (its content is not counted)", () => {
+    const html = `<title>${"<div>".repeat(1_000)}</title><main>${"Vaga real. ".repeat(40)}</main>`;
+    expect(extractJobPageText(html, "text/html").kind).toBe("text");
+  });
+
   it("too many elements is refused as unreadable", () => {
     expect(extractJobPageText(repeatTo("<br>", 2 * MB), "text/html")).toEqual({
       kind: "unreadable",
