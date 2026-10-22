@@ -124,6 +124,11 @@ ilustração e "rules-explainer".
 | **Adaptado** | Toda a lista de vocabulário, frases-ponte, aberturas e fechamentos é **reescrita para PT-BR** (`editorial-system.md` §8), marcada como hipótese inicial porque a evidência do upstream é sobre inglês. O tier "aesthetic" fica desligado por padrão e só entra se o Voice Profile pedir. Modo `audit` vira o schema `QualityEvaluation` (`structured-outputs.md` §6) e a rubrica §7 do sistema editorial. Modo `profile` vira a tela/fluxo de Voice Profile a partir de amostras coladas por Rodrigo (sem Apify). Detector de emoji: a tabela de frequência é de um post viral do MagicPost (fev/2026), evidência fraca; mantemos só a regra de cluster (3+ emojis "de IA" no mesmo post, ou mesmo emoji repetido) como aviso. |
 | **Rejeitado** | `detector-tester` (envia o texto de Rodrigo para 5 serviços externos; conflito com privacidade e com "segredos nunca em prompts de terceiros"). `illustration.md` (Pixfaro). `rules-explainer` (material educativo para um post polêmico do autor; não é produto). Quirks de voz do autor como regra ("minúsculas no início", `..`). As alegações de reach por frase ("-4,9%" etc.) como fato. |
 
+**Módulo Carreira (CV adaptado, 2026-10-22):** **Adaptado para CV**. Densidade por bloco (bullet/resumo) em vez de
+parágrafo; tiers forensic + strict + camada `cv`; passe 3 (ADD) removido; passe 2 só no resumo; passe 4 mantido
+com verificação determinística de números, entidades, datas e proveniência; listas reescritas para PT-BR e EN de
+CV (`cv-banned-phrases@1.0.0`). `detector-tester` segue rejeitado. Ver `humanizer-cv-rules.md`.
+
 ### 4.4 `linkedin-content-planner`
 
 **No upstream:** plano de 7 dias com pilares (Authority 40–50% / Narrative 30–40% / Community
@@ -147,6 +152,12 @@ experiência `verbo + métrica`, URL customizada, recomendações.
 | **Adotado** | Entrada por **texto colado** (o próprio upstream reconhece que perfil não pode ser buscado); nunca pontuar seção não mostrada, nunca inferir conteúdo a partir da URL. Primeira pessoa. Proibir "apaixonado por", "profissional orientado a resultados", chains de emoji, caixa alta. Bullets com verbo + métrica, só com métricas que Rodrigo forneça (Story Bank §Receipts). |
 | **Adaptado** | Vira EPIC-09 "sugestões de melhoria de perfil, sem edição automática": output é um relatório estruturado (`ProfileSuggestion`, esboço em `structured-outputs.md` §8) com antes/depois por seção, sempre aplicado manualmente por Rodrigo. Headline e About reescritos em PT-BR; a estrutura de 7 passos vira sugestão, não fórmula fixa. Observação: o template de About do upstream abre com pergunta, enquanto as fórmulas de post proíbem abrir com pergunta; tratamos ambos como recomendações de contexto diferente, sem força de regra. |
 | **Rejeitado** | Todos os "benchmarks" (3,9x views, 71% mais entrevistas, 14x com foto etc.): fonte "co.actor research", sem metodologia. Especificações de banner/foto como regra (ficam como dica opcional de UX se o Farol quiser). "Comment AUDIT on my latest post" como CTA de perfil (comment-gate). |
+
+**Módulo Carreira (`experience-skills-rules.md`, 2026-10-22):** **Adaptado**. Fórmula "verbo de ação + métrica"
+e lista de verbos fracos entram como tom de CV; a métrica só vem do CV base (limites duros da exceção D4,
+`career-editorial-exception.md`). Rejeitados como fato: "3.9x views", "3-5x conversion", "71% more likely to land
+interviews", "2.1x view duration", "skills com 0 endorsements são invisíveis" (rótulo `vendor`/`unverified`, nunca
+na UI).
 
 ### 4.6 `linkedin-comment-drafter`
 
@@ -305,3 +316,4 @@ Pena aos pontos abertos do ADR-0006:
 | Data | Mudança |
 |---|---|
 | 2026-10-13 | Versão inicial. Upstream `bfa41ff5` / `v1.1.19` analisado integralmente nas 10 skills do briefing. |
+| 2026-10-22 | Módulo Carreira: `linkedin-humanizer` e `linkedin-profile-optimizer` adaptados para CV (`humanizer-cv-rules.md`). |
