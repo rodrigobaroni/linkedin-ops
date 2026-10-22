@@ -9,6 +9,7 @@
 #   export DEPLOY_HOST=ubuntu@1.2.3.4 DEPLOY_SSH_KEY=~/path/key APP_HOST=linkedin.example.com
 #   infra/deploy/deploy-shared-host.sh init-env          # once: ~/linkedin-ops/.env on the VM (0600)
 #   infra/deploy/deploy-shared-host.sh escrow-key        # once: ENCRYPTION_KEY copy in the macOS Keychain
+#   infra/deploy/deploy-shared-host.sh add-openai [--replace]  # upgrade: OpenAI settings into an existing .env
 #   infra/deploy/deploy-shared-host.sh deploy [git-ref]  # default origin/main
 #   REQUIRE_PUBLIC=0 ... deploy                          # first deploy, before the Caddy site block exists
 #   infra/deploy/deploy-shared-host.sh status
@@ -21,15 +22,18 @@ PROJECT=${COMPOSE_PROJECT:-linkedin-ops}
 SSH=(ssh -i "$DEPLOY_SSH_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes "$DEPLOY_HOST")
 ROOT=$(git rev-parse --show-toplevel)
 
+# A value from the operator's local .env; empty (never an error exit) when the key is absent.
+local_value() { grep -E "^$1=" "$ROOT/.env" | cut -d= -f2- || true; }
+
 init_env() {
   : "${APP_HOST:?set APP_HOST (public hostname, e.g. linkedin.example.com)}"
   local local_env="$ROOT/.env" client_id client_secret openai_key openai_model
-  client_id=$(grep -E '^LINKEDIN_CLIENT_ID=' "$local_env" | cut -d= -f2-)
-  client_secret=$(grep -E '^LINKEDIN_CLIENT_SECRET=' "$local_env" | cut -d= -f2-)
+  client_id=$(local_value LINKEDIN_CLIENT_ID)
+  client_secret=$(local_value LINKEDIN_CLIENT_SECRET)
   [ -n "$client_id" ] && [ -n "$client_secret" ] || { echo "LINKEDIN_CLIENT_ID/SECRET missing in $local_env" >&2; exit 1; }
   # The worker refuses to boot in production without them (validateWorkerEnv); no default model is assumed.
-  openai_key=$(grep -E '^OPENAI_API_KEY=' "$local_env" | cut -d= -f2-)
-  openai_model=$(grep -E '^OPENAI_MODEL=' "$local_env" | cut -d= -f2-)
+  openai_key=$(local_value OPENAI_API_KEY)
+  openai_model=$(local_value OPENAI_MODEL)
   [ -n "$openai_key" ] && [ -n "$openai_model" ] || { echo "OPENAI_API_KEY/OPENAI_MODEL missing in $local_env" >&2; exit 1; }
   # The LinkedIn and OpenAI credentials travel inside the script on stdin (never argv or screen); every other
   # secret is generated on the VM. The file is written to a temporary name and moved atomically.
@@ -45,7 +49,12 @@ mkdir -p "$dir/releases" "$dir/backups"; chmod 700 "$dir"
 env_file=$dir/.env
 if [ -e "$env_file" ]; then
   if complete "$env_file"; then echo "$env_file already exists and is complete; nothing to do"; exit 0; fi
-  echo "refusing: $env_file exists but is incomplete; inspect and remove it explicitly" >&2; exit 1
+  missing=$(for k in $required; do grep -qE "^$k=.+" "$env_file" || printf '%s ' "$k"; done)
+  echo "refusing: $env_file exists but is incomplete (missing: $missing)." >&2
+  echo "NEVER remove it once the stack has run: a new POSTGRES_PASSWORD no longer opens the pg-data volume and a" >&2
+  echo "new ENCRYPTION_KEY no longer decrypts the LinkedIn tokens. Missing OpenAI settings only: run" >&2
+  echo "'infra/deploy/deploy-shared-host.sh add-openai'; anything else: edit the file by hand." >&2
+  exit 1
 fi
 umask 077
 tmp=$(mktemp "$dir/.env.XXXXXX"); trap 'rm -f "$tmp"' EXIT
@@ -89,15 +98,55 @@ REMOTE
   echo "Next: infra/deploy/deploy-shared-host.sh escrow-key (Sentinela condition 5)"
 }
 
+# Upgrade path for a VM whose .env predates the worker: appends OPENAI_API_KEY/OPENAI_MODEL from the local .env
+# (on stdin, like init-env) and leaves every other line untouched. Refuses to change existing values unless
+# --replace is given. The containers pick the values up on the next deploy.
+add_openai() {
+  local replace=0 openai_key openai_model
+  case "${1:-}" in "") ;; --replace) replace=1 ;; *) echo "usage: $0 add-openai [--replace]" >&2; exit 2 ;; esac
+  openai_key=$(local_value OPENAI_API_KEY)
+  openai_model=$(local_value OPENAI_MODEL)
+  [ -n "$openai_key" ] && [ -n "$openai_model" ] || { echo "OPENAI_API_KEY/OPENAI_MODEL missing in $ROOT/.env" >&2; exit 1; }
+  {
+    printf 'openai_key=%q\nopenai_model=%q\n' "$openai_key" "$openai_model"
+    cat <<'REMOTE'
+set -euo pipefail
+dir=$HOME/$1; replace=$2; env_file=$dir/.env
+keys='^(OPENAI_API_KEY|OPENAI_MODEL)='
+[ -s "$env_file" ] || { echo "$env_file does not exist; run init-env first" >&2; exit 1; }
+if [ "$replace" != 1 ] && grep -qE "$keys" "$env_file"; then
+  echo "refusing: $env_file already has OPENAI_API_KEY or OPENAI_MODEL; rerun with --replace to change them" >&2; exit 1
+fi
+umask 077
+tmp=$(mktemp "$dir/.env.XXXXXX"); trap 'rm -f "$tmp"' EXIT
+grep -vE "$keys" "$env_file" > "$tmp" || true
+printf 'OPENAI_API_KEY=%s\nOPENAI_MODEL=%s\n' "$openai_key" "$openai_model" >> "$tmp" # builtin: never in argv
+# Every other line must survive byte for byte before the file is swapped.
+cmp -s <(grep -vE "$keys" "$env_file") <(grep -vE "$keys" "$tmp") || { echo "unexpected change to other keys; aborted" >&2; exit 1; }
+chmod 600 "$tmp"; mv "$tmp" "$env_file"; trap - EXIT
+echo "OPENAI_API_KEY and OPENAI_MODEL written to $env_file (0600); they take effect on the next deploy"
+REMOTE
+  } | "${SSH[@]}" bash -s -- "$REMOTE_DIR" "$replace"
+}
+
 escrow_key() {
-  # `security -i` reads its commands from stdin, so the key never appears in any process's argv.
+  # `security -i` reads its commands from stdin, so the key never appears in any process's argv. An existing
+  # entry is never overwritten: the same value is a no-op, a different one is refused (it may be the only copy).
+  local service="linkedin-ops ENCRYPTION_KEY v1"
   "${SSH[@]}" "grep -E '^ENCRYPTION_KEY=' \"\$HOME/$REMOTE_DIR/.env\" | cut -d= -f2-" | {
-    read -r key
+    read -r key || true
     [ -n "$key" ] || { echo "ENCRYPTION_KEY not found on the VM" >&2; exit 1; }
-    printf 'add-generic-password -U -a linkedin-ops -s "linkedin-ops ENCRYPTION_KEY v1" -w "%s"\n' "$key" | security -i >/dev/null
+    existing=$(security find-generic-password -a linkedin-ops -s "$service" -w 2>/dev/null || true)
+    if [ -n "$existing" ]; then
+      [ "$existing" = "$key" ] && { echo "the Keychain already holds this ENCRYPTION_KEY v1; nothing to do"; exit 0; }
+      echo "refusing: the Keychain entry '$service' holds a DIFFERENT key. Do not overwrite it: find out which key" >&2
+      echo "encrypted the data in production before touching either copy." >&2
+      exit 1
+    fi
+    printf 'add-generic-password -a linkedin-ops -s "%s" -w "%s"\n' "$service" "$key" | security -i >/dev/null
   }
-  security find-generic-password -a linkedin-ops -s "linkedin-ops ENCRYPTION_KEY v1" >/dev/null
-  echo "ENCRYPTION_KEY v1 stored in the login Keychain (service 'linkedin-ops ENCRYPTION_KEY v1')."
+  security find-generic-password -a linkedin-ops -s "$service" >/dev/null
+  echo "ENCRYPTION_KEY v1 is in the login Keychain (service '$service')."
 }
 
 deploy() {
@@ -128,6 +177,16 @@ compose() { # $1 = release sha; IMAGE_TAG pins immutable images per release (she
   (cd "$base/releases/$r" && IMAGE_TAG=$r docker compose -p "$project" --env-file .env \
     -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.shared-proxy.yml "$@")
 }
+# Bounded `up --wait`: --wait-timeout where this Compose supports it, and an outer `timeout` in every case, so
+# an old Compose on the VM can never hang a deploy or a rollback.
+compose_help=$(docker compose up --help 2>/dev/null || true)
+wait_opts=(--wait)
+[[ $compose_help == *--wait-timeout* ]] && wait_opts+=(--wait-timeout 120)
+up_wait() { # $1 = release sha, then services
+  local r=$1; shift
+  (cd "$base/releases/$r" && IMAGE_TAG=$r timeout 150 docker compose -p "$project" --env-file .env \
+    -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.shared-proxy.yml up -d "${wait_opts[@]}" "$@")
+}
 retry() { local n=0; until "$@"; do n=$((n + 1)); [ "$n" -ge 10 ] && return 1; sleep 3; done; }
 # Single source of truth for the running release: the `current` symlink.
 prev=$(basename "$(readlink "$base/current" 2>/dev/null || true)")
@@ -135,7 +194,7 @@ tools=(docker run --rm --network "${project}_internal" --env-file "$base/.env" "
 
 compose "$sha" build api web worker
 docker build -q --target build -f "$base/releases/$sha/apps/api/Dockerfile" -t "linkedin-ops/api-tools:$sha" "$base/releases/$sha" >/dev/null
-compose "$sha" up -d --wait postgres
+up_wait "$sha" postgres
 
 # Encrypted backup BEFORE any DDL (runbook database-migrations.md); only skippable on the very first deploy.
 if [ -x "$base/backup-db.sh" ]; then "$base/backup-db.sh"
@@ -158,14 +217,14 @@ fi
 # exists (an `up` without it would build during the rollback), otherwise stop it.
 rollback_worker() {
   if [ -n "$prev" ] && [ -d "$base/releases/$prev" ] && docker image inspect "linkedin-ops/worker:$prev" >/dev/null 2>&1; then
-    echo "rolling back worker to $prev" >&2; compose "$prev" up -d --wait worker || true
+    echo "rolling back worker to $prev" >&2; up_wait "$prev" worker || true
   else
     echo "no previous worker image to roll back to; stopping the worker" >&2; compose "$sha" stop worker || true
   fi
 }
 rollback() {
   if [ -n "$prev" ] && [ -d "$base/releases/$prev" ]; then
-    echo "rolling back api/web to $prev" >&2; compose "$prev" up -d --wait api web || true
+    echo "rolling back api/web to $prev" >&2; up_wait "$prev" api web || true
   else
     echo "no previous release to roll back to; stopping api/web" >&2; compose "$sha" stop api web || true
   fi
@@ -183,7 +242,7 @@ queues_ready() {
   done
 }
 # Worker BEFORE api/web: a failure here leaves the running api/web untouched.
-if ! compose "$sha" up -d --wait worker || ! queues_ready; then
+if ! up_wait "$sha" worker || ! queues_ready; then
   echo "worker did not become ready (healthy + queues cv.extract and cv.extract.dlq in pgboss.queue within 60 s)" >&2
   compose "$sha" ps -a worker >&2 || true; compose "$sha" logs --no-color --tail=80 worker >&2 || true
   rollback_worker; exit 1
@@ -194,7 +253,7 @@ check() {
     retry curl -fsS --max-time 5 -o /dev/null http://172.17.0.1:3100/ &&
     { [ "$require_public" = 0 ] || retry curl -fsS --max-time 10 -o /dev/null "https://$host/api/v1/health"; }
 }
-if ! compose "$sha" up -d --wait --remove-orphans api web || ! check; then
+if ! up_wait "$sha" --remove-orphans api web || ! check; then
   compose "$sha" ps -a >&2 || true; compose "$sha" logs --no-color --tail=80 api web worker >&2 || true
   rollback; exit 1
 fi
@@ -220,7 +279,8 @@ REMOTE
 case "${1:-}" in
   init-env) init_env ;;
   escrow-key) escrow_key ;;
+  add-openai) shift; add_openai "${1:-}" ;;
   deploy) shift; deploy "${1:-}" ;;
   status) status ;;
-  *) echo "usage: $0 init-env|escrow-key|deploy [ref]|status" >&2; exit 2 ;;
+  *) echo "usage: $0 init-env|escrow-key|add-openai [--replace]|deploy [ref]|status" >&2; exit 2 ;;
 esac
