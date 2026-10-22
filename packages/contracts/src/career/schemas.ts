@@ -1,21 +1,24 @@
 /**
  * Career module: structured CV, extracted job posting, tailored CV and match report
- * (docs/superpowers/specs/2026-10-22-cv-tailoring-design.md §4–§6).
+ * (docs/superpowers/specs/2026-10-22-cv-tailoring-design.md §4–§6; prompts and field names from
+ * docs/editorial/career-prompts.md v1.0.0, owner Pena).
  *
  * Two layers:
- * - **Content** schemas (`CvStructured`, `JobPostingExtracted`, `TailoredCvContent`, `MatchReport`) are what
- *   persistence (`cv_bases.content`, `job_postings.extracted`, `tailored_cvs.content|match_report`), the API
- *   and the web exchange.
- * - **Model output** schemas (`CvExtractionOutput`, `JobExtractionOutput`, `CvTailoringOutput`,
- *   `CvHumanizationOutput`) wrap content with model metadata (`schemaVersion`, injection flags) and are
- *   registered in `STRUCTURED_OUTPUTS`. The engine maps output → content.
+ * - **Model outputs** (`CvExtractionOutput`, `JobExtractionOutput`, `CvTailoringOutput`,
+ *   `CvHumanizationOutput`) keep Pena's field names and are registered in `STRUCTURED_OUTPUTS`.
+ * - **Content** (`CvStructured`, `JobPostingExtracted`, `TailoredCvContent`, `MatchReport`) is what persistence
+ *   (`cv_bases.content`, `job_postings.extracted`, `tailored_cvs.content|match_report`), the API and the web
+ *   exchange. The engine maps output → content after its code checks (ids normalized, evidence verified,
+ *   provenance enforced).
  *
  * Strict-mode rules as in `engine/structured-outputs.ts`: closed objects, every property required, optionals as
- * `.nullable()`; limits strict mode may not enforce are validated by Zod after parse.
+ * `.nullable()`; limits strict mode may not enforce are validated by Zod after parse. All objects are strict
+ * (unknown keys fail, threat model TM-06).
  *
- * The match score is **computed by the engine** from requirement coverage of the base CV (before anything is
- * added); the model never returns a score. Provenance (`original | rewritten | added`) is mandatory on every
- * tailored text segment and is shown in review only, never in the PDF (spec §8, decision D4).
+ * The match score is **computed by the engine** from `matchAssessment` on the base CV (before anything is
+ * added); the model never returns a score. Provenance (`original | rewritten | added`, shown in the UI as
+ * original / reescrito / acrescentado) is mandatory on every tailored segment and appears in review only, never
+ * in the PDF (spec §8, decision D4, docs/editorial/career-editorial-exception.md).
  */
 import { z } from "zod";
 
@@ -26,37 +29,41 @@ const MAX_ITEMS = 50;
 const ShortText = z.string().min(1).max(200);
 const LongText = z.string().min(1).max(2000);
 const NullableShortText = ShortText.nullable();
+const Note = z.string().min(1).max(240);
 
-/** Stable item id inside one CV or posting, e.g. `exp-1`, `req-3`, `summary`. Unique per document. */
+/** Stable item id inside one CV, posting or tailored CV, e.g. `exp-1`, `exp-1-b-2`, `req-3`, `seg-12`. */
 export const CareerItemIdSchema = z
   .string()
-  .regex(/^[a-z]+(-\d{1,3})?$/)
-  .describe("Stable item id, e.g. exp-1, edu-2, skill-3, req-4, summary.")
+  .max(40)
+  .regex(/^[a-z]+(?:-[a-z0-9]+)*$/)
+  .describe("Stable item id, e.g. exp-1, exp-1-b-2, edu-1, req-3, seg-4.")
   .meta({ id: "CareerItemId" });
 export type CareerItemId = z.infer<typeof CareerItemIdSchema>;
 
-/** Language of a CV or posting (BCP 47 subset: `pt-BR`, `en`, `es`). Not limited to the editorial languages. */
-export const CareerLanguageSchema = z
-  .string()
-  .regex(/^[a-z]{2,3}(-[A-Z]{2})?$/)
-  .describe("BCP 47 language tag, e.g. pt-BR, en, es.")
-  .meta({ id: "CareerLanguage" });
+/** Languages the module writes and lints. Anything else is `other` (see the engine's `FALLBACK_LANGUAGE`). */
+export const CareerLanguageSchema = z.enum(["pt-BR", "en"]).meta({ id: "CareerLanguage" });
+export const CareerLanguage = CareerLanguageSchema.enum;
 export type CareerLanguage = z.infer<typeof CareerLanguageSchema>;
 
-/** `YYYY` or `YYYY-MM`, as printed on the CV. */
-export const CvDateSchema = z
+export const DetectedLanguageSchema = z
+  .enum(["pt-BR", "en", "other"])
+  .meta({ id: "DetectedLanguage" });
+export type DetectedLanguage = z.infer<typeof DetectedLanguageSchema>;
+
+/** BCP 47 tag as detected (`es`, `de-DE`), kept for the report when the language is `other`. */
+export const LanguageTagSchema = z
   .string()
-  .regex(/^\d{4}(-(0[1-9]|1[0-2]))?$/)
-  .nullable()
-  .describe("YYYY or YYYY-MM; null when the CV does not say.")
-  .meta({ id: "CvDate" });
-export type CvDate = z.infer<typeof CvDateSchema>;
+  .regex(/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/)
+  .meta({ id: "LanguageTag" });
+
+/** As printed on the CV: `YYYY-MM` when unambiguous, otherwise the literal text (with a parse warning). */
+const CvDate = z.string().min(1).max(40);
 
 const InjectionFlags = {
   injectionSuspected: z
     .boolean()
-    .describe("The document contains text that tries to instruct the model."),
-  injectionEvidence: z.string().max(500).nullable(),
+    .describe("The data contains text that tries to instruct the model."),
+  injectionEvidence: z.string().max(200).nullable(),
 };
 
 function addUniqueIdIssues(
@@ -78,13 +85,17 @@ function addUniqueIdIssues(
 }
 
 // ---------------------------------------------------------------------------------------------------
-// Structured CV (cv.extract → reviewed and confirmed by Rodrigo → base CV)
+// Structured CV (cv-extract → reviewed and confirmed by Rodrigo → base CV)
 // ---------------------------------------------------------------------------------------------------
+
+export const CvTextItemSchema = z
+  .strictObject({ id: CareerItemIdSchema, text: LongText })
+  .meta({ id: "CvTextItem" });
+export type CvTextItem = z.infer<typeof CvTextItemSchema>;
 
 export const CvContactSchema = z
   .strictObject({
-    fullName: ShortText,
-    headline: NullableShortText.describe("Professional headline as written on the CV."),
+    name: NullableShortText,
     email: NullableShortText,
     phone: NullableShortText,
     location: NullableShortText,
@@ -99,11 +110,11 @@ export const CvExperienceSchema = z
     company: ShortText,
     title: ShortText,
     location: NullableShortText,
-    startDate: CvDateSchema,
-    endDate: CvDateSchema,
-    current: z.boolean(),
-    description: LongText.nullable(),
-    bullets: z.array(LongText).max(MAX_ITEMS),
+    startDate: CvDate.nullable(),
+    endDate: CvDate.nullable(),
+    isCurrent: z.boolean(),
+    bullets: z.array(CvTextItemSchema).max(MAX_ITEMS),
+    skills: z.array(CvTextItemSchema).max(MAX_ITEMS),
   })
   .meta({ id: "CvExperience" });
 export type CvExperience = z.infer<typeof CvExperienceSchema>;
@@ -114,142 +125,161 @@ export const CvEducationSchema = z
     institution: ShortText,
     degree: NullableShortText,
     field: NullableShortText,
-    startDate: CvDateSchema,
-    endDate: CvDateSchema,
+    startDate: CvDate.nullable(),
+    endDate: CvDate.nullable(),
   })
   .meta({ id: "CvEducation" });
 export type CvEducation = z.infer<typeof CvEducationSchema>;
-
-export const CvSkillCategorySchema = z
-  .enum(["technical", "behavioral", "other"])
-  .meta({ id: "CvSkillCategory" });
-export type CvSkillCategory = z.infer<typeof CvSkillCategorySchema>;
-
-export const CvSkillSchema = z
-  .strictObject({ id: CareerItemIdSchema, name: ShortText, category: CvSkillCategorySchema })
-  .meta({ id: "CvSkill" });
-export type CvSkill = z.infer<typeof CvSkillSchema>;
-
-export const CvLanguageSkillSchema = z
-  .strictObject({
-    id: CareerItemIdSchema,
-    language: ShortText.describe("Language name as written, e.g. Inglês."),
-    proficiency: NullableShortText.describe("As written, e.g. fluente, C1."),
-  })
-  .meta({ id: "CvLanguageSkill" });
-export type CvLanguageSkill = z.infer<typeof CvLanguageSkillSchema>;
 
 export const CvCertificationSchema = z
   .strictObject({
     id: CareerItemIdSchema,
     name: ShortText,
     issuer: NullableShortText,
-    year: z
-      .string()
-      .regex(/^\d{4}$/)
-      .nullable(),
+    date: CvDate.nullable(),
   })
   .meta({ id: "CvCertification" });
 export type CvCertification = z.infer<typeof CvCertificationSchema>;
 
-/** Base CV content. Persisted in `cv_bases.content`; body of `POST /career/cv/confirm`. */
-export const CvStructuredSchema = z
+export const CvSkillsSchema = z
   .strictObject({
-    language: CareerLanguageSchema,
-    contact: CvContactSchema,
-    summary: z.string().min(1).max(3000).nullable(),
-    experiences: z.array(CvExperienceSchema).max(MAX_ITEMS),
-    education: z.array(CvEducationSchema).max(MAX_ITEMS),
-    skills: z.array(CvSkillSchema).max(100),
-    languages: z.array(CvLanguageSkillSchema).max(20),
-    certifications: z.array(CvCertificationSchema).max(MAX_ITEMS),
+    technical: z.array(CvTextItemSchema).max(100),
+    behavioral: z.array(CvTextItemSchema).max(100),
   })
-  .superRefine((cv, ctx) => {
-    const ids = [
-      ...cv.experiences.map((item) => item.id),
-      ...cv.education.map((item) => item.id),
-      ...cv.skills.map((item) => item.id),
-      ...cv.languages.map((item) => item.id),
-      ...cv.certifications.map((item) => item.id),
-    ];
-    addUniqueIdIssues(ids, ctx, ["ids"]);
-    if (ids.includes("summary")) {
-      ctx.addIssue({ code: "custom", path: ["ids"], message: '"summary" is a reserved item id' });
-    }
+  .meta({ id: "CvSkills" });
+export type CvSkills = z.infer<typeof CvSkillsSchema>;
+
+export const CvLanguageSkillSchema = z
+  .strictObject({
+    id: CareerItemIdSchema,
+    language: ShortText.describe("As written, e.g. Inglês."),
+    level: NullableShortText.describe("As written, e.g. fluente, C1."),
   })
+  .meta({ id: "CvLanguageSkill" });
+export type CvLanguageSkill = z.infer<typeof CvLanguageSkillSchema>;
+
+export const CvOtherSectionSchema = z
+  .strictObject({ id: CareerItemIdSchema, heading: ShortText, text: z.string().min(1).max(5000) })
+  .meta({ id: "CvOtherSection" });
+export type CvOtherSection = z.infer<typeof CvOtherSectionSchema>;
+
+const cvShape = {
+  language: DetectedLanguageSchema,
+  contact: CvContactSchema,
+  summary: CvTextItemSchema.nullable(),
+  experiences: z.array(CvExperienceSchema).max(MAX_ITEMS),
+  education: z.array(CvEducationSchema).max(MAX_ITEMS),
+  certifications: z.array(CvCertificationSchema).max(MAX_ITEMS),
+  skills: CvSkillsSchema,
+  languages: z.array(CvLanguageSkillSchema).max(20),
+  other: z
+    .array(CvOtherSectionSchema)
+    .max(20)
+    .describe("Unrecognized sections; nothing is dropped."),
+};
+
+type CvSections = { [K in keyof typeof cvShape]: z.infer<(typeof cvShape)[K]> };
+
+/** Every item id of a structured CV, in document order. */
+export function cvItemIds(cv: CvSections): string[] {
+  return [
+    ...(cv.summary ? [cv.summary.id] : []),
+    ...cv.experiences.flatMap((item) => [
+      item.id,
+      ...item.bullets.map((bullet) => bullet.id),
+      ...item.skills.map((skill) => skill.id),
+    ]),
+    ...cv.education.map((item) => item.id),
+    ...cv.certifications.map((item) => item.id),
+    ...cv.skills.technical.map((item) => item.id),
+    ...cv.skills.behavioral.map((item) => item.id),
+    ...cv.languages.map((item) => item.id),
+    ...cv.other.map((item) => item.id),
+  ];
+}
+
+/** Base CV content. Persisted in `cv_bases.content`; body of `POST /career/cv/confirm`. Ids unique. */
+export const CvStructuredSchema = z
+  .strictObject(cvShape)
+  .superRefine((cv, ctx) => addUniqueIdIssues(cvItemIds(cv), ctx, ["ids"]))
   .meta({ id: "CvStructured" });
 export type CvStructured = z.infer<typeof CvStructuredSchema>;
 
-/** Model output of `cv-extract`. `warnings` lists what could not be read (never CV content). */
+export const ParseWarningSchema = z
+  .strictObject({ field: ShortText, message: ShortText })
+  .meta({ id: "ParseWarning" });
+export type ParseWarning = z.infer<typeof ParseWarningSchema>;
+
+/** Model output of `cv-extract`. Ids are normalized by the engine afterwards. */
 export const CvExtractionOutputSchema = z
   .strictObject({
     schemaVersion: SchemaVersionSchema,
-    cv: CvStructuredSchema,
-    warnings: z.array(ShortText).max(20).describe("Sections that could not be read reliably."),
     ...InjectionFlags,
+    ...cvShape,
+    parseWarnings: z.array(ParseWarningSchema).max(50),
   })
   .meta({ id: "CvExtractionOutput" });
 export type CvExtractionOutput = z.infer<typeof CvExtractionOutputSchema>;
 
 // ---------------------------------------------------------------------------------------------------
-// Extracted job posting (job.extract)
+// Extracted job posting (job-extract)
 // ---------------------------------------------------------------------------------------------------
 
-export const JobSenioritySchema = z
-  .enum([
-    "intern",
-    "junior",
-    "mid",
-    "senior",
-    "staff",
-    "principal",
-    "lead",
-    "manager",
-    "director",
-    "executive",
-    "unspecified",
-  ])
-  .meta({ id: "JobSeniority" });
-export type JobSeniority = z.infer<typeof JobSenioritySchema>;
+export const JobWorkModeSchema = z.enum(["onsite", "hybrid", "remote"]).meta({ id: "JobWorkMode" });
+export type JobWorkMode = z.infer<typeof JobWorkModeSchema>;
 
-export const JobWorkModelSchema = z
-  .enum(["onsite", "hybrid", "remote", "unspecified"])
-  .meta({ id: "JobWorkModel" });
-export type JobWorkModel = z.infer<typeof JobWorkModelSchema>;
-
-/** `required` = obrigatório; `preferred` = desejável. */
+/** `mandatory` = obrigatório; `desirable` = desejável/diferencial. */
 export const JobRequirementKindSchema = z
-  .enum(["required", "preferred"])
+  .enum(["mandatory", "desirable"])
   .meta({ id: "JobRequirementKind" });
 export type JobRequirementKind = z.infer<typeof JobRequirementKindSchema>;
 
 export const JobRequirementCategorySchema = z
-  .enum(["technical", "behavioral", "experience", "education", "language", "other"])
+  .enum([
+    "technical",
+    "behavioral",
+    "education",
+    "certification",
+    "language",
+    "experience",
+    "other",
+  ])
   .meta({ id: "JobRequirementCategory" });
 export type JobRequirementCategory = z.infer<typeof JobRequirementCategorySchema>;
 
 export const JobRequirementSchema = z
   .strictObject({
     id: CareerItemIdSchema.describe("req-1, req-2, ..."),
-    text: z.string().min(1).max(500).describe("The requirement as stated by the posting."),
     kind: JobRequirementKindSchema,
     category: JobRequirementCategorySchema,
+    text: z.string().min(1).max(500).describe("Normalized requirement, in the posting's language."),
+    evidence: z
+      .string()
+      .min(1)
+      .max(200)
+      .describe("Exact substring of the posting (checked by code)."),
   })
   .meta({ id: "JobRequirement" });
 export type JobRequirement = z.infer<typeof JobRequirementSchema>;
 
-/** Extracted posting. Persisted in `job_postings.extracted`. No names of recruiters or other people. */
+const jobShape = {
+  language: DetectedLanguageSchema,
+  languageDetected: LanguageTagSchema,
+  title: ShortText,
+  company: NullableShortText,
+  location: NullableShortText,
+  workMode: JobWorkModeSchema.nullable(),
+  seniority: NullableShortText,
+  requirements: z.array(JobRequirementSchema).max(60),
+  keywords: z.array(ShortText).max(60).describe("Technical terms cited literally."),
+};
+
+/**
+ * Extracted posting. Persisted in `job_postings.extracted`. Requirements whose `evidence` is not found in the
+ * posting text were dropped by the engine. No names of recruiters or other people.
+ */
 export const JobPostingExtractedSchema = z
-  .strictObject({
-    title: ShortText,
-    company: NullableShortText,
-    location: NullableShortText,
-    workModel: JobWorkModelSchema,
-    seniority: JobSenioritySchema,
-    language: CareerLanguageSchema.describe("Language the posting is written in."),
-    summary: LongText.nullable().describe("What the role does, in 2–3 sentences."),
-    requirements: z.array(JobRequirementSchema).min(1).max(60),
-  })
+  .strictObject({ ...jobShape, requirements: jobShape.requirements.min(1) })
   .superRefine((job, ctx) =>
     addUniqueIdIssues(
       job.requirements.map((item) => item.id),
@@ -260,20 +290,25 @@ export const JobPostingExtractedSchema = z
   .meta({ id: "JobPostingExtracted" });
 export type JobPostingExtracted = z.infer<typeof JobPostingExtractedSchema>;
 
-/** Model output of `job-extract`. `isJobPosting: false` ⇒ `job: null` (failure reason `not_a_job`). */
+/** Model output of `job-extract`. `isJobPosting: false` ⇒ failure reason `not_a_job`, other fields empty. */
 export const JobExtractionOutputSchema = z
   .strictObject({
     schemaVersion: SchemaVersionSchema,
-    isJobPosting: z.boolean().describe("False when the page is not a single job posting."),
-    job: JobPostingExtractedSchema.nullable(),
     ...InjectionFlags,
+    isJobPosting: z.boolean(),
+    notAJobReason: NullableShortText,
+    ...jobShape,
+    title: NullableShortText,
   })
   .superRefine((output, ctx) => {
-    if (output.isJobPosting !== (output.job !== null)) {
+    if (output.isJobPosting && output.title === null) {
+      ctx.addIssue({ code: "custom", path: ["title"], message: "A job posting has a title" });
+    }
+    if (!output.isJobPosting && output.notAJobReason === null) {
       ctx.addIssue({
         code: "custom",
-        path: ["job"],
-        message: "job must be present exactly when isJobPosting is true",
+        path: ["notAJobReason"],
+        message: "notAJobReason is required when isJobPosting is false",
       });
     }
   })
@@ -281,13 +316,12 @@ export const JobExtractionOutputSchema = z
 export type JobExtractionOutput = z.infer<typeof JobExtractionOutputSchema>;
 
 // ---------------------------------------------------------------------------------------------------
-// Tailored CV (cv.tailor → cv.humanize)
+// Tailored CV (cv-tailor → cv-humanize)
 // ---------------------------------------------------------------------------------------------------
 
 /**
- * `original` = verbatim from the base CV (may be reordered); `rewritten` = same content reworded, translated or
- * re-emphasized (translation is never `original`); `added` = not in the base CV, D4 exception
- * (`docs/editorial/career-editorial-exception.md`).
+ * `original` = base text unchanged (reordering allowed); `rewritten` = same facts, new wording, emphasis or
+ * language (translation is never `original`); `added` = not in the base CV, D4 exception.
  */
 export const ProvenanceSchema = z
   .enum(["original", "rewritten", "added"])
@@ -296,189 +330,185 @@ export const Provenance = ProvenanceSchema.enum;
 export type Provenance = z.infer<typeof ProvenanceSchema>;
 
 /**
- * One tailored text segment. `sourceRefs` cite base CV item ids for `original`/`rewritten` and job requirement
- * ids for `added` (the requirement that motivated the addition). The engine checks the ids exist.
+ * One tailored text segment. `original`/`rewritten` cite base CV item ids (`sourceCvItemIds`, non-empty);
+ * `added` cites the requirement ids it targets (`targetRequirementIds`, non-empty) and explains itself in
+ * `additionNote` (pt-BR). The engine checks the ids exist.
  */
-export const ProvenancedTextSchema = z
+export const CvSegmentSchema = z
   .strictObject({
+    segmentId: CareerItemIdSchema.describe("seg-1, seg-2, ..."),
     text: LongText,
     provenance: ProvenanceSchema,
-    sourceRefs: z
-      .array(CareerItemIdSchema)
-      .min(1)
-      .max(5)
-      .describe(
-        "original/rewritten: base CV item ids the text comes from; added: job requirement ids that motivated it.",
-      ),
+    sourceCvItemIds: z.array(CareerItemIdSchema).max(10),
+    targetRequirementIds: z.array(CareerItemIdSchema).max(10),
+    additionNote: Note.nullable(),
   })
-  .meta({ id: "ProvenancedText" });
-export type ProvenancedText = z.infer<typeof ProvenancedTextSchema>;
+  .superRefine((segment, ctx) => {
+    const added = segment.provenance === "added";
+    if (added && segment.targetRequirementIds.length === 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["targetRequirementIds"],
+        message: "An added segment targets at least one requirement",
+      });
+    }
+    if (added && segment.additionNote === null) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["additionNote"],
+        message: "An added segment explains the addition",
+      });
+    }
+    if (added && segment.sourceCvItemIds.length > 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["sourceCvItemIds"],
+        message: "An added segment has no base CV source",
+      });
+    }
+    if (!added && segment.sourceCvItemIds.length === 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["sourceCvItemIds"],
+        message: "An original or rewritten segment cites its base CV items",
+      });
+    }
+  })
+  .meta({ id: "CvSegment" });
+export type CvSegment = z.infer<typeof CvSegmentSchema>;
 
-function addNotAddedIssue(
-  segment: ProvenancedText | null,
-  ctx: z.RefinementCtx,
-  path: (string | number)[],
-): void {
-  if (segment?.provenance === "added") {
-    ctx.addIssue({ code: "custom", path, message: "This field cannot be added content" });
-  }
-}
+export const CvSegmentListSchema = z
+  .strictObject({ segments: z.array(CvSegmentSchema).max(MAX_ITEMS) })
+  .meta({ id: "CvSegmentList" });
+export type CvSegmentList = z.infer<typeof CvSegmentListSchema>;
+
+const Order = z.int().min(1).max(100);
+
+export const TailoringOutputCvSchema = z
+  .strictObject({
+    summary: CvSegmentListSchema,
+    experiences: z
+      .array(
+        z.strictObject({
+          cvExperienceId: CareerItemIdSchema,
+          order: Order,
+          bullets: CvSegmentListSchema,
+          skills: CvSegmentListSchema,
+        }),
+      )
+      .max(MAX_ITEMS),
+    skills: z.strictObject({ technical: CvSegmentListSchema, behavioral: CvSegmentListSchema }),
+    education: z
+      .array(z.strictObject({ cvEducationId: CareerItemIdSchema, order: Order }))
+      .max(MAX_ITEMS),
+    certifications: z
+      .array(z.strictObject({ cvCertificationId: CareerItemIdSchema, order: Order }))
+      .max(MAX_ITEMS),
+    languages: z.array(z.strictObject({ cvLanguageId: CareerItemIdSchema, order: Order })).max(20),
+  })
+  .meta({ id: "TailoringOutputCv" });
+export type TailoringOutputCv = z.infer<typeof TailoringOutputCvSchema>;
+
+export const RequirementStatusSchema = z
+  .enum(["met", "partial", "missing"])
+  .meta({ id: "RequirementStatus" });
+export type RequirementStatus = z.infer<typeof RequirementStatusSchema>;
+
+export const CvEvidenceSchema = z
+  .strictObject({
+    cvItemId: CareerItemIdSchema.describe("Base CV item that covers the requirement."),
+    quote: z.string().min(1).max(500).describe("Exact substring of that base CV item."),
+  })
+  .meta({ id: "CvEvidence" });
+export type CvEvidence = z.infer<typeof CvEvidenceSchema>;
+
+export const RequirementAssessmentSchema = z
+  .strictObject({
+    requirementId: CareerItemIdSchema,
+    status: RequirementStatusSchema,
+    cvEvidence: z.array(CvEvidenceSchema).max(5),
+    rationale: Note.describe("Up to 240 characters, Brazilian Portuguese."),
+  })
+  .meta({ id: "RequirementAssessment" });
+export type RequirementAssessment = z.infer<typeof RequirementAssessmentSchema>;
+
+/** Model output of `cv-tailor`: assessment of the BASE CV (no score), then the tailored CV. */
+export const CvTailoringOutputSchema = z
+  .strictObject({
+    schemaVersion: SchemaVersionSchema,
+    targetLanguage: CareerLanguageSchema,
+    ...InjectionFlags,
+    matchAssessment: z.strictObject({
+      requirements: z.array(RequirementAssessmentSchema).max(60),
+    }),
+    tailoredCv: TailoringOutputCvSchema,
+  })
+  .meta({ id: "CvTailoringOutput" });
+export type CvTailoringOutput = z.infer<typeof CvTailoringOutputSchema>;
+
+export const HumanizedSegmentSchema = z
+  .strictObject({
+    segmentId: CareerItemIdSchema,
+    text: LongText,
+    changed: z.boolean(),
+    changeReason: z.string().min(1).max(120).nullable(),
+  })
+  .meta({ id: "HumanizedSegment" });
+export type HumanizedSegment = z.infer<typeof HumanizedSegmentSchema>;
+
+/** Model output of `cv-humanize`: same segments, same order, wording only (provenance is not output). */
+export const CvHumanizationOutputSchema = z
+  .strictObject({
+    schemaVersion: SchemaVersionSchema,
+    ...InjectionFlags,
+    segments: z.array(HumanizedSegmentSchema).max(500),
+  })
+  .meta({ id: "CvHumanizationOutput" });
+export type CvHumanizationOutput = z.infer<typeof CvHumanizationOutputSchema>;
 
 /**
- * Experiences, education and certifications reference a base item (`baseId`): company, dates and
- * institution come from the base CV at render time, never from the model. Titles may be reworded or
- * translated but never invented.
- */
-export const TailoredExperienceSchema = z
-  .strictObject({
-    baseId: CareerItemIdSchema,
-    title: ProvenancedTextSchema,
-    bullets: z.array(ProvenancedTextSchema).max(MAX_ITEMS),
-  })
-  .superRefine((item, ctx) => addNotAddedIssue(item.title, ctx, ["title"]))
-  .meta({ id: "TailoredExperience" });
-export type TailoredExperience = z.infer<typeof TailoredExperienceSchema>;
-
-export const TailoredEducationSchema = z
-  .strictObject({
-    baseId: CareerItemIdSchema,
-    degree: ProvenancedTextSchema.nullable(),
-    field: ProvenancedTextSchema.nullable(),
-  })
-  .superRefine((item, ctx) => {
-    addNotAddedIssue(item.degree, ctx, ["degree"]);
-    addNotAddedIssue(item.field, ctx, ["field"]);
-  })
-  .meta({ id: "TailoredEducation" });
-export type TailoredEducation = z.infer<typeof TailoredEducationSchema>;
-
-export const TailoredCertificationSchema = z
-  .strictObject({ baseId: CareerItemIdSchema, name: ProvenancedTextSchema })
-  .superRefine((item, ctx) => addNotAddedIssue(item.name, ctx, ["name"]))
-  .meta({ id: "TailoredCertification" });
-export type TailoredCertification = z.infer<typeof TailoredCertificationSchema>;
-
-/**
- * Tailored CV in the posting's language, items ordered by relevance. Persisted in `tailored_cvs.content`.
- * Contact data is taken from the base CV at render time.
+ * Tailored CV after the engine's checks, in `language`, arrays in display order. Persisted in
+ * `tailored_cvs.content`. Contact, company, title, dates, education, certifications and languages are copied
+ * from the base CV by id at render time; the model only orders them.
  */
 export const TailoredCvContentSchema = z
   .strictObject({
     language: CareerLanguageSchema,
-    headline: ProvenancedTextSchema.nullable(),
-    summary: ProvenancedTextSchema.nullable(),
-    experiences: z.array(TailoredExperienceSchema).max(MAX_ITEMS),
-    education: z.array(TailoredEducationSchema).max(MAX_ITEMS),
-    skills: z.array(ProvenancedTextSchema).max(100),
-    /** Never `added`: a language with a declared level is not invented (D4 hard limit 1). */
-    languages: z.array(ProvenancedTextSchema).max(20),
-    certifications: z.array(TailoredCertificationSchema).max(MAX_ITEMS),
+    summary: CvSegmentListSchema,
+    experiences: z
+      .array(
+        z.strictObject({
+          cvExperienceId: CareerItemIdSchema,
+          bullets: CvSegmentListSchema,
+          skills: CvSegmentListSchema,
+        }),
+      )
+      .max(MAX_ITEMS),
+    skills: z.strictObject({ technical: CvSegmentListSchema, behavioral: CvSegmentListSchema }),
+    educationIds: z.array(CareerItemIdSchema).max(MAX_ITEMS),
+    certificationIds: z.array(CareerItemIdSchema).max(MAX_ITEMS),
+    languageIds: z.array(CareerItemIdSchema).max(20),
   })
   .superRefine((cv, ctx) => {
-    cv.languages.forEach((segment, index) => addNotAddedIssue(segment, ctx, ["languages", index]));
+    const segmentIds = [
+      ...cv.summary.segments,
+      ...cv.experiences.flatMap((item) => [...item.bullets.segments, ...item.skills.segments]),
+      ...cv.skills.technical.segments,
+      ...cv.skills.behavioral.segments,
+    ].map((segment) => segment.segmentId);
+    addUniqueIdIssues(segmentIds, ctx, ["segments"]);
     addUniqueIdIssues(
-      cv.experiences.map((item) => item.baseId),
+      cv.experiences.map((item) => item.cvExperienceId),
       ctx,
       ["experiences"],
-    );
-    addUniqueIdIssues(
-      cv.education.map((item) => item.baseId),
-      ctx,
-      ["education"],
-    );
-    addUniqueIdIssues(
-      cv.certifications.map((item) => item.baseId),
-      ctx,
-      ["certifications"],
     );
   })
   .meta({ id: "TailoredCvContent" });
 export type TailoredCvContent = z.infer<typeof TailoredCvContentSchema>;
 
 // ---------------------------------------------------------------------------------------------------
-// Requirement coverage and match report
+// Match report
 // ---------------------------------------------------------------------------------------------------
-
-export const RequirementCoverageStatusSchema = z
-  .enum(["met", "partial", "missing"])
-  .meta({ id: "RequirementCoverageStatus" });
-export type RequirementCoverageStatus = z.infer<typeof RequirementCoverageStatusSchema>;
-
-export const CoverageEvidenceSchema = z
-  .strictObject({
-    ref: CareerItemIdSchema.describe("Base CV item id that covers the requirement."),
-    quote: z.string().min(1).max(500).describe("Literal excerpt of the base CV."),
-  })
-  .meta({ id: "CoverageEvidence" });
-export type CoverageEvidence = z.infer<typeof CoverageEvidenceSchema>;
-
-/** Coverage of one requirement by the **base** CV (before anything is added). */
-export const RequirementCoverageSchema = z
-  .strictObject({
-    requirementId: CareerItemIdSchema,
-    status: RequirementCoverageStatusSchema,
-    evidence: z.array(CoverageEvidenceSchema).max(5),
-  })
-  .superRefine((coverage, ctx) => {
-    const hasEvidence = coverage.evidence.length > 0;
-    if ((coverage.status === "missing") === hasEvidence) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["evidence"],
-        message: "evidence must be empty exactly when status is missing",
-      });
-    }
-  })
-  .meta({ id: "RequirementCoverage" });
-export type RequirementCoverage = z.infer<typeof RequirementCoverageSchema>;
-
-/** Model output of `cv-tailor`: coverage assessed on the base CV, plus the tailored CV. No score. */
-export const CvTailoringOutputSchema = z
-  .strictObject({
-    schemaVersion: SchemaVersionSchema,
-    coverage: z.array(RequirementCoverageSchema).max(60),
-    cv: TailoredCvContentSchema,
-    ...InjectionFlags,
-  })
-  .superRefine((output, ctx) =>
-    addUniqueIdIssues(
-      output.coverage.map((item) => item.requirementId),
-      ctx,
-      ["coverage"],
-    ),
-  )
-  .meta({ id: "CvTailoringOutput" });
-export type CvTailoringOutput = z.infer<typeof CvTailoringOutputSchema>;
-
-export const HumanizerChangeSchema = z
-  .strictObject({
-    ruleId: ShortText,
-    before: LongText,
-    after: LongText,
-  })
-  .meta({ id: "HumanizerChange" });
-export type HumanizerChange = z.infer<typeof HumanizerChangeSchema>;
-
-/** Model output of `cv-humanize`: same structure and provenance, wording only. */
-export const CvHumanizationOutputSchema = z
-  .strictObject({
-    schemaVersion: SchemaVersionSchema,
-    cv: TailoredCvContentSchema,
-    changes: z.array(HumanizerChangeSchema).max(200),
-    factsChanged: z.boolean().describe("Must be false; true rejects the pass."),
-    ...InjectionFlags,
-  })
-  .superRefine((output, ctx) => {
-    if (output.factsChanged) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["factsChanged"],
-        message: "Humanization must not change facts",
-      });
-    }
-  })
-  .meta({ id: "CvHumanizationOutput" });
-export type CvHumanizationOutput = z.infer<typeof CvHumanizationOutputSchema>;
 
 export const MatchedRequirementSchema = z
   .strictObject({
@@ -486,55 +516,74 @@ export const MatchedRequirementSchema = z
     text: z.string().min(1).max(500),
     kind: JobRequirementKindSchema,
     category: JobRequirementCategorySchema,
-    status: RequirementCoverageStatusSchema,
-    evidence: z.array(CoverageEvidenceSchema).max(5),
+    status: RequirementStatusSchema,
+    cvEvidence: z.array(CvEvidenceSchema).max(5),
+    rationale: Note,
+    /** True when the model claimed met/partial but no quote matched the base CV (status forced to missing). */
+    evidenceRejected: z.boolean(),
   })
   .meta({ id: "MatchedRequirement" });
 export type MatchedRequirement = z.infer<typeof MatchedRequirementSchema>;
 
-export const AddedContentSectionSchema = z
-  .enum(["headline", "summary", "experience", "skills"])
-  .meta({ id: "AddedContentSection" });
-export type AddedContentSection = z.infer<typeof AddedContentSectionSchema>;
+export const AddedSegmentSectionSchema = z
+  .enum([
+    "summary",
+    "experience-bullets",
+    "experience-skills",
+    "skills-technical",
+    "skills-behavioral",
+  ])
+  .meta({ id: "AddedSegmentSection" });
+export type AddedSegmentSection = z.infer<typeof AddedSegmentSectionSchema>;
 
-export const AddedContentSchema = z
+export const AddedSegmentSchema = z
   .strictObject({
-    section: AddedContentSectionSchema,
-    /** Base experience the bullet was added to; null outside `experience`. */
-    baseId: CareerItemIdSchema.nullable(),
+    segmentId: CareerItemIdSchema,
+    section: AddedSegmentSectionSchema,
+    /** Base experience the segment belongs to; null outside experiences. */
+    cvExperienceId: CareerItemIdSchema.nullable(),
     text: LongText,
-    /** Job requirements that motivated the addition. */
-    requirementIds: z.array(CareerItemIdSchema).min(1).max(5),
+    targetRequirementIds: z.array(CareerItemIdSchema).min(1).max(10),
+    additionNote: Note,
   })
-  .meta({ id: "AddedContent" });
-export type AddedContent = z.infer<typeof AddedContentSchema>;
+  .meta({ id: "AddedSegment" });
+export type AddedSegment = z.infer<typeof AddedSegmentSchema>;
 
 export const HumanizerCheckSchema = z
   .strictObject({
+    rulesVersion: ShortText.describe("cv-banned-phrases@<version>"),
     passed: z.boolean(),
     /** Regenerations performed (spec §5: at most 2). */
     regenerations: z.int().min(0).max(2),
-    /** Rule ids of the deterministic checker still failing when delivered. */
-    failedRuleIds: z.array(ShortText).max(50),
-    rulesVersion: ShortText,
+    /** Rule ids still failing when delivered (spec §9: delivered and flagged). */
+    failedRuleIds: z.array(ShortText).max(100),
+    /** Segments whose humanized text was discarded by the preservation check. */
+    revertedSegmentIds: z.array(CareerItemIdSchema).max(500),
   })
   .meta({ id: "HumanizerCheck" });
 export type HumanizerCheck = z.infer<typeof HumanizerCheckSchema>;
 
+export const MatchReportWarningSchema = z
+  .enum(["injection_suspected", "language_fallback", "job_echo"])
+  .meta({ id: "MatchReportWarning" });
+export type MatchReportWarning = z.infer<typeof MatchReportWarningSchema>;
+
 /**
  * Match report. Persisted in `tailored_cvs.match_report`. `baseScore` (0–100) is computed by the engine
- * (`scoringVersion`) from `requirements` — coverage of the base CV before anything is added. `added` lists
- * everything the tailored CV contains that is not in the base CV, so Rodrigo can prepare (spec §5.6).
+ * (`scoringVersion`) from `requirements` — the BASE CV before anything is added; additions never raise it.
+ * `added` lists every added segment so Rodrigo can prepare (spec §5.6).
  */
 export const MatchReportSchema = z
   .strictObject({
     schemaVersion: SchemaVersionSchema,
     scoringVersion: ShortText,
     baseScore: z.int().min(0).max(100),
+    jobLanguage: LanguageTagSchema,
+    cvLanguage: CareerLanguageSchema,
     requirements: z.array(MatchedRequirementSchema).max(60),
-    added: z.array(AddedContentSchema).max(200),
+    added: z.array(AddedSegmentSchema).max(200),
     humanizer: HumanizerCheckSchema,
-    injectionSuspected: z.boolean(),
+    warnings: z.array(MatchReportWarningSchema).max(10),
   })
   .meta({ id: "MatchReport" });
 export type MatchReport = z.infer<typeof MatchReportSchema>;
