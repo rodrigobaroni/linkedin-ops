@@ -41,8 +41,13 @@ export interface AnthropicClientOptions {
   onEvent?: (event: LlmCallEvent) => void;
 }
 
+const PROMPT_SCHEMA_PREFIX =
+  "Answer with one JSON object only, no prose and no code fence, valid against this JSON Schema:";
+
 export class AnthropicLlmClient implements LlmClient {
   private readonly client: Anthropic;
+  /** Schemas the API refused for constrained decoding (too large); they go prompt-only from then on. */
+  private readonly promptOnlySchemas = new Set<string>();
   private readonly now: () => number;
   private readonly onEvent: (event: LlmCallEvent) => void;
 
@@ -82,22 +87,21 @@ export class AnthropicLlmClient implements LlmClient {
     if (external?.aborted) controller.abort();
     else external?.addEventListener("abort", onAbort);
     let message: Anthropic.Message;
+    const schemaKey = request.outputSchema.name;
     try {
-      const format = jsonSchemaOutputFormat(
-        request.outputSchema.schema as Parameters<typeof jsonSchemaOutputFormat>[0],
-      );
-      message = await this.client.messages
-        .stream(
-          {
-            model: request.model,
-            max_tokens: request.maxOutputTokens * THINKING_HEADROOM_FACTOR,
-            system: request.instructions,
-            messages: [{ role: "user", content: request.input }],
-            output_config: { format: { type: "json_schema", schema: format.schema } },
-          },
-          { signal: controller.signal },
-        )
-        .finalMessage();
+      if (!this.promptOnlySchemas.has(schemaKey)) {
+        try {
+          message = await this.send(request, controller.signal, "structured");
+        } catch (error) {
+          if (!isGrammarTooLarge(error)) throw error;
+          // Constrained decoding has a size limit; large schemas (the CV) fall back to prompt-only JSON from
+          // now on. The engine still validates the output with its own schemas and D4 guards.
+          this.promptOnlySchemas.add(schemaKey);
+          message = await this.send(request, controller.signal, "prompt");
+        }
+      } else {
+        message = await this.send(request, controller.signal, "prompt");
+      }
     } finally {
       external?.removeEventListener("abort", onAbort);
     }
@@ -108,18 +112,44 @@ export class AnthropicLlmClient implements LlmClient {
       .filter((block): block is Anthropic.TextBlock => block.type === "text")
       .map((block) => block.text)
       .join("");
-    if (text === "") throw new LlmError("INVALID_OUTPUT", { status: 200 });
-    let output: unknown;
-    try {
-      output = JSON.parse(text);
-    } catch {
-      throw new LlmError("INVALID_OUTPUT", { status: 200 });
-    }
+    const output = parseJsonText(text);
     return {
       output,
       model: message.model,
       usage: { inputTokens: message.usage.input_tokens, outputTokens: message.usage.output_tokens },
     };
+  }
+
+  private send(
+    request: LlmRequest,
+    signal: AbortSignal,
+    mode: "structured" | "prompt",
+  ): Promise<Anthropic.Message> {
+    const base = {
+      model: request.model,
+      max_tokens: request.maxOutputTokens * THINKING_HEADROOM_FACTOR,
+      messages: [{ role: "user" as const, content: request.input }],
+    };
+    const params: Anthropic.MessageCreateParamsNonStreaming =
+      mode === "structured"
+        ? {
+            ...base,
+            system: request.instructions,
+            output_config: {
+              format: {
+                type: "json_schema",
+                schema: jsonSchemaOutputFormat(
+                  request.outputSchema.schema as Parameters<typeof jsonSchemaOutputFormat>[0],
+                ).schema,
+              },
+            },
+          }
+        : {
+            ...base,
+            // Provider dialect only: the repository instructions are unchanged; the schema follows them.
+            system: `${request.instructions}\n\n${PROMPT_SCHEMA_PREFIX}\n${JSON.stringify(request.outputSchema.schema)}`,
+          };
+    return this.client.messages.stream(params, { signal }).finalMessage();
   }
 
   private emit(
@@ -138,6 +168,31 @@ export class AnthropicLlmClient implements LlmClient {
       ...detail,
     });
   }
+}
+
+/** The whole text as JSON; a single surrounding code fence is tolerated (prompt-only mode). */
+function parseJsonText(text: string): unknown {
+  const trimmed = text.trim();
+  const unfenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/.exec(trimmed)?.[1] ?? trimmed;
+  if (unfenced === "") throw new LlmError("INVALID_OUTPUT", { status: 200 });
+  try {
+    return JSON.parse(unfenced);
+  } catch {
+    throw new LlmError("INVALID_OUTPUT", { status: 200 });
+  }
+}
+
+/**
+ * A 400 refusing the schema for constrained decoding. The API exposes no specific error type for it, so the
+ * message is the only signal; it is read here and never logged or kept.
+ */
+function isGrammarTooLarge(error: unknown): boolean {
+  if (!(error instanceof Anthropic.BadRequestError)) return false;
+  const message = (error.error as { error?: { message?: unknown } } | undefined)?.error?.message;
+  return (
+    typeof message === "string" &&
+    /grammar is too large|schema is too (large|complex)/i.test(message)
+  );
 }
 
 /** SDK errors become `LlmError` by class and status only; messages and bodies are never kept (they may echo input). */

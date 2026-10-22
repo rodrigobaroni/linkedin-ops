@@ -23,6 +23,10 @@ knows the provider.
      same separation the OpenAI adapter keeps between `instructions` and `input`);
    - Structured Outputs via `output_config.format` (`json_schema`), built with the SDK's `jsonSchemaOutputFormat`
      so unsupported constraints (`maxLength`, `minimum`, …) move to descriptions; the engine still validates them;
+   - when the API refuses a schema as too large for constrained decoding ("compiled grammar is too large" — the
+     CV extraction schema hits this), the adapter retries that call without `output_config`, appending the JSON
+     Schema to the system prompt after the unchanged repository instructions, and remembers the schema as
+     prompt-only; a single surrounding code fence is tolerated when parsing;
    - streaming (`messages.stream().finalMessage()`) so long outputs with thinking never hit HTTP timeouts;
      `max_tokens` = 2 × the engine's output budget, because thinking counts towards it;
    - one SDK retry on transient errors; `stop_reason: refusal` → `REFUSAL`, `max_tokens` → `INCOMPLETE`,

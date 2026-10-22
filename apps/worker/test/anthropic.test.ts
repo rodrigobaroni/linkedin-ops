@@ -178,6 +178,34 @@ describe("AnthropicLlmClient (ADR-0011)", () => {
     expect(JSON.stringify(events)).not.toMatch(/CANARY|sk-ant/);
   });
 
+  it("a schema too large for constrained decoding falls back to prompt-only JSON, once per schema", async () => {
+    let call = 0;
+    const tooLarge = () =>
+      new Response(
+        JSON.stringify({
+          type: "error",
+          error: { type: "invalid_request_error", message: "The compiled grammar is too large" },
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      );
+    const { fetch, captured } = fakeFetch(() =>
+      call++ === 0 ? tooLarge() : streamResponse('```json\n{"ok":true}\n```'),
+    );
+    const llm = client(fetch);
+    expect((await llm.complete(request)).output).toEqual({ ok: true });
+    expect((await llm.complete(request)).output).toEqual({ ok: true });
+
+    expect(captured).toHaveLength(3);
+    expect(captured[0]!.body.output_config).toBeDefined();
+    // Prompt-only: no output_config, the schema follows the unchanged instructions in the system prompt.
+    for (const sent of captured.slice(1)) {
+      expect(sent.body.output_config).toBeUndefined();
+      expect(String(sent.body.system)).toMatch(
+        /^SYSTEM TEXT\n\n.*JSON Schema:\n\{"type":"object"/s,
+      );
+    }
+  });
+
   it("an already-aborted signal makes no request", async () => {
     const { fetch, captured } = fakeFetch(() => streamResponse('{"ok":true}'));
     const controller = new AbortController();
