@@ -268,13 +268,18 @@ export function createCareerHandlers(deps: CareerHandlerDeps): CareerHandlers {
       const target = resolveTargetLanguage(input.job.language);
       const tailored = await runLlmStepWithRegenerations(
         deps.llm,
-        () => buildCvTailorRequest({ base: input.base, job: input.job, target }, options),
+        // Each regeneration is told what the last invalid attempt got wrong (issue #99).
+        (previous, attempt) =>
+          buildCvTailorRequest(
+            { base: input.base, job: input.job, target, previous, attempt },
+            options,
+          ),
         (raw) => parseCvTailorResponse(raw, { base: input.base, job: input.job, target }),
         context.signal,
         CV_TAILOR_MAX_REGENERATIONS,
-        (attempt, reason) =>
+        (attempt, reason, issues) =>
           context.logger.warn(
-            { tailorAttempt: attempt, errorClass: reason },
+            { tailorAttempt: attempt, errorClass: reason, issues },
             "tailor output invalid",
           ),
       );

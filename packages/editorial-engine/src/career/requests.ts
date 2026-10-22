@@ -22,6 +22,7 @@ import {
   sanitizeDeep,
   sanitizeUntrustedText,
 } from "../untrusted.js";
+import type { TailorIssue } from "./feedback.js";
 import type { TargetLanguage } from "./language.js";
 import { CV_LINT_RULES_VERSION, type LintFinding } from "./lint/checker.js";
 import { listSegments } from "./segments.js";
@@ -49,6 +50,38 @@ export interface BuiltRequest {
   /** The data was cut to the limit (recorded, never silent). */
   truncated: boolean;
   preflightInjectionFlags: string[];
+  /** A regeneration with feedback: the attempt whose issues the request carries (metadata, no content). */
+  regenerationOf?: number;
+}
+
+/** At most this many issues of the previous attempt go back to the model (issue #99, Pena §4.3). */
+export const TAILOR_FEEDBACK_MAX_ISSUES = 20;
+/** Longest excerpt of the model's own output fed back. */
+export const TAILOR_FEEDBACK_EXCERPT_MAX_CHARS = 80;
+
+/**
+ * The `previous_attempt_issues` payload: sorted by `where`, excerpts sanitized and cut, at most
+ * `TAILOR_FEEDBACK_MAX_ISSUES` issues and then one `more` that counts the rest.
+ */
+function feedbackPayload(previous: readonly TailorIssue[]): TailorIssue[] {
+  const sorted = [...previous].sort((a, b) =>
+    a.where < b.where ? -1 : a.where > b.where ? 1 : a.code < b.code ? -1 : a.code > b.code ? 1 : 0,
+  );
+  const kept: TailorIssue[] = sorted.slice(0, TAILOR_FEEDBACK_MAX_ISSUES).map((issue) => {
+    const excerpt =
+      issue.excerpt === undefined
+        ? ""
+        : sanitizeUntrustedText(issue.excerpt, TAILOR_FEEDBACK_EXCERPT_MAX_CHARS).text.trim();
+    return excerpt === ""
+      ? { code: issue.code, where: issue.where }
+      : { code: issue.code, where: issue.where, excerpt };
+  });
+  const rest = sorted.slice(TAILOR_FEEDBACK_MAX_ISSUES);
+  const first = rest[0];
+  if (first !== undefined) {
+    kept.push({ code: first.code, where: "more", excerpt: `${rest.length} more` });
+  }
+  return kept;
 }
 
 function request(
@@ -111,23 +144,40 @@ export function buildJobExtractRequest(
   };
 }
 
+/**
+ * `previous` = the issues of the last rejected attempt, `attempt` = this attempt's number (issue #99, Pena §4):
+ * they go in a `previous_attempt_issues` data block after the posting, with the same nonce, never in the
+ * instructions. Their excerpts come from the model's own output and may echo the untrusted CV or posting: they are
+ * sanitized, cut and scanned for injection like any other data. Without issues the request is the first attempt's.
+ */
 export function buildCvTailorRequest(
-  input: { base: CvStructured; job: JobPostingExtracted; target: TargetLanguage },
+  input: {
+    base: CvStructured;
+    job: JobPostingExtracted;
+    target: TargetLanguage;
+    previous?: readonly TailorIssue[] | undefined;
+    attempt?: number | undefined;
+  },
   options: RequestOptions,
 ): BuiltRequest {
   const base = sanitizeDeep(input.base, FIELD_MAX_CHARS);
   const job = sanitizeDeep(input.job, FIELD_MAX_CHARS);
   const nonce = newNonce(options.rng);
-  const flags = detectInjectionPatterns(`${JSON.stringify(base)}\n${JSON.stringify(job)}`);
+  const feedback = input.previous?.length ? JSON.stringify(feedbackPayload(input.previous)) : null;
+  const flags = detectInjectionPatterns(
+    `${JSON.stringify(base)}\n${JSON.stringify(job)}${feedback === null ? "" : `\n${feedback}`}`,
+  );
   const body = [
     metadata({ targetLanguage: input.target.language, rulesVersion: "cv-humanizer-rules@1.0.0" }),
     dataBlock("cv_base_json", JSON.stringify(base), nonce),
     dataBlock("job_extracted_json", JSON.stringify(job), nonce),
+    ...(feedback === null ? [] : [dataBlock("previous_attempt_issues", feedback, nonce)]),
   ].join("\n\n");
   return {
     request: request(CV_TAILOR_V1_1_0, "cvTailoring", options.model, body),
     truncated: false,
     preflightInjectionFlags: flags,
+    ...(feedback === null ? {} : { regenerationOf: Math.max(1, (input.attempt ?? 2) - 1) }),
   };
 }
 
