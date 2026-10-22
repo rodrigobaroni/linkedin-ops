@@ -25,3 +25,7 @@ e2a60b62ff8465f2f551d6916a0cd077891d1d6b:packages/domain/src/env/runtime.ts:link
 # to prove the adapter never logs it. It is now assembled at run time, so the working tree no longer matches
 # (PR #89).
 d39953eaa201b97f5f918eb7eea565e0b63ce386:apps/worker/test/openai.test.ts:generic-api-key:7
+# Runtime env return, line 568 of commit 7485bd8 only: a shorthand object where the LinkedIn job-fetch field was
+# followed by the retention field and matched linkedin-client-id (identifiers only, no value; T-063, PR #119). The fields were reordered so the working
+# tree no longer matches; this suppresses the historical commit alone.
+7485bd885b707239a1a0e90f7a4b334e4c861b57:packages/domain/src/env/runtime.ts:linkedin-client-id:568

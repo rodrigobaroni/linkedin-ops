@@ -22,6 +22,9 @@ export type LinkedInPkceMode = (typeof LINKEDIN_PKCE_MODES)[number];
 /** ADR-0008 §4 kill switch for anonymous LinkedIn job-page fetching. Default `enabled` (decision D2). */
 export const JOB_FETCH_LINKEDIN_MODES = ["enabled", "disabled"] as const;
 export type JobFetchLinkedInMode = (typeof JOB_FETCH_LINKEDIN_MODES)[number];
+/** T-063: `dry-run` (default) only counts what the daily purge would delete; `enabled` deletes. */
+export const RETENTION_PURGE_MODES = ["dry-run", "enabled"] as const;
+export type RetentionPurgeMode = (typeof RETENTION_PURGE_MODES)[number];
 
 export const OPENAI_API_KEY_MIN_LENGTH = 20;
 const OPENAI_MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/;
@@ -105,6 +108,8 @@ export interface WorkerRuntimeEnv {
   openai: OpenAiConfig | null;
   /** ADR-0008 kill switch: `disabled` sends LinkedIn job URLs straight to paste-text. */
   jobFetchLinkedIn: JobFetchLinkedInMode;
+  /** T-063 daily purge: `dry-run` unless explicitly `enabled` (deleting is irreversible). */
+  retentionPurge: RetentionPurgeMode;
 }
 
 export class RuntimeEnvError extends Error {
@@ -555,7 +560,10 @@ export function validateWorkerEnv(env: EnvironmentLike): WorkerRuntimeEnv {
   const databaseUrl = parseDatabaseUrl(read(env, "DATABASE_URL"), nodeEnv, issues);
   const openai = parseOpenAi(env, nodeEnv, issues);
   const jobFetchLinkedIn = parseJobFetchLinkedIn(env, issues);
+  const retentionPurge =
+    parseEnum("RETENTION_PURGE", read(env, "RETENTION_PURGE"), RETENTION_PURGE_MODES, issues) ??
+    "dry-run";
 
   if (issues.length > 0 || databaseUrl === null) throw new RuntimeEnvError(issues);
-  return { nodeEnv, logLevel, databaseUrl, openai, jobFetchLinkedIn };
+  return { nodeEnv, logLevel, databaseUrl, openai, retentionPurge, jobFetchLinkedIn };
 }

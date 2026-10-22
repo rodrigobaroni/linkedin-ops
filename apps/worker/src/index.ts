@@ -8,6 +8,7 @@ import {
   PrismaCvBases,
   PrismaFetchDomainGuard,
   PrismaJobPostingStore,
+  PrismaRetentionPurge,
   RuntimeEnvError,
   validateWorkerEnv,
   type WorkerRuntimeEnv,
@@ -19,6 +20,7 @@ import { wireCareer } from "./career/wiring.js";
 import { createLogger } from "./logger.js";
 import { PGBOSS_SCHEMA_NAME } from "./jobs/queues.js";
 import { startWorkerLifecycle } from "./lifecycle.js";
+import { createRetentionPurgeHandler } from "./maintenance/retention.js";
 
 async function main(): Promise<void> {
   let env: WorkerRuntimeEnv;
@@ -59,8 +61,25 @@ async function main(): Promise<void> {
   const jobStore = new PrismaJobPostingStore(prisma, pgBossCvTailorEnqueue(boss));
   const career = wireCareer(env, logger, { cvStore, jobStore, fetcher });
 
-  await startWorkerLifecycle({ boss, logger, career, onStopped: () => prisma.$disconnect() });
-  logger.info({ nodeEnv: env.nodeEnv, openai: env.openai !== null }, "worker started");
+  // T-063: daily purge of the periods fixed in ADRs, specs and code; dry-run unless RETENTION_PURGE=enabled.
+  const maintenance = {
+    "retention.purge": createRetentionPurgeHandler({
+      purge: new PrismaRetentionPurge(prisma),
+      mode: env.retentionPurge,
+    }),
+  };
+
+  await startWorkerLifecycle({
+    boss,
+    logger,
+    career,
+    maintenance,
+    onStopped: () => prisma.$disconnect(),
+  });
+  logger.info(
+    { nodeEnv: env.nodeEnv, openai: env.openai !== null, retentionPurge: env.retentionPurge },
+    "worker started",
+  );
 }
 
 await main();

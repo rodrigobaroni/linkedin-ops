@@ -33,6 +33,7 @@ export const jobPayloads: Record<QueueName, Record<string, unknown>> = {
   "cv.extract": { ...envelope, cvBaseId: ids.cvBase },
   "job.fetch": { ...envelope, jobPostingId: ids.jobPosting, attempt: 1 },
   "cv.tailor": { ...envelope, jobPostingId: ids.jobPosting, attempt: 2 },
+  "retention.purge": { ...envelope, requestedBy: { type: "SYSTEM", id: "cron" } },
 };
 
 const specificInvalid: Partial<Record<QueueName, Record<string, (v: unknown) => unknown>>> = {
@@ -67,6 +68,8 @@ const specificInvalid: Partial<Record<QueueName, Record<string, (v: unknown) => 
     "missing attempt": drop("attempt"),
     "attempt 0": set("attempt", 0),
   },
+  // Ids only: a purge never takes a user or a row from its payload.
+  "retention.purge": { "userId in payload": set("userId", ids.user) },
 };
 
 export const jobCases: SchemaCase[] = (Object.keys(QUEUES) as QueueName[]).map((name) => ({

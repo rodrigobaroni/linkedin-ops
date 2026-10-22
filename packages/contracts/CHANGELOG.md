@@ -7,6 +7,9 @@ versioning: internal SemVer (see `README.md`).
 
 ### Added
 
+- Queue `retention.purge` (T-063): envelope-only payload (`RetentionPurgePayload`), retry 1 with backoff, no
+  singleton key, dead-letter queue. Scheduled daily by the worker; purges only the periods fixed in ADRs, specs and
+  code (contracts.md §6.1).
 - `JobPostingDetail.blockedDetail` (optional, nullable; issue #112): `{ kind: JobPostingBlockedKind, retryAt: ISO | null }`
   on a posting `FAILED` with `FETCH_BLOCKED`: `DISABLED` (the LinkedIn fetch is switched off; `retryAt` null),
   `QUOTA` (the domain's daily quota; when it frees up) or `BREAKER` (a stop signal opened the domain's breaker; when it

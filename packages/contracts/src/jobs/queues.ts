@@ -22,6 +22,7 @@ export const QueueNameSchema = z.enum([
   "cv.extract",
   "job.fetch",
   "cv.tailor",
+  "retention.purge",
 ]);
 export const QueueName = QueueNameSchema.enum;
 export type QueueName = z.infer<typeof QueueNameSchema>;
@@ -134,6 +135,13 @@ export const CvTailorPayloadSchema = v1.extend({
   attempt: PostingAttemptSchema,
 });
 export type CvTailorPayload = z.infer<typeof CvTailorPayloadSchema>;
+
+/**
+ * Daily retention purge (T-063): no fields besides the envelope. A purge never takes a user or a row from its
+ * payload; it applies the periods fixed in ADRs, specs and code to every row.
+ */
+export const RetentionPurgePayloadSchema = v1;
+export type RetentionPurgePayload = z.infer<typeof RetentionPurgePayloadSchema>;
 
 const deadLetterOf = (name: QueueName) => `${name}.dlq`;
 
@@ -303,6 +311,18 @@ export const QUEUES = {
     expireInSeconds: 900,
     singletonKeyFrom: (p) => p.jobPostingId,
     deadLetter: deadLetterOf("cv.tailor"),
+  }),
+  // T-063: once a day; idempotent, so a retry or a missed run only purges later.
+  "retention.purge": defineQueue({
+    name: "retention.purge",
+    schemaVersion: 1,
+    payload: RetentionPurgePayloadSchema,
+    retryLimit: 1,
+    retryBackoff: true,
+    retryDelaySeconds: 300,
+    expireInSeconds: 900,
+    singletonKeyFrom: null,
+    deadLetter: deadLetterOf("retention.purge"),
   }),
 } as const satisfies Record<QueueName, QueueDefinition<JobEnvelope>>;
 

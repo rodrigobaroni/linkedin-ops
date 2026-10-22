@@ -12,6 +12,8 @@ export const WORK_OPTIONS = {
   "cv.extract": { localConcurrency: 3 },
   "job.fetch": { localConcurrency: 3, groupConcurrency: 1 },
   "cv.tailor": { localConcurrency: 3 },
+  // T-063: one purge at a time.
+  "retention.purge": { localConcurrency: 1 },
 } as const satisfies Partial<Record<QueueName, WorkOptions>>;
 
 export type WorkerQueueName = keyof typeof WORK_OPTIONS;

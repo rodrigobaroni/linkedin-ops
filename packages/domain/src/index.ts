@@ -30,10 +30,12 @@ export {
   ENCRYPTION_KEY_BYTES,
   PLACEHOLDER_PATTERN,
   JOB_FETCH_LINKEDIN_MODES,
+  RETENTION_PURGE_MODES,
   OPENAI_API_KEY_MIN_LENGTH,
   type RuntimeEnv,
   type OpenAiConfig,
   type JobFetchLinkedInMode,
+  type RetentionPurgeMode,
   type WorkerRuntimeEnv,
   type RuntimeEnvironment,
   type LogLevel,
@@ -180,3 +182,4 @@ export {
   type FetchDomainState,
 } from "./career/fetch-domain.js";
 export { PrismaFetchDomainGuard } from "./career/prisma-fetch-domain-guard.js";
+export { PrismaRetentionPurge, type RetentionPurgeResult } from "./retention/purge.js";

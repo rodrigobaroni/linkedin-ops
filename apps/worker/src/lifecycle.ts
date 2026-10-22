@@ -9,14 +9,14 @@ import type { PgBoss } from "pg-boss";
 import type { Logger } from "pino";
 import type { WiredCareerHandlers } from "./career/handlers.js";
 import { startHeartbeat, type Heartbeat } from "./health/heartbeat.js";
-import { registerWorkers } from "./worker.js";
+import { registerWorkers, type MaintenanceHandlers } from "./worker.js";
 
 export const STOP_TIMEOUT_MS = 30_000;
 export const STOP_SIGNALS = ["SIGTERM", "SIGINT"] as const;
 
 type Boss = Pick<
   PgBoss,
-  "start" | "stop" | "getQueue" | "createQueue" | "updateQueue" | "work" | "send"
+  "start" | "stop" | "getQueue" | "createQueue" | "updateQueue" | "work" | "send" | "schedule"
 >;
 
 export interface SignalSource {
@@ -28,6 +28,8 @@ export interface WorkerLifecycleOptions {
   boss: Boss;
   logger: Logger;
   career: WiredCareerHandlers | null;
+  /** T-063 maintenance (`retention.purge`), scheduled when wired. */
+  maintenance?: MaintenanceHandlers;
   /** Defaults to `process`. */
   signals?: SignalSource;
   /** Injected for tests; defaults to the heartbeat file writer. */
@@ -51,7 +53,13 @@ export async function startWorkerLifecycle(
 
   const shutdown = new AbortController();
   await boss.start();
-  await registerWorkers({ boss, logger, career: options.career, shutdown: shutdown.signal });
+  await registerWorkers({
+    boss,
+    logger,
+    career: options.career,
+    ...(options.maintenance === undefined ? {} : { maintenance: options.maintenance }),
+    shutdown: shutdown.signal,
+  });
   const probe = () => boss.getQueue("cv.tailor");
   const heartbeat =
     options.heartbeat?.(probe) ??
