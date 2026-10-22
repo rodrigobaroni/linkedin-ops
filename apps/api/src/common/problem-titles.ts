@@ -34,6 +34,7 @@ export const PROBLEM_TITLES: Readonly<Record<ErrorCode, string>> = {
   JOB_POSTING_URL_REJECTED: "Link de vaga não aceito",
   TAILORED_CV_NOT_READY: "O CV adaptado ainda não está pronto",
   TAILORED_CV_STALE: "O CV adaptado precisa ser refeito",
+  TAILORED_CV_TOO_LARGE: "O CV adaptado é longo demais para virar PDF",
   RATE_LIMITED: "Muitas requisições; tente novamente em instantes",
   PAYLOAD_TOO_LARGE: "Corpo da requisição grande demais",
   UNSUPPORTED_MEDIA_TYPE: "Tipo de conteúdo não suportado",

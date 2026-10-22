@@ -31,7 +31,11 @@ import type { AuthenticatedSession } from "../session/session.service.js";
 import { CAREER_RATE_LIMITS, type CareerRateLimits } from "./cv-base.service.js";
 import { JOB_POSTING_QUEUE, type JobPostingQueue } from "./career.queue.js";
 import { cvPdfFileName } from "./pdf/cv-pdf-file-name.js";
-import { TailoredCvRenderError, renderTailoredCvPdf } from "./pdf/tailored-cv.pdf.js";
+import {
+  TailoredCvRenderError,
+  TailoredCvTooLargeError,
+  renderTailoredCvPdf,
+} from "./pdf/tailored-cv.pdf.js";
 
 export const JOB_POSTINGS = Symbol("JOB_POSTINGS");
 
@@ -128,15 +132,17 @@ export class JobPostingService {
    * Renders the tailored CV on demand (spec §5 item 7) from the CV base version it was tailored from
    * (`tailored_cvs.cv_base_id`, never the active one). Only `READY` postings; another owner's posting is a
    * `404`. Nothing of the CV reaches logs, audit or Problem Details: a stale reference audits its id only.
+   * The rate limit counts renders only: it is consumed once ownership and status checked out, so probing
+   * other ids (cheap, always `404`) never spends the owner's quota.
    */
   async pdf(
     session: AuthenticatedSession,
     id: string,
     correlationId: string,
   ): Promise<TailoredCvPdf> {
-    this.#pdfLimiter.consume(session.userId, "Muitos downloads de PDF; tente de novo mais tarde");
     try {
       const source = await this.postings.tailoredCvSource(session.userId, id);
+      this.#pdfLimiter.consume(session.userId, "Muitos downloads de PDF; tente de novo mais tarde");
       const body = await renderTailoredCvPdf({ content: source.content, base: source.base });
       return {
         fileName: cvPdfFileName({
@@ -155,6 +161,11 @@ export class JobPostingService {
           userMeta(session, correlationId),
         );
         throw new ProblemError("TAILORED_CV_STALE", { detail: STALE });
+      }
+      if (error instanceof TailoredCvTooLargeError) {
+        throw new ProblemError("TAILORED_CV_TOO_LARGE", {
+          detail: `O CV adaptado passa de ${error.limit.toLocaleString("pt-BR")} caracteres; reprocesse a vaga`,
+        });
       }
       if (error instanceof TailoredCvNotReadyError) {
         throw new ProblemError("TAILORED_CV_NOT_READY", {

@@ -7,9 +7,29 @@ import {
   fictitiousTailoredCv,
   longTailoredCv,
 } from "../../../test/fixtures/tailored-cv.js";
-import { TailoredCvRenderError, printable, renderTailoredCvPdf } from "./tailored-cv.pdf.js";
+import { performance } from "node:perf_hooks";
+import type { CvSegment } from "@linkedin-ops/contracts";
+import {
+  MAX_RENDERED_CHARS,
+  TailoredCvRenderError,
+  TailoredCvTooLargeError,
+  breakLongTokens,
+  printable,
+  renderTailoredCvPdf,
+} from "./tailored-cv.pdf.js";
 
 const KB = 1024;
+
+function segmentOf(index: number, text: string): CvSegment {
+  return {
+    segmentId: `seg-${100 + index}`,
+    text,
+    provenance: "original",
+    sourceCvItemIds: ["summary"],
+    targetRequirementIds: [],
+    additionNote: null,
+  };
+}
 
 function sample() {
   return { base: fictitiousBaseCv(), content: fictitiousTailoredCv() };
@@ -162,6 +182,47 @@ describe("renderTailoredCvPdf", () => {
     expect(text).not.toContain("\u0007");
   });
 
+  it("lays out the worst case (unbreakable runs up to the cap) in linear time", async () => {
+    // "W" is the widest glyph: the most line breaks per run. Before `breakLongTokens`, 20 000 characters
+    // of it took ~1 s here and ~6 s on the QA machine (quadratic); now the whole cap takes tens of ms.
+    const input = sample();
+    const runs = Math.floor((MAX_RENDERED_CHARS - 4_000) / 2_000);
+    input.content.summary.segments = Array.from({ length: runs }, (_, i) =>
+      segmentOf(i, "W".repeat(2_000)),
+    );
+    input.content.experiences[0]!.bullets.segments = [segmentOf(99, "W".repeat(1_500))];
+
+    const started = performance.now();
+    const pdf = await renderTailoredCvPdf(input);
+    // ~45 ms here with the fix, ~1.3 s without it: the bound catches the regression with CI headroom.
+    expect(performance.now() - started).toBeLessThan(500);
+    const { text } = await textOf(pdf);
+    expect(text.replace(/[\s\u200B]/g, "")).toContain("W".repeat(1_500));
+  });
+
+  it("refuses a tailored CV above the printed-character cap before laying it out", async () => {
+    const input = sample();
+    input.content.experiences[0]!.bullets.segments = Array.from({ length: 16 }, (_, i) =>
+      segmentOf(i, "Texto ".repeat(333)),
+    );
+
+    const started = performance.now();
+    const error = await renderTailoredCvPdf(input).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(TailoredCvTooLargeError);
+    expect((error as Error).message).not.toContain("Texto");
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
+  it("keeps a long URL whole in the extracted text once the zero-width spaces are removed", async () => {
+    const url = `https://example.test/${"segmento-".repeat(3)}${"a".repeat(120)}`;
+    const input = sample();
+    input.base.contact.links = [url];
+
+    const { text } = await textOf(await renderTailoredCvPdf(input));
+    // Lines break at the zero-width spaces; the extractor turns each line end into whitespace.
+    expect(text.replace(/[\s\u200B]/g, "")).toContain(url);
+  });
+
   it("rejects a tailored CV citing a missing base item, naming only the id", async () => {
     const input = sample();
     input.content.educationIds = ["edu-404"];
@@ -170,6 +231,22 @@ describe("renderTailoredCvPdf", () => {
     expect(error).toBeInstanceOf(TailoredCvRenderError);
     expect((error as TailoredCvRenderError).missingItemId).toBe("edu-404");
     expect((error as Error).message).not.toContain("Ana");
+  });
+});
+
+describe("breakLongTokens", () => {
+  it("leaves words and runs up to 60 characters alone", () => {
+    const text = `uma frase normal ${"a".repeat(60)} fim`;
+    expect(breakLongTokens(text)).toBe(text);
+  });
+
+  it("puts a zero-width space every 40 code points of a longer run, keeping the spaces around it", () => {
+    expect(breakLongTokens(`x ${"ç".repeat(61)} y`)).toBe(
+      `x ${"ç".repeat(40)}\u200B${"ç".repeat(21)} y`,
+    );
+    const broken = breakLongTokens("W".repeat(2_000));
+    expect(broken.split("\u200B").every((part) => part.length === 40)).toBe(true);
+    expect(broken.replaceAll("\u200B", "")).toBe("W".repeat(2_000));
   });
 });
 

@@ -411,9 +411,39 @@ describe("GET /career/jobs/{id}/pdf", () => {
     );
   });
 
-  it("is rate limited per user with Retry-After", async () => {
+  it("refuses a tailored CV above the printed-character cap with 422, before laying it out", async () => {
     const actor = await newActor();
-    const id = await seedPosting(actor, await activateCv(actor.userId, fictitiousCvStructured()));
+    const cvBaseId = await activateCv(actor.userId, fictitiousCvStructured(CV_MARKER));
+    const long = (n: number) => ({
+      ...TAILORED.summary.segments[0]!,
+      segmentId: `seg-${10 + n}`,
+      // 1 941 characters each (LongText ≤ 2 000), 16 of them: above the 30 000 cap.
+      text: `${"Texto ".repeat(320)}${SEGMENT_MARKER}`,
+    });
+    const id = await seedPosting(actor, cvBaseId, {
+      tailored: {
+        ...TAILORED,
+        summary: { segments: Array.from({ length: 16 }, (_, n) => long(n)) },
+      },
+    });
+
+    const res = await download(actor, id).expect(422);
+    const problem = problemOf(res.body as Buffer);
+    expect(problem).toMatchObject({ code: "TAILORED_CV_TOO_LARGE" });
+    expect(problem.detail).toContain("reprocesse a vaga");
+    expect(JSON.stringify(problem)).not.toContain(SEGMENT_MARKER);
+  });
+
+  it("is rate limited per user with Retry-After, counting renders only", async () => {
+    const actor = await newActor();
+    const cvBaseId = await activateCv(actor.userId, fictitiousCvStructured());
+    const id = await seedPosting(actor, cvBaseId);
+    const analyzing = await seedPosting(actor, cvBaseId, { status: "ANALYZING" });
+    // Probing unknown ids or a posting not ready yet spends nothing.
+    for (let i = 0; i < PDF_LIMIT + 2; i += 1) {
+      await download(actor, newId()).expect(404);
+      await download(actor, analyzing).expect(409);
+    }
     for (let i = 0; i < PDF_LIMIT; i += 1) await download(actor, id).expect(200);
 
     const res = await download(actor, id).expect(429);
