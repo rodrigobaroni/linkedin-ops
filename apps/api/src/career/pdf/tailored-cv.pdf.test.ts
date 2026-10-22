@@ -182,9 +182,12 @@ describe("renderTailoredCvPdf", () => {
     expect(text).not.toContain("\u0007");
   });
 
-  it("lays out the worst case (unbreakable runs up to the cap) in linear time", async () => {
+  it("lays out the worst case (unbreakable runs up to the cap) without wrapping past 40 graphemes", async () => {
     // "W" is the widest glyph: the most line breaks per run. Before `breakLongTokens`, 20 000 characters
-    // of it took ~1 s here and ~6 s on the QA machine (quadratic); now the whole cap takes tens of ms.
+    // of it took ~1 s locally and ~6 s on the QA machine (quadratic). The structural check below is the
+    // guard (every run wraps at the 40-grapheme breaks); the time bound is only a smoke test, with a warm-up
+    // and room for slow CI runners (~50 ms locally, ~0.6 s on CI; without the breaks, seconds).
+    await renderTailoredCvPdf(sample());
     const input = sample();
     const runs = Math.floor((MAX_RENDERED_CHARS - 4_000) / 2_000);
     input.content.summary.segments = Array.from({ length: runs }, (_, i) =>
@@ -197,10 +200,11 @@ describe("renderTailoredCvPdf", () => {
 
     const started = performance.now();
     const pdf = await renderTailoredCvPdf(input);
-    // ~45 ms here with the fix, ~1.3 s without it: the bound catches the regression with CI headroom.
-    expect(performance.now() - started).toBeLessThan(500);
+    expect(performance.now() - started).toBeLessThan(2_000);
     const { text } = await textOf(pdf);
-    expect(text.replace(/[\s\u200B]/g, "")).toContain("W".repeat(500));
+    const pieces = text.split(/[\s\u200B]+/).filter((piece) => /^W+$/.test(piece));
+    expect(pieces.join("")).toBe("W".repeat(runs * 2_000 + 3 * 500));
+    expect(Math.max(...pieces.map((piece) => piece.length))).toBeLessThanOrEqual(40);
   });
 
   it("refuses a tailored CV above the printed-character cap before laying it out", async () => {
