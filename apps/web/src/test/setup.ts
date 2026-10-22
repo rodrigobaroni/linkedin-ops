@@ -4,6 +4,7 @@ import { cleanup } from "@testing-library/react";
 import { afterAll, afterEach, beforeAll } from "vitest";
 import { resetMockAuth } from "@/mocks/auth-handlers";
 import { resetMockCareer } from "@/mocks/career-handlers";
+import { resetMockJobs } from "@/mocks/career-jobs-handlers";
 import { resetMockPublishing } from "@/mocks/publishing-handlers";
 import { server } from "@/mocks/node";
 
@@ -30,6 +31,7 @@ afterEach(() => {
   resetMockAuth();
   resetMockPublishing();
   resetMockCareer();
+  resetMockJobs();
 });
 
 afterAll(() => {

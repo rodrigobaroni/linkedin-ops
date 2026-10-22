@@ -1,4 +1,11 @@
-export { createApiClient, buildPath, type ApiClient, type RequestOptions } from "./http";
+export {
+  createApiClient,
+  buildPath,
+  filenameFromDisposition,
+  type ApiClient,
+  type BinaryBody,
+  type RequestOptions,
+} from "./http";
 export { createAuthApi, type AuthApi, type SessionSnapshot, type SessionUser } from "./auth";
 export { CsrfTokenStore } from "./csrf-token-store";
 export {
@@ -43,3 +50,28 @@ export {
   type CvFileProblem,
   type CvUploadAccepted,
 } from "./career-cv";
+export {
+  CAREER_JOBS_QUERY_KEY,
+  JOBS_POLL,
+  JOB_POSTING_LIMITS,
+  TAILORED_CV_FALLBACK_FILENAME,
+  careerJobQueryKey,
+  createCareerJobsApi,
+  isProcessing,
+  jobDomain,
+  jobsPollDelayMs,
+  parseJobLinks,
+  saveFile,
+  type CareerJobsApi,
+  type JobPostingAccepted,
+  type JobPostingBlockedDetail,
+  type JobPostingBlockedKind,
+  type JobPostingDetail,
+  type JobPostingFailure,
+  type JobPostingSourceKind,
+  type JobPostingStatus,
+  type JobPostingSummary,
+  type JobPostingTailoring,
+  type ParsedJobLinks,
+  type TailoringBatchAccepted,
+} from "./career-jobs";
