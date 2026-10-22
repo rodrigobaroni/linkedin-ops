@@ -21,9 +21,11 @@ import {
 } from "@linkedin-ops/contracts";
 import type { z } from "zod";
 import { err, ok, type EngineError, type Result } from "../result.js";
+import { excerptFrom, type TailorIssue, type TailorIssueCode } from "./feedback.js";
 import { sanitizeUntrustedText } from "../untrusted.js";
 import {
   createEntityGuard,
+  inventedRoleLabels,
   inventedRoleTitles,
   newCredentials,
   titlesFromCredentials,
@@ -55,8 +57,15 @@ function schemaError(error: z.ZodError): EngineError {
   };
 }
 
-function semanticError(issues: string[]): EngineError {
-  return { code: "SEMANTIC_INVALID", issues };
+function semanticError(issues: string[], feedback?: TailorIssue[]): EngineError {
+  return feedback === undefined
+    ? { code: "SEMANTIC_INVALID", issues }
+    : { code: "SEMANTIC_INVALID", issues, feedback };
+}
+
+/** A schema failure of `cv-tailor`: one `schema_invalid` issue, without excerpt, for the next attempt. */
+function tailorSchemaError(error: z.ZodError): EngineError {
+  return { ...schemaError(error), feedback: [{ code: "schema_invalid", where: "(root)" }] };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -167,15 +176,41 @@ export function parseCvTailorResponse(
   context: { base: CvStructured; job: JobPostingExtracted; target: TargetLanguage },
 ): Result<ParsedCvTailoring, EngineError> {
   const parsed = CvTailoringOutputSchema.safeParse(raw);
-  if (!parsed.success) return err(schemaError(parsed.error));
+  if (!parsed.success) return err(tailorSchemaError(parsed.error));
   const output = parsed.data;
   const { base, job } = context;
   const issues: string[] = [];
+  const feedback: TailorIssue[] = [];
+  /**
+   * Records an issue twice: the string for logs and stored reasons, and the structured one for the next attempt,
+   * whose excerpt is kept only when it occurs in `source` (the model's own text it came from).
+   */
+  const report = (
+    text: string,
+    code: TailorIssueCode,
+    where: string,
+    excerpt?: string | readonly string[],
+    source?: string,
+  ) => {
+    issues.push(text);
+    // Several offending words ("Globex", "Umbrella") are one structured issue each: joined they would not occur
+    // in the output and the excerpt would be lost (Pena §6.12, follow-up a).
+    const excerpts = excerpt === undefined || typeof excerpt === "string" ? [excerpt] : excerpt;
+    for (const candidate of excerpts.length > 0 ? excerpts : [undefined]) {
+      const kept =
+        source === undefined ? candidate?.trim() || undefined : excerptFrom(source, candidate);
+      feedback.push(kept === undefined ? { code, where } : { code, where, excerpt: kept });
+    }
+  };
   const itemTexts = cvItemTexts(base);
   const requirementIds = new Set(job.requirements.map((requirement) => requirement.id));
 
   if (output.targetLanguage !== context.target.language) {
-    issues.push(`targetLanguage: expected ${context.target.language}`);
+    report(
+      `targetLanguage: expected ${context.target.language}`,
+      "target_language_mismatch",
+      "targetLanguage",
+    );
   }
 
   // Step 1 — assessment of the base CV, evidence verified (post-processing 2).
@@ -183,16 +218,28 @@ export function parseCvTailorResponse(
     output.matchAssessment.requirements.map((item) => [item.requirementId, item]),
   );
   if (assessed.size !== output.matchAssessment.requirements.length) {
-    issues.push("matchAssessment: duplicate requirementId");
+    report("matchAssessment: duplicate requirementId", "ids_duplicate", "matchAssessment");
   }
   for (const id of assessed.keys()) {
-    if (!requirementIds.has(id)) issues.push(`matchAssessment: unknown requirement ${id}`);
+    if (!requirementIds.has(id)) {
+      report(
+        `matchAssessment: unknown requirement ${id}`,
+        "requirement_unknown",
+        "matchAssessment",
+        id,
+      );
+    }
   }
   const requirements: MatchedRequirement[] = [];
   for (const requirement of job.requirements) {
     const assessment = assessed.get(requirement.id);
     if (!assessment) {
-      issues.push(`matchAssessment: requirement ${requirement.id} not assessed`);
+      report(
+        `matchAssessment: requirement ${requirement.id} not assessed`,
+        "requirement_not_assessed",
+        "matchAssessment",
+        requirement.id,
+      );
       continue;
     }
     const evidence =
@@ -220,9 +267,15 @@ export function parseCvTailorResponse(
   const sameIds = (label: string, expected: string[], actual: string[]) => {
     const missing = expected.filter((id) => !actual.includes(id));
     const extra = actual.filter((id) => !expected.includes(id));
-    if (missing.length > 0) issues.push(`${label}: missing ${missing.join(",")}`);
-    if (extra.length > 0) issues.push(`${label}: unknown ${extra.join(",")}`);
-    if (new Set(actual).size !== actual.length) issues.push(`${label}: duplicate id`);
+    if (missing.length > 0) {
+      report(`${label}: missing ${missing.join(",")}`, "ids_missing", label, missing.join(","));
+    }
+    if (extra.length > 0) {
+      report(`${label}: unknown ${extra.join(",")}`, "ids_unknown", label, extra.join(","));
+    }
+    if (new Set(actual).size !== actual.length) {
+      report(`${label}: duplicate id`, "ids_duplicate", label);
+    }
   };
   sameIds(
     "experiences",
@@ -260,7 +313,7 @@ export function parseCvTailorResponse(
     certificationIds: byOrder(tailored.certifications).map((item) => item.cvCertificationId),
     languageIds: byOrder(tailored.languages).map((item) => item.cvLanguageId),
   });
-  if (!draft.success) return err(schemaError(draft.error));
+  if (!draft.success) return err(tailorSchemaError(draft.error));
 
   // Provenance (post-processing 3) and hard limits on additions (post-processing 4).
   const baseNumbers = new Set(numericTokens(cvFullText(base)));
@@ -268,59 +321,136 @@ export function parseCvTailorResponse(
   const baseText = cvFullText(base);
   const titles = base.experiences.map((experience) => experience.title);
   const promotedSegmentIds: string[] = [];
-  for (const { segment } of listSegments(draft.data)) {
+  for (const { segment, block } of listSegments(draft.data)) {
+    // A role used as a label at the opening of a summary sentence or of a bullet ("Tech lead de dados com…"),
+    // unless an experience title covers it; an unchanged `original` keeps the base text (issue #99, Pena §3).
+    const unchangedOriginal =
+      segment.provenance === "original" &&
+      segment.sourceCvItemIds.some((id) => {
+        const source = itemTexts.get(id);
+        return (
+          source !== undefined && normalizeForMatch(source) === normalizeForMatch(segment.text)
+        );
+      });
+    const where = segment.segmentId;
+    const labels =
+      (block === "summary" || block === "bullet") && !unchangedOriginal
+        ? inventedRoleLabels(segment.text, titles, block === "bullet")
+        : [];
+    if (labels.length > 0) {
+      report(
+        `${where}: hard limit, invented role label`,
+        "invented_role_label",
+        where,
+        labels[0],
+        segment.text,
+      );
+    }
     for (const id of segment.targetRequirementIds) {
-      if (!requirementIds.has(id)) issues.push(`${segment.segmentId}: unknown requirement ${id}`);
+      if (!requirementIds.has(id)) {
+        report(`${where}: unknown requirement ${id}`, "requirement_unknown", where, id);
+      }
     }
     // D4 hard limits 1, 2 and 4: no employer, title, date, institution, certification, client, project or
     // other proper noun absent from the base CV, in added and rewritten text alike.
-    if (entityGuard.newEntities(segment.text, segment.targetRequirementIds).length > 0) {
-      issues.push(`${segment.segmentId}: hard limit, new entity`);
+    const entities = entityGuard.newEntities(segment.text, segment.targetRequirementIds);
+    if (entities.length > 0) {
+      report(`${where}: hard limit, new entity`, "new_entity", where, entities, segment.text);
     }
     // A credential's words never become a title the base CV does not have (Sentinela S-1, PR #91).
-    if (titlesFromCredentials(segment.text, baseText, titles).length > 0) {
-      issues.push(`${segment.segmentId}: hard limit, title from a credential`);
+    const credentialTitles = titlesFromCredentials(segment.text, baseText, titles);
+    if (credentialTitles.length > 0) {
+      report(
+        `${where}: hard limit, title from a credential`,
+        "title_from_credential",
+        where,
+        credentialTitles[0],
+        segment.text,
+      );
     }
     if (segment.provenance === "added") {
-      if (
-        numericTokens(withoutLexiconTerms(segment.text)).some((token) => !baseNumbers.has(token))
-      ) {
-        issues.push(`${segment.segmentId}: hard limit, added number`);
+      const addedNumber = numericTokens(withoutLexiconTerms(segment.text)).find(
+        (token) => !baseNumbers.has(token),
+      );
+      if (addedNumber !== undefined) {
+        report(
+          `${where}: hard limit, added number`,
+          "added_number",
+          where,
+          numberExcerpt(segment.text, addedNumber),
+          segment.text,
+        );
       }
-      if (newCredentials(segment.text).length > 0) {
-        issues.push(`${segment.segmentId}: hard limit, added credential`);
+      const credentials = newCredentials(segment.text);
+      if (credentials.length > 0) {
+        report(
+          `${where}: hard limit, added credential`,
+          "added_credential",
+          where,
+          credentials[0],
+          segment.text,
+        );
       }
       // "Atuei como tech lead…": an added segment cites no base item, so only an experience title covers a role
       // (issue #93).
-      if (inventedRoleTitles(segment.text, titles, "", baseText).length > 0) {
-        issues.push(`${segment.segmentId}: hard limit, invented role title`);
+      const roles = inventedRoleTitles(segment.text, titles, "", baseText);
+      if (roles.length > 0) {
+        report(
+          `${where}: hard limit, invented role title`,
+          "invented_role_title",
+          where,
+          roles[0],
+          segment.text,
+        );
       }
       continue;
     }
     const sources = segment.sourceCvItemIds.map((id) => itemTexts.get(id));
     if (sources.some((source) => source === undefined)) {
-      issues.push(`${segment.segmentId}: unknown base CV item`);
+      const unknown = segment.sourceCvItemIds.filter((id) => itemTexts.get(id) === undefined);
+      report(`${where}: unknown base CV item`, "base_item_unknown", where, unknown.join(","));
       continue;
     }
     const sourceText = sources.join("\n");
     // Rewritten and changed `original` text may keep a credential of its cited items, never add one (Sentinela
     // PR #91); an unchanged `original` holds exactly its source's.
-    if (newCredentials(segment.text, sourceText, titles).length > 0) {
-      issues.push(`${segment.segmentId}: hard limit, credential not in cited base items`);
+    const uncited = newCredentials(segment.text, sourceText, titles);
+    if (uncited.length > 0) {
+      report(
+        `${where}: hard limit, credential not in cited base items`,
+        "credential_not_in_cited_items",
+        where,
+        uncited[0],
+        segment.text,
+      );
     }
     // A role a rewritten or original segment presents must be an experience title or a role its cited items
     // already state (issue #93).
-    if (inventedRoleTitles(segment.text, titles, sourceText, baseText).length > 0) {
-      issues.push(`${segment.segmentId}: hard limit, invented role title`);
+    const rewrittenRoles = inventedRoleTitles(segment.text, titles, sourceText, baseText);
+    if (rewrittenRoles.length > 0) {
+      report(
+        `${where}: hard limit, invented role title`,
+        "invented_role_title",
+        where,
+        rewrittenRoles[0],
+        segment.text,
+      );
     }
     const sourceNumbers = new Set(numericTokens(sourceText));
-    if (
-      numericTokens(withoutLexiconTerms(segment.text)).some((token) => !sourceNumbers.has(token))
-    ) {
-      issues.push(`${segment.segmentId}: number not in cited base items`);
+    const uncitedNumber = numericTokens(withoutLexiconTerms(segment.text)).find(
+      (token) => !sourceNumbers.has(token),
+    );
+    if (uncitedNumber !== undefined) {
+      report(
+        `${where}: number not in cited base items`,
+        "number_not_in_cited_items",
+        where,
+        numberExcerpt(segment.text, uncitedNumber),
+        segment.text,
+      );
     }
   }
-  if (issues.length > 0) return err(semanticError(issues));
+  if (issues.length > 0) return err(semanticError(issues, feedback));
 
   const cv = mapSegments(draft.data, (segment) => {
     if (segment.provenance !== "original") return segment;
@@ -404,7 +534,12 @@ export function parseCvHumanizeResponse(
       titlesFromCredentials(update.text, baseText, titles).some((title) => !oldTitles.has(title));
     // So is a role the segment did not already present ("Atuei com pipelines…" → "Atuei como product manager…";
     // issue #93).
-    const newRole = inventedRoleTitles(update.text, titles, segment.text, baseText).length > 0;
+    const newRole =
+      inventedRoleTitles(update.text, titles, segment.text, baseText).length > 0 ||
+      ((block === "summary" || block === "bullet") &&
+        inventedRoleLabels(update.text, titles, block === "bullet").some(
+          (label) => !inventedRoleLabels(segment.text, titles, block === "bullet").includes(label),
+        ));
     if (
       !sameNumbers(segment.text, update.text) ||
       !entitiesKept ||
@@ -428,4 +563,16 @@ export function parseCvHumanizeResponse(
     injectionSuspected: parsed.data.injectionSuspected,
     injectionEvidence: parsed.data.injectionEvidence,
   });
+}
+
+/**
+ * The written form of a numeric token in `text` ("40%" for the canonical "40"), or the token itself: what the
+ * model wrote, for the next attempt's feedback.
+ */
+function numberExcerpt(text: string, token: string): string {
+  for (const written of text.match(/[\p{N}][\p{N}.,]*\s?%?/gu) ?? []) {
+    const trimmed = written.trim();
+    if (numericTokens(trimmed).includes(token)) return trimmed;
+  }
+  return token;
 }

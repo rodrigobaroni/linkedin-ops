@@ -72,6 +72,18 @@ describe("untrusted content boundary (ADR-0005 §4, career-prompts.md §0.1)", (
     expect(request.instructions).not.toContain("Fictional Corp");
   });
 
+  it("tailors with cv-tailor@1.1.0: roles stay in the experience header (issue #99)", () => {
+    const { request } = buildCvTailorRequest(
+      { base: baseCv, job, target: resolveTargetLanguage("en") },
+      options,
+    );
+    expect(request.promptVersion).toBe("1.1.0");
+    expect(request.instructions).toContain("14. ROLES AND TITLES STAY IN THE EXPERIENCE HEADER.");
+    expect(request.instructions).toContain("15. PREVIOUS ATTEMPT.");
+    // The first attempt carries no feedback block.
+    expect(request.input).not.toContain("previous_attempt_issues");
+  });
+
   it("humanize request carries segments and lint findings, never provenance ids of the base", () => {
     const cv = {
       language: "en" as const,

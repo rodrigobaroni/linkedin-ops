@@ -48,7 +48,13 @@ export function sanitizeDeep<T>(value: T, maxChars: number): T {
 }
 
 export type DataBlockKind =
-  "cv_text" | "cv_base_json" | "job_text" | "job_extracted_json" | "tailored_cv_json";
+  | "cv_text"
+  | "cv_base_json"
+  | "job_text"
+  | "job_extracted_json"
+  | "tailored_cv_json"
+  /** Issues of the previous `cv-tailor` attempt, excerpts of the model's own output (issue #99). */
+  | "previous_attempt_issues";
 
 /** 16-byte nonce per call (career-prompts.md §0.1). */
 export function newNonce(rng: Rng): string {

@@ -115,7 +115,7 @@ function handlers(
 }
 
 const segmentTexts = {
-  "seg-1": "Backend engineer with 8 years in payments.",
+  "seg-1": "Backend engineering for payments over 8 years.",
   "seg-2": "Led the migration of the billing service to durable queues.",
   "seg-3": "Evaluated Kafka for event streaming.",
   "seg-4": "TypeScript",
@@ -364,7 +364,7 @@ describe("cv.tailor", () => {
     expect(saved.tailored).toMatchObject({
       generation: {
         promptVersions: {
-          "cv-tailor": "1.0.0",
+          "cv-tailor": "1.1.0",
           "cv-humanize": "1.0.0",
           "cv-competency-lexicon": "1.0.1",
         },

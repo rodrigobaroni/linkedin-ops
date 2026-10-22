@@ -113,7 +113,7 @@ export function tailoringOutput(
         segments: [
           {
             segmentId: "seg-1",
-            text: "Backend engineer with 8 years in payments.",
+            text: "Backend engineering for payments over 8 years.",
             provenance: "rewritten",
             sourceCvItemIds: ["summary"],
             ...base,

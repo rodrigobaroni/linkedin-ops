@@ -11,6 +11,7 @@ export * from "./untrusted.js";
 export * from "./prompts/common.js";
 export * from "./career/requests.js";
 export * from "./career/parse.js";
+export * from "./career/feedback.js";
 export * from "./career/score.js";
 export * from "./career/language.js";
 export * from "./career/report.js";
