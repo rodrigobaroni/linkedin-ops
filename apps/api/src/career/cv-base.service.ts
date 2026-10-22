@@ -31,11 +31,17 @@ export interface CareerRateLimits {
   windowMs: number;
   /** CV uploads per user (each one costs a `cv.extract` model call in the worker). */
   uploadPerUser: number;
+  /** Job batches per user (each one up to 20 page fetches and model calls). */
+  batchPerUser: number;
+  /** Pasted texts and reprocessings per user (each one costs model calls, maybe a fetch). */
+  reprocessPerUser: number;
 }
 
 export const DEFAULT_CAREER_RATE_LIMITS: Readonly<CareerRateLimits> = {
   windowMs: 60 * 60 * 1000,
   uploadPerUser: 10,
+  batchPerUser: 10,
+  reprocessPerUser: 60,
 };
 
 /** PT-BR detail per rejection (shown by the web; never file content). */

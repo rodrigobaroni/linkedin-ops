@@ -80,7 +80,8 @@ export interface TailoringRecord {
   content: TailoredCvContent;
   report: MatchReport;
   generation: GenerationInfo;
-  createdAt: Date;
+  /** When this tailored CV was produced (a reprocessing replaces it). */
+  generatedAt: Date;
 }
 
 export interface JobPostingSummaryRecord {
@@ -525,7 +526,7 @@ function toRecord(
           content: TailoredCvContentSchema.parse(tailored.content),
           report: MatchReportSchema.parse(tailored.matchReport),
           generation: tailored.generation as unknown as GenerationInfo,
-          createdAt: tailored.createdAt,
+          generatedAt: tailored.updatedAt,
         }
       : null;
   return {

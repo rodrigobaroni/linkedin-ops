@@ -47,7 +47,7 @@ import supertest from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../src/app.module.js";
 import { configureApp, createFastifyAdapter } from "../src/app.factory.js";
-import { CAREER_RATE_LIMITS } from "../src/career/cv-base.service.js";
+import { CAREER_RATE_LIMITS, DEFAULT_CAREER_RATE_LIMITS } from "../src/career/cv-base.service.js";
 import {
   CV_EXTRACT_QUEUE,
   PgBossCvExtractQueue,
@@ -268,7 +268,7 @@ beforeAll(async () => {
     .overrideProvider(CV_EXTRACT_QUEUE)
     .useValue(queue)
     .overrideProvider(CAREER_RATE_LIMITS)
-    .useValue({ windowMs: 60_000, uploadPerUser: UPLOAD_LIMIT })
+    .useValue({ ...DEFAULT_CAREER_RATE_LIMITS, windowMs: 60_000, uploadPerUser: UPLOAD_LIMIT })
     .compile();
   app = moduleRef.createNestApplication<NestFastifyApplication>(createFastifyAdapter(logger), {
     bufferLogs: true,

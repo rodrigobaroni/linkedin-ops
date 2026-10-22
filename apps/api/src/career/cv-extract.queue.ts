@@ -1,9 +1,13 @@
 import type { OnApplicationBootstrap, OnApplicationShutdown } from "@nestjs/common";
 import {
   CvExtractPayloadSchema,
+  CvTailorPayloadSchema,
+  JobFetchPayloadSchema,
   PGBOSS_SCHEMA_NAME,
   QUEUES,
   type CvExtractPayload,
+  type CvTailorPayload,
+  type JobFetchPayload,
 } from "@linkedin-ops/contracts";
 import type { SqlExecutor } from "@linkedin-ops/domain";
 import { PgBoss } from "pg-boss";
@@ -29,7 +33,36 @@ export interface CvExtractQueue {
   enqueue(payload: CvExtractPayload, db: SqlExecutor): Promise<{ jobId: string }>;
 }
 
+/** Injection token of the `job.fetch`/`cv.tailor` producer (the same pg-boss instance as `cv.extract`). */
+export const JOB_POSTING_QUEUE = Symbol("JOB_POSTING_QUEUE");
+
+/**
+ * Producer side of `job.fetch` and `cv.tailor` (career PR 3b). Same rules as `CvExtractQueue`: `ensureReady`
+ * before the transaction opens, every enqueue through `db` (the posting's transaction), payloads with ids
+ * only (the URL and the posting text stay in `job_postings`).
+ */
+export interface JobPostingQueue {
+  ensureReady(): Promise<void>;
+  /** `groupId` serializes the fetches of one domain (`groupConcurrency: 1`, ADR-0008 §4). */
+  enqueueFetch(
+    payload: JobFetchPayload,
+    groupId: string,
+    db: SqlExecutor,
+  ): Promise<{ jobId: string }>;
+  enqueueTailor(payload: CvTailorPayload, db: SqlExecutor): Promise<{ jobId: string }>;
+}
+
+/** A job of the same singleton (posting) is still pending: pg-boss created nothing. */
+export class CareerJobAlreadyQueuedError extends Error {
+  constructor(readonly queue: string) {
+    super(`${queue} job already pending for this item`);
+    this.name = "CareerJobAlreadyQueuedError";
+  }
+}
+
 const CV_EXTRACT = QUEUES["cv.extract"];
+const JOB_FETCH = QUEUES["job.fetch"];
+const CV_TAILOR = QUEUES["cv.tailor"];
 
 export const CV_EXTRACT_QUEUE_START_TIMEOUT_MS = 10_000;
 
@@ -49,14 +82,15 @@ export interface PgBossCvExtractQueueOptions {
 }
 
 /**
- * pg-boss producer. The API only sends: it neither migrates the `pgboss` schema nor provisions queues (the
+ * pg-boss producer of the career queues (`cv.extract`, `job.fetch`, `cv.tailor`): one instance behind both
+ * injection tokens. The API only sends: it neither migrates the `pgboss` schema nor provisions queues (the
  * worker does both at boot) and runs no maintenance or cron. pg-boss starts at application bootstrap, with a
  * timeout, and never inside a request: if the start fails (e.g. the worker has not migrated the schema yet)
  * the API still boots, retries in the background with backoff, and uploads answer 503 before any
  * transaction until the producer is ready. `enqueue` never starts pg-boss.
  */
 export class PgBossCvExtractQueue
-  implements CvExtractQueue, OnApplicationBootstrap, OnApplicationShutdown
+  implements CvExtractQueue, JobPostingQueue, OnApplicationBootstrap, OnApplicationShutdown
 {
   readonly #boss: PgBoss;
   readonly #logger: Logger;
@@ -114,6 +148,33 @@ export class PgBossCvExtractQueue
     });
     // A new draft id never collides with a pending singleton; null would mean a lost job.
     if (jobId === null) throw new Error("cv.extract job was not created");
+    return { jobId };
+  }
+
+  async enqueueFetch(
+    payload: JobFetchPayload,
+    groupId: string,
+    db: SqlExecutor,
+  ): Promise<{ jobId: string }> {
+    if (!this.#ready) throw new CvExtractQueueUnavailableError("not_started");
+    const valid = JobFetchPayloadSchema.parse(payload);
+    const jobId = await this.#boss.send(JOB_FETCH.name, valid, {
+      db,
+      singletonKey: JOB_FETCH.singletonKeyFrom?.(valid),
+      group: { id: groupId },
+    });
+    if (jobId === null) throw new CareerJobAlreadyQueuedError(JOB_FETCH.name);
+    return { jobId };
+  }
+
+  async enqueueTailor(payload: CvTailorPayload, db: SqlExecutor): Promise<{ jobId: string }> {
+    if (!this.#ready) throw new CvExtractQueueUnavailableError("not_started");
+    const valid = CvTailorPayloadSchema.parse(payload);
+    const jobId = await this.#boss.send(CV_TAILOR.name, valid, {
+      db,
+      singletonKey: CV_TAILOR.singletonKeyFrom?.(valid),
+    });
+    if (jobId === null) throw new CareerJobAlreadyQueuedError(CV_TAILOR.name);
     return { jobId };
   }
 
