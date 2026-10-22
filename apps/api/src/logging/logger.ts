@@ -1,6 +1,12 @@
 import { isSensitiveKey } from "@linkedin-ops/contracts";
-import { serializeErrorForLog, serializeErrorsDeep, type LogLevel } from "@linkedin-ops/domain";
-import type { DestinationStream, Logger, LoggerOptions } from "pino";
+import {
+  isErrorLike,
+  safeLogArguments,
+  serializeErrorForLog,
+  serializeErrorsDeep,
+  type LogLevel,
+} from "@linkedin-ops/domain";
+import type { DestinationStream, LogFn, Logger, LoggerOptions } from "pino";
 import { pino } from "pino";
 
 /** Injection token for the root Pino logger (the same instance Fastify uses for request logs). */
@@ -52,7 +58,7 @@ export function scrubSensitiveKeys(
 ): unknown {
   if (value === null || typeof value !== "object") return value;
   // An error under any key is reduced to its allow-listed fields (#102: Prisma/pg errors carry row data).
-  if (value instanceof Error) return serializeErrorForLog(value);
+  if (isErrorLike(value)) return serializeErrorForLog(value);
   if (value instanceof Date || Buffer.isBuffer(value)) return value;
   if (depth > MAX_SCRUB_DEPTH) return TRUNCATED;
   if (seen.has(value)) return CIRCULAR;
@@ -89,6 +95,13 @@ export function buildLoggerOptions({ level, pretty }: LoggerConfig): LoggerOptio
   return {
     level,
     redact: { paths: [...REDACT_PATHS], censor: REDACTED },
+    // `logger.error(err)` / `logger.error({ err })` without a message would log the raw `err.message` as
+    // `msg`: the scrubbed one is injected instead.
+    hooks: {
+      logMethod(args, method) {
+        method.apply(this, safeLogArguments(args) as Parameters<LogFn>);
+      },
+    },
     formatters: {
       level: (label) => ({ level: label }),
       // `req`, `res` and `err` are Fastify/Error instances reduced by the serializers below (which

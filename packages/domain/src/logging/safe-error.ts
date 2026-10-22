@@ -1,3 +1,5 @@
+import { isSensitiveKey } from "@linkedin-ops/contracts";
+
 /**
  * Log serializer for errors (API and worker, QA #101): only the class, the code and a scrubbed message ever
  * reach a log line. Prisma and the pg driver attach the offending row to errors (`meta`, `cause.detail`,
@@ -41,8 +43,21 @@ export function scrubErrorText(text: string): string {
   );
 }
 
+/**
+ * An error of this realm or of another one (a `vm` context, a worker thread: `instanceof Error` is false
+ * there, `Object.prototype.toString` still says `[object Error]`).
+ */
+export function isErrorLike(value: unknown): value is Error {
+  return (
+    value instanceof Error ||
+    (typeof value === "object" &&
+      value !== null &&
+      Object.prototype.toString.call(value) === "[object Error]")
+  );
+}
+
 export function serializeErrorForLog(error: unknown, depth = 0): SafeLoggedError {
-  if (!(error instanceof Error)) {
+  if (!isErrorLike(error)) {
     return { type: typeof error, message: ERROR_MESSAGE_OMITTED };
   }
   const type = error.name || error.constructor.name || "Error";
@@ -81,31 +96,55 @@ export const ERROR_SEARCH_TRUNCATED = "[Truncated]";
 export const ERROR_SEARCH_CIRCULAR = "[Circular]";
 
 /**
- * Applies `serializeErrorForLog` to every `Error` of a log object, under any key and nested in plain objects
- * or arrays (#102): `{ exception: pgError }`, `{ ctx: { err } }`, `[e]`. Other values are copied as they
- * are. Fails closed: a subtree deeper than `MAX_ERROR_SEARCH_DEPTH` or a cycle is replaced by a marker, so
- * no error can hide below the search depth.
+ * Applies `serializeErrorForLog` to every error of a log object (this realm or another), under any key and
+ * nested in arrays, plain objects and class instances (their own enumerable properties) (#102). Dates and
+ * binary buffers are copied as they are. Fails closed: a subtree deeper than `MAX_ERROR_SEARCH_DEPTH` or a
+ * cycle is replaced by a marker, so no error can hide below the search depth.
  */
-export function serializeErrorsDeep(
-  value: unknown,
-  depth = 0,
-  seen: WeakSet<object> = new WeakSet(),
-): unknown {
-  if (value instanceof Error) return serializeErrorForLog(value);
+export function serializeErrorsDeep(value: unknown): unknown {
+  return walk(value, false, 0, new WeakSet());
+}
+
+/**
+ * `serializeErrorsDeep` plus the credential-like keys of `isSensitiveKey` (packages/contracts) replaced by
+ * `LOG_REDACTED` at any depth: what the worker logger applies to every log object, as the API does with its
+ * `scrubSensitiveKeys`.
+ */
+export function scrubLogObject(value: unknown): unknown {
+  return walk(value, true, 0, new WeakSet());
+}
+
+export const LOG_REDACTED = "[redacted]";
+
+function walk(value: unknown, redactKeys: boolean, depth: number, seen: WeakSet<object>): unknown {
+  if (isErrorLike(value)) return serializeErrorForLog(value);
   if (value === null || typeof value !== "object") return value;
-  if (!Array.isArray(value) && !isPlainObject(value)) return value;
+  if (value instanceof Date || ArrayBuffer.isView(value) || value instanceof ArrayBuffer)
+    return value;
   if (depth >= MAX_ERROR_SEARCH_DEPTH) return ERROR_SEARCH_TRUNCATED;
   if (seen.has(value)) return ERROR_SEARCH_CIRCULAR;
   seen.add(value);
-  if (Array.isArray(value)) return value.map((item) => serializeErrorsDeep(item, depth + 1, seen));
+  if (Array.isArray(value)) return value.map((item) => walk(item, redactKeys, depth + 1, seen));
   const out: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value)) {
-    out[key] = serializeErrorsDeep(entry, depth + 1, seen);
+    out[key] =
+      redactKeys && isSensitiveKey(key) ? LOG_REDACTED : walk(entry, redactKeys, depth + 1, seen);
   }
   return out;
 }
 
-function isPlainObject(value: object): value is Record<string, unknown> {
-  const prototype = Object.getPrototypeOf(value) as unknown;
-  return prototype === Object.prototype || prototype === null;
+/**
+ * `hooks.logMethod` arguments for Pino (#102 follow-up): a call that logs an error without a message string
+ * (`logger.error(err)`, `logger.error({ err })`) would get the raw `err.message` as `msg` ("Failing row
+ * contains (…)", a 22P02 input value). This injects the scrubbed message instead; calls with a message are
+ * returned unchanged.
+ */
+export function safeLogArguments(args: unknown[]): unknown[] {
+  const [first, ...rest] = args;
+  if (typeof rest[0] === "string") return args;
+  if (isErrorLike(first)) return [{ err: first }, serializeErrorForLog(first).message, ...rest];
+  if (first === null || typeof first !== "object") return args;
+  const candidate = (first as { err?: unknown }).err ?? (first as { error?: unknown }).error;
+  if (!isErrorLike(candidate)) return args;
+  return [first, serializeErrorForLog(candidate).message, ...rest];
 }
