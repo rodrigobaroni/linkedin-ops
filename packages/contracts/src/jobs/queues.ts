@@ -19,6 +19,9 @@ export const QueueNameSchema = z.enum([
   "publication.reconcile",
   "notification.send",
   "linkedin.token-refresh",
+  "cv.extract",
+  "job.fetch",
+  "cv.tailor",
 ]);
 export const QueueName = QueueNameSchema.enum;
 export type QueueName = z.infer<typeof QueueNameSchema>;
@@ -102,6 +105,20 @@ export type NotificationSendPayload = z.infer<typeof NotificationSendPayloadSche
 
 export const LinkedInTokenRefreshPayloadSchema = v1.extend({ userId: UuidSchema });
 export type LinkedInTokenRefreshPayload = z.infer<typeof LinkedInTokenRefreshPayloadSchema>;
+
+// Career module (spec 2026-10-22 §5). Payloads carry ids only: CV and job text never travel through the queue.
+
+/** Structures the extracted text of a draft base CV (`cv_bases` row in status `extracting`). */
+export const CvExtractPayloadSchema = v1.extend({ cvBaseId: UuidSchema });
+export type CvExtractPayload = z.infer<typeof CvExtractPayloadSchema>;
+
+/** Fetches (or reads pasted text of) one posting and runs `job-extract` (ADR-0008 limits apply). */
+export const JobFetchPayloadSchema = v1.extend({ jobPostingId: UuidSchema });
+export type JobFetchPayload = z.infer<typeof JobFetchPayloadSchema>;
+
+/** Tailors the base CV to one extracted posting (`cv-tailor` → `cv-humanize`). */
+export const CvTailorPayloadSchema = v1.extend({ jobPostingId: UuidSchema });
+export type CvTailorPayload = z.infer<typeof CvTailorPayloadSchema>;
 
 const deadLetterOf = (name: QueueName) => `${name}.dlq`;
 
@@ -237,6 +254,40 @@ export const QUEUES = {
     expireInSeconds: 120,
     singletonKeyFrom: (p) => p.userId,
     deadLetter: deadLetterOf("linkedin.token-refresh"),
+  }),
+  "cv.extract": defineQueue({
+    name: "cv.extract",
+    schemaVersion: 1,
+    payload: CvExtractPayloadSchema,
+    retryLimit: 2,
+    retryBackoff: true,
+    retryDelaySeconds: 30,
+    expireInSeconds: 600,
+    singletonKeyFrom: (p) => p.cvBaseId,
+    deadLetter: deadLetterOf("cv.extract"),
+  }),
+  // ADR-0008 §4: one retry, at least 60 s later, network/5xx only; stop signals are permanent failures.
+  "job.fetch": defineQueue({
+    name: "job.fetch",
+    schemaVersion: 1,
+    payload: JobFetchPayloadSchema,
+    retryLimit: 1,
+    retryBackoff: false,
+    retryDelaySeconds: 60,
+    expireInSeconds: 300,
+    singletonKeyFrom: (p) => p.jobPostingId,
+    deadLetter: deadLetterOf("job.fetch"),
+  }),
+  "cv.tailor": defineQueue({
+    name: "cv.tailor",
+    schemaVersion: 1,
+    payload: CvTailorPayloadSchema,
+    retryLimit: 2,
+    retryBackoff: true,
+    retryDelaySeconds: 30,
+    expireInSeconds: 900,
+    singletonKeyFrom: (p) => p.jobPostingId,
+    deadLetter: deadLetterOf("cv.tailor"),
   }),
 } as const satisfies Record<QueueName, QueueDefinition<JobEnvelope>>;
 

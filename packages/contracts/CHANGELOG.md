@@ -13,6 +13,8 @@ versioning: internal SemVer (see `README.md`).
   outputs `CvExtractionOutput`, `JobExtractionOutput`, `CvTailoringOutput` and `CvHumanizationOutput` registered in
   `STRUCTURED_OUTPUTS`. `PromptId` gains `cv-extract`, `job-extract`, `cv-tailor`, `cv-humanize`. All career objects
   are `strictObject`.
+- Queues `cv.extract` (`{ cvBaseId }`, retry 2 with backoff), `job.fetch` (`{ jobPostingId }`, retry 1 after 60 s,
+  ADR-0008 §4) and `cv.tailor` (`{ jobPostingId }`, retry 2 with backoff). Payloads carry ids only.
 
 - `openapi/document.ts` (`buildOpenApiDocument`, `serializeOpenApiDocument`): OpenAPI 3.0.3 generated from `routes/v1.ts`
   with `z.toJSONSchema` only; committed as `openapi/v1.json` with a drift test (`pnpm openapi:generate` refreshes it).

@@ -20,6 +20,8 @@ export const ids = {
   watchlist: "018f6b1e-7c2a-7b3c-9d4e-000000000012",
   voice: "018f6b1e-7c2a-7b3c-9d4e-000000000013",
   idempotency: "018f6b1e-7c2a-7b3c-9d4e-000000000014",
+  cvBase: "018f6b1e-7c2a-7b3c-9d4e-000000000015",
+  jobPosting: "018f6b1e-7c2a-7b3c-9d4e-000000000016",
 } as const;
 
 export const AT = "2026-10-13T12:00:00Z";
