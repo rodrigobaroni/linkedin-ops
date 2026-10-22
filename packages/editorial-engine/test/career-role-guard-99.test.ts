@@ -231,3 +231,62 @@ describe("list continuation: 'e staff da plataforma' (QA of #109)", () => {
     ).not.toEqual([]);
   });
 });
+
+describe("label guard: adjectives before a comma, hyphens, zero-width (re-QA of #109)", () => {
+  const PT = ["Engenheiro de Dados Sênior"];
+  const EN = ["Senior Software Engineer"];
+  it.each([
+    ["Experienced, hands-on tech lead focused on payments.", EN],
+    ["Seasoned, pragmatic data engineer with a payments background.", EN],
+    ["Strong, proven, hands-on, results-driven tech lead with 8 years in payments.", EN],
+    ["Experiente, tech lead com foco em pagamentos.", PT],
+    ["Uma profissional experiente, tech lead de dados com foco em custo.", PT],
+    ["Highly experienced, results-driven senior data engineer with 8 years.", EN],
+    ["Highly experienced results-driven senior data engineer with 8 years.", EN],
+    ["Tech-lead focused on payments platforms.", EN],
+    ["Tech​ lead focused on payments platforms.", EN],
+    ["Te​ch lead de dados com foco em custo.", PT],
+    ["Tech lead obsessed with reliability.", EN],
+    ["Tech lead apaixonada por dados.", PT],
+    ["Engineering manager driving platform reliability.", EN],
+    ["Tech lead experiente em pagamentos.", PT],
+    ["Team lead and engineering manager for payments.", EN],
+  ])("negative: '%s'", (text, titles) => {
+    expect(inventedRoleLabels(text, titles)).not.toEqual([]);
+  });
+
+  it.each([
+    "Kafka, Airflow e dbt em produção.",
+    "Built, tested and shipped the billing pipelines.",
+    "Pagamentos, crédito e cobrança são meu foco.",
+    "Detail-oriented work on payments platforms.",
+    "Led the migration, then the PM guild.",
+    "PM e design definiram o escopo comigo.",
+    "Lead time caiu pela metade.",
+  ])("positive: '%s'", (text) => {
+    expect(inventedRoleLabels(text, ["Senior Software Engineer"])).toEqual([]);
+  });
+
+  it("accepted by spec: a role label in the second sentence of a bullet is not checked", () => {
+    expect(
+      inventedRoleLabels("Construí pipelines em Python. Tech lead de dados com foco.", PT, true),
+    ).toEqual([]);
+  });
+});
+
+describe("label guard: residual bypasses (Pena, probe/labels-bypass2.mjs)", () => {
+  const PT = ["Engenheiro de Dados Sênior"];
+  const EN = ["Senior Software Engineer"];
+  it.each([
+    ["Experienced, pragmatic data engineer with 8 years in payments.", EN],
+    ["Experiente, pragmática engenheira de dados com foco em custo.", PT],
+    ["Pragmatic, curious and experienced data engineer with Python.", EN],
+    ["Experienced pragmatic curious hands-on data engineer with Python.", EN],
+    ["Tech-lead de dados com foco em pagamentos.", PT],
+    ["Tech\u200blead de dados com foco em pagamentos.", PT],
+    ["Tech lead apaixonada por dados.", PT],
+    ["Team lead and engineering manager for data teams.", EN],
+  ])("negative: %j", (text, titles) => {
+    expect(inventedRoleLabels(text, titles)).not.toEqual([]);
+  });
+});

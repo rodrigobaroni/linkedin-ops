@@ -1108,6 +1108,13 @@ const LABEL_FOLLOWERS = new Set([
   "from",
   "who",
   "que",
+  // re-QA of #109: "Tech lead obsessed with…", "apaixonada por…", "Engineering manager driving…", "experiente em…".
+  "obsessed",
+  "apaixonado",
+  "apaixonada",
+  "driving",
+  "experienced",
+  "experiente",
 ]);
 /** Adjectives a PT label head takes before its complement ("Líder técnica de dados"). */
 const LABEL_ADJECTIVES = new Set(["tecnico", "tecnica"]);
@@ -1116,18 +1123,36 @@ const LABEL_ADJECTIVES = new Set(["tecnico", "tecnica"]);
  * engineer", "Experienced data engineer", "Hands-on staff engineer").
  */
 const LABEL_WINDOW = 5;
+/**
+ * Leading adjectives do not count in `LABEL_WINDOW` ("Highly experienced results-driven senior data engineer…";
+ * re-QA of #109): the head may be this many words further.
+ */
+const LABEL_MAX_ADJECTIVES = 3;
 /** Leading articles skipped before the label ("A tech lead…", "Uma engenheira de dados…"; QA of #109). */
 const LABEL_MAX_ARTICLES = 2;
+/** Comma-separated groups of adjectives skipped before the label ("Strong, proven, hands-on, … tech lead"). */
+const LABEL_MAX_ADJECTIVE_GROUPS = 4;
+/** Characters that hide inside a word ("Te\u200bch lead"): removed before reading a label. */
+const INVISIBLE = /[\u00ad\u200b-\u200d\u2060\ufeff]/gu;
 
 /**
  * Text of a sentence as the label check reads it: hyphenated words joined ("hands-on", "results-driven", so the
  * halves are no stop words) and a spaced dash as a pause ("Tech Lead — pagamentos"; QA of #109).
  */
 function labelText(text: string): string {
-  return text
-    .normalize("NFKC")
-    .replace(/(\p{L})-(\p{L})/gu, "$1$2")
-    .replace(/\s+[\u2013\u2014-]+\s+/gu, ", ");
+  return (
+    text
+      .normalize("NFKC")
+      .replace(INVISIBLE, "")
+      // A hyphen joins only when a half is a stop word ("hands-on", "go-to"); otherwise it separates words
+      // ("Tech-lead", "results-driven"; re-QA of #109).
+      .replace(/(\p{L}+)-(\p{L}+)/gu, (_match, left: string, right: string) =>
+        ROLE_STOP_WORDS.has(fold(left)) || ROLE_STOP_WORDS.has(fold(right))
+          ? `${left}${right}`
+          : `${left} ${right}`,
+      )
+      .replace(/\s+[\u2013\u2014-]+\s+/gu, ", ")
+  );
 }
 
 /**
@@ -1143,6 +1168,20 @@ export function inventedRoleLabels(
   titles: readonly string[],
   firstSentenceOnly = false,
 ): string[] {
+  // An invisible character may hide inside a word ("Te\u200bch lead") or between two ("Tech\u200blead"): both
+  // readings are checked (Pena, labels-bypass2).
+  if (/[\u00ad\u200b-\u200d\u2060\ufeff]/u.test(text)) {
+    return [
+      ...new Set([
+        ...roleLabels(text.replace(INVISIBLE, ""), titles, firstSentenceOnly),
+        ...roleLabels(text.replace(INVISIBLE, " "), titles, firstSentenceOnly),
+      ]),
+    ];
+  }
+  return roleLabels(text, titles, firstSentenceOnly);
+}
+
+function roleLabels(text: string, titles: readonly string[], firstSentenceOnly: boolean): string[] {
   const titleWords = titles.map((title) => roleWords(labelText(title)).map((role) => role.word));
   const sentences = text.normalize("NFKC").split(/(?<=[.!?;])\s+/u);
   const found = new Set<string>();
@@ -1157,12 +1196,25 @@ export function inventedRoleLabels(
       start += 1;
     }
     let head = -1;
-    for (let at = start; at < Math.min(words.length, start + LABEL_WINDOW); at += 1) {
+    // Each comma-separated group of adjectives before the label moves the window ("Experienced, hands-on tech
+    // lead…", "Uma profissional experiente, tech lead…"; re-QA of #109).
+    let base = start;
+    let groups = 0;
+    for (
+      let at = start;
+      at < Math.min(words.length, base + LABEL_WINDOW + LABEL_MAX_ADJECTIVES);
+      at += 1
+    ) {
       // A role introducer ("Atuei como engenheira…", "Worked as…") makes it `inventedRoleTitles`'s phrase, and a
       // credential ("Certificação AWS Certified Solutions Architect…") `newCredentials`'s: no label.
       if (introducerAt(words, at) !== null || CREDENTIAL_WORD.test(word(at))) {
         head = -1;
         break;
+      }
+      // Before the head, a conjunction joins adjectives ("Pragmatic, curious and experienced data engineer…";
+      // Pena, labels-bypass2).
+      if (head < 0 && at > start && ROLE_CONJUNCTIONS.has(word(at)) && !words[at]?.pause) {
+        continue;
       }
       if (
         ROLE_STOP_WORDS.has(word(at)) ||
@@ -1172,6 +1224,11 @@ export function inventedRoleLabels(
         break;
       }
       if (LABEL_HEADS.has(word(at))) head = at;
+      if (words[at]?.pause === "comma" && head < 0 && groups < LABEL_MAX_ADJECTIVE_GROUPS) {
+        groups += 1;
+        base = at + 1;
+        continue;
+      }
       if (words[at]?.pause) break;
     }
     if (head < 0) continue;
@@ -1180,12 +1237,13 @@ export function inventedRoleLabels(
     while (!words[after - 1]?.pause && ROLE_SENIORITY.has(word(after))) after += 1;
     // Another role after a conjunction lists roles ("Tech lead e arquiteta de dados…"); a non-role does not
     // ("PM e design definiram…").
+    // Another role within two words after a conjunction ("Tech lead e arquiteta…", "Team lead and engineering
+    // manager…"); a non-role does not list ("PM e design definiram…").
     const listed = (at: number) =>
       ROLE_CONJUNCTIONS.has(word(at)) &&
       !words[at - 1]?.pause &&
       (ROLE_TITLE_WORDS.has(word(at + 1)) ||
-        ((ROLE_SENIORITY.has(word(at + 1)) || ROLE_MODIFIERS.has(word(at + 1))) &&
-          ROLE_TITLE_WORDS.has(word(at + 2))));
+        (!words[at + 1]?.pause && ROLE_TITLE_WORDS.has(word(at + 2))));
     const followed = (at: number) =>
       at >= words.length ||
       words[at - 1]?.pause !== null ||
