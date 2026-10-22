@@ -125,6 +125,19 @@ describe("OpenAiLlmClient (Responses API, Structured Outputs)", () => {
     expect(bodies).toHaveLength(1);
   });
 
+  it("treats an exhausted quota as permanent (no retries)", async () => {
+    const { url, bodies } = await serve([
+      json(429, {
+        error: { type: "insufficient_quota", code: "credit_balance_exhausted", message: "x" },
+      }),
+    ]);
+    await expect(client(url).complete(request)).rejects.toMatchObject({
+      kind: "QUOTA_EXCEEDED",
+      transient: false,
+    });
+    expect(bodies).toHaveLength(1);
+  });
+
   it("maps refusal, incomplete and unparsable output", async () => {
     const refusal = json(200, {
       status: "completed",

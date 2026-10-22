@@ -45,8 +45,8 @@ export interface LlmClient {
 
 /**
  * - `TIMEOUT`, `RATE_LIMITED`, `UNAVAILABLE`, `NETWORK`: transient, the job may retry.
- * - `REFUSAL`, `INCOMPLETE`, `INVALID_OUTPUT`, `INVALID_REQUEST`, `AUTH`, `NOT_CONFIGURED`: permanent for
- *   this attempt (the job decides whether a new generation is worth it).
+ * - `REFUSAL`, `INCOMPLETE`, `INVALID_OUTPUT`, `INVALID_REQUEST`, `AUTH`, `QUOTA_EXCEEDED`,
+ *   `NOT_CONFIGURED`: permanent for this attempt (the job decides whether a new generation is worth it).
  */
 export type LlmErrorKind =
   | "TIMEOUT"
@@ -58,6 +58,8 @@ export type LlmErrorKind =
   | "INVALID_OUTPUT"
   | "INVALID_REQUEST"
   | "AUTH"
+  /** Billing quota exhausted (a 429 that waiting does not fix). */
+  | "QUOTA_EXCEEDED"
   | "NOT_CONFIGURED";
 
 const TRANSIENT: ReadonlySet<LlmErrorKind> = new Set([

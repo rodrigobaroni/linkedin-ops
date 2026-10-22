@@ -141,7 +141,20 @@ export class OpenAiLlmClient implements LlmClient {
     }
 
     if (!response.ok) {
-      await response.body?.cancel().catch(() => undefined);
+      // Only the error code is read (to tell an exhausted quota from a rate limit); the body is never kept.
+      const codes = await response
+        .json()
+        .then((raw: unknown) => {
+          const error = (raw as { error?: { code?: unknown; type?: unknown } } | null)?.error;
+          return [error?.code, error?.type];
+        })
+        .catch(() => []);
+      if (
+        response.status === 429 &&
+        codes.some((code) => code === "insufficient_quota" || code === "credit_balance_exhausted")
+      ) {
+        throw new LlmError("QUOTA_EXCEEDED", { status: 429 });
+      }
       throw new LlmError(kindForStatus(response.status), {
         status: response.status,
         retryAfterMs: parseRetryAfter(response.headers.get("retry-after")),
