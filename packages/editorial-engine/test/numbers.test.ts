@@ -98,7 +98,7 @@ describe("numbers in the D4 limit and the humanizer preservation", () => {
             },
       ),
     };
-    const result = parseCvHumanizeResponse(output, { before });
+    const result = parseCvHumanizeResponse(output, { before, base: baseCv });
     expect(result.ok && result.value.revertedSegmentIds).toEqual(["seg-2"]);
   });
 });

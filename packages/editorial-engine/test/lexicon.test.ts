@@ -13,7 +13,7 @@ const fold = (text: string) =>
   text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/\s+/g, " ").trim();
 const forms = CV_COMPETENCY_LEXICON.entries.flatMap((e) => [e.term, ...(e.aliases ?? [])]);
 
-describe("cv-competency-lexicon@1.0.0 (Pena's pre-review §2, §4)", () => {
+describe("cv-competency-lexicon@1.0.1 (Pena's pre-review §2, §4; review §6)", () => {
   it("never intersects denyTerms (clients, umbrella brands, bodies, credentials, ambiguous short forms)", () => {
     const deny = new Set(CV_COMPETENCY_LEXICON.denyTerms.flatMap((g) => g.terms).map(fold));
     expect(forms.map(fold).filter((form) => deny.has(form))).toEqual([]);
@@ -38,7 +38,7 @@ describe("cv-competency-lexicon@1.0.0 (Pena's pre-review §2, §4)", () => {
 
   it("serializes to JSON", () => {
     const json = JSON.parse(JSON.stringify(CV_COMPETENCY_LEXICON)) as typeof CV_COMPETENCY_LEXICON;
-    expect(json).toMatchObject({ id: "cv-competency-lexicon", version: "1.0.0" });
+    expect(json).toMatchObject({ id: "cv-competency-lexicon", version: "1.0.1" });
     expect(json.entries.length).toBe(CV_COMPETENCY_LEXICON.entries.length);
   });
 });
@@ -179,8 +179,8 @@ describe("every qualified form that contains a denied brand passes when cited (P
   };
   const affected = forms.filter((form) => form.includes(" ") && containsDenied(form));
 
-  it("covers the ~30 forms Pena listed (Amazon *, Google *, Microsoft *, Oracle *, SAP *, Delta Lake…)", () => {
-    expect(affected.length).toBeGreaterThanOrEqual(25);
+  it("covers the forms Pena's sweep found (42 in 1.0.0) and the 1.0.1 ones (Amazon Aurora, Red Hat OpenShift…)", () => {
+    expect(affected.length).toBeGreaterThan(42);
     for (const expected of [
       "Amazon S3",
       "Google Analytics",
@@ -192,6 +192,14 @@ describe("every qualified form that contains a denied brand passes when cited (P
       "Microsoft Fabric",
       "OpenAI API",
       "Salesforce CRM",
+      "Amazon Aurora",
+      "Red Hat OpenShift",
+      "Adobe Analytics",
+      "Anthropic API",
+      "IBM Db2",
+      "TOTVS Protheus",
+      "modelo Spotify",
+      "Shell Script",
     ]) {
       expect(affected).toContain(expected);
     }
@@ -222,6 +230,36 @@ describe("every qualified form that contains a denied brand passes when cited (P
     }
   });
 
+  // Inverse sweep (Pena §6.7): each denied term inside a qualified form still fails alone, even when the cited
+  // requirement names the qualified form.
+  const insideForms = [
+    ...new Set(
+      CV_COMPETENCY_LEXICON.denyTerms
+        .flatMap((g) => g.terms)
+        .filter((term) => affected.some((form) => containsDeniedTerm(form, term))),
+    ),
+  ];
+  function containsDeniedTerm(form: string, term: string) {
+    const tokens = words(form);
+    const t = words(term);
+    return tokens.some((_w, i) => t.every((word, k) => tokens[i + k] === word));
+  }
+
+  it("the inverse sweep is not empty", () => {
+    expect(insideForms).toEqual(
+      expect.arrayContaining(["Amazon", "Google", "Delta", "Spring", "Shell"]),
+    );
+  });
+
+  for (const term of insideForms) {
+    it(`"${term}" alone fails even when the requirement cites its qualified form`, () => {
+      const qualified = affected.find((form) => containsDeniedTerm(form, term)) ?? term;
+      const guard = createEntityGuard(baseCv, postingWith(`Experiência com ${qualified}`));
+      const violations = guard.newEntities(`Liderei o uso de ${term} no time.`, ["req-9"]);
+      for (const word of words(term)) expect(violations.join(" ")).toContain(word);
+    });
+  }
+
   it("one alone-brand case per deny group still fails", () => {
     const g = createEntityGuard(
       baseCv,
@@ -235,7 +273,7 @@ describe("every qualified form that contains a denied brand passes when cited (P
       ["public-bodies-institutions", "Atendi o BACEN.", "bacen"],
       ["credentials", "Obtive a PMP.", "pmp"],
       ["common-word-names", "Voei pela Delta.", "delta"],
-      ["ambiguous-short-forms", "Desenvolvi com Spring.", "spring"],
+      ["ambiguous-short-forms (lexicon-only)", "Desenvolvi com Spring.", "spring"],
     ];
     for (const [group, text, expected] of cases) {
       expect(g.newEntities(text, ["req-9"]), group).toContain(expected);
@@ -407,6 +445,222 @@ describe("Pena's evals (cv-competency-lexicon-review.md §7)", () => {
     it("'ISO 27001 Foundation' is a credential", () => {
       const result = parseWith("ISO 27001 controls", "Concluí a ISO 27001 Foundation.");
       expect(!result.ok && result.error.issues).toContain("seg-3: hard limit, added credential");
+    });
+  });
+});
+
+describe("cv-competency-lexicon@1.0.1 (Pena review §6.1, §6.2, §6.6 R4)", () => {
+  const groupOf = (name: string) => CV_COMPETENCY_LEXICON.denyTerms.find((g) => g.group === name);
+
+  it("§6.1: Bash drops the Shell alias, Power Query drops M, Amazon Inc is gone", () => {
+    const bash = CV_COMPETENCY_LEXICON.entries.find((e) => e.term === "Bash");
+    expect(bash?.aliases).toEqual(["Shell Script", "shell scripting"]);
+    expect(forms.map(fold)).not.toContain("shell");
+    expect(forms.map(fold)).not.toContain("m");
+    expect(CV_COMPETENCY_LEXICON.denyTerms.flatMap((g) => g.terms)).not.toContain("Amazon Inc");
+  });
+
+  it("R4: names that are common words are capitalized-only; short forms are lexicon-only; credential titles any-case", () => {
+    expect(groupOf("common-word-names")).toMatchObject({ match: "capitalized" });
+    expect(groupOf("common-word-names")?.terms).toEqual(
+      expect.arrayContaining([
+        "Shell",
+        "Visa",
+        "Dia",
+        "Folha",
+        "Record",
+        "XP",
+        "SUS",
+        "Meta",
+        "Delta",
+      ]),
+    );
+    expect(groupOf("credentials-common-words")).toEqual({
+      group: "credentials-common-words",
+      match: "any-case",
+      terms: ["Solutions Architect", "Professional Data Engineer"],
+    });
+    expect(groupOf("ambiguous-short-forms")).toMatchObject({ match: "lexicon-only" });
+    expect(groupOf("ambiguous-short-forms")?.terms).toEqual(
+      expect.arrayContaining([
+        "Linear",
+        "Spring",
+        "Make",
+        "Temporal",
+        "Monday",
+        "Census",
+        "X",
+        "LeSS",
+      ]),
+    );
+    // The any-case groups never hold a common-word name the review moved to capitalized.
+    const anyCase = CV_COMPETENCY_LEXICON.denyTerms
+      .filter((g) => g.match === "any-case")
+      .flatMap((g) => g.terms);
+    for (const term of ["XP", "Shell", "Visa", "Dock", "Zurich", "Folha", "SUS", "Mackenzie"]) {
+      expect(anyCase, term).not.toContain(term);
+    }
+  });
+
+  it("Kong Gateway has no Kong alias (D4, restrictive): Kong alone fails", () => {
+    const g = createEntityGuard(baseCv, postingWith("Kong Gateway"));
+    expect(g.newEntities("Configurei o Kong Gateway.", ["req-9"])).toEqual([]);
+    expect(g.newEntities("Configurei o Kong.", ["req-9"])).toEqual(["kong"]);
+  });
+
+  it("lexicon-only short forms are still rejected as names by the closed list", () => {
+    const g = createEntityGuard(baseCv, postingWith("Python"));
+    expect(g.newEntities("Construí painéis no Dash com Python.", ["req-9"])).toEqual(["dash"]);
+    expect(g.newEntities("Orquestrei fluxos no Temporal com Python.", ["req-9"])).toEqual([
+      "temporal",
+    ]);
+  });
+});
+
+describe("Pena's tests for 1.0.1 (cv-competency-lexicon-review.md §6.5)", () => {
+  const guard = (requirement: string) => createEntityGuard(baseCv, postingWith(requirement));
+
+  it("'Automatizei rotinas na Shell' is rejected with Bash cited; lowercase shell and Shell Script pass", () => {
+    const g = guard("Bash");
+    expect(g.newEntities("Automatizei rotinas na Shell.", ["req-9"])).toEqual(["shell"]);
+    expect(g.newEntities("Atendi a Shell.", ["req-9"])).toContain("shell");
+    expect(g.newEntities("Automatizei rotinas em shell.", ["req-9"])).toEqual([]);
+    expect(g.newEntities("Automatizei rotinas com Shell Script.", ["req-9"])).toEqual([]);
+  });
+
+  it("'Migrei o banco para Amazon Aurora' passes with Aurora cited", () => {
+    expect(guard("Aurora").newEntities("Migrei o banco para Amazon Aurora.", ["req-9"])).toEqual(
+      [],
+    );
+  });
+
+  it("'Usei XP no time' is rejected with Extreme Programming cited", () => {
+    const g = guard("Extreme Programming");
+    expect(g.newEntities("Usei XP no time.", ["req-9"])).toEqual(["xp"]);
+    expect(g.newEntities("Usei Extreme Programming no time.", ["req-9"])).toEqual([]);
+  });
+
+  it("'Apliquei o modelo Spotify' passes with the model cited; 'Trabalhei para o Spotify' fails", () => {
+    const g = guard("Conhecimento do modelo Spotify");
+    expect(g.newEntities("Apliquei o modelo Spotify.", ["req-9"])).toEqual([]);
+    expect(g.newEntities("Trabalhei para o Spotify.", ["req-9"])).toEqual(["spotify"]);
+  });
+
+  it("'Atuei como Scrum Master' is rejected with Scrum cited (a new title)", () => {
+    expect(guard("Scrum").newEntities("Atuei como Scrum Master.", ["req-9"])).toEqual(["master"]);
+  });
+
+  it("'Integrei pagamentos com Visa e Mastercard' is rejected", () => {
+    expect(
+      guard("Pix").newEntities("Integrei pagamentos com Visa e Mastercard.", ["req-9"]),
+    ).toEqual(["visa", "mastercard"]);
+  });
+
+  it("'Armazenei dados no Amazon S3' passes with Amazon S3 cited; 'na Amazon' fails", () => {
+    const g = guard("Amazon S3");
+    expect(g.newEntities("Armazenei dados no Amazon S3.", ["req-9"])).toEqual([]);
+    expect(g.newEntities("Armazenei dados na Amazon.", ["req-9"])).toEqual(["amazon"]);
+  });
+
+  it("'Modelei tabelas em Delta Lake' passes with Delta Lake cited; 'Voei pela Delta' fails", () => {
+    const g = guard("Delta Lake");
+    expect(g.newEntities("Modelei tabelas em Delta Lake.", ["req-9"])).toEqual([]);
+    expect(g.newEntities("Voei pela Delta.", ["req-9"])).toContain("delta");
+  });
+
+  it("'Via API REST, integrei os sistemas' passes when API and REST are cited (R2)", () => {
+    expect(guard("API REST").newEntities("Via API REST, integrei os sistemas.", ["req-9"])).toEqual(
+      [],
+    );
+    // A REST-only requirement does not release API: the lexicon needs each term cited (§1).
+    expect(guard("REST").newEntities("Via API REST, integrei os sistemas.", ["req-9"])).toEqual([
+      "api",
+    ]);
+  });
+
+  it("'Linear regression models in Python' passes only when the posting uses 'linear' as a common word", () => {
+    expect(
+      guard("Python for linear regression").newEntities("Linear regression models in Python.", [
+        "req-9",
+      ]),
+    ).toEqual([]);
+    // Otherwise it fails closed (D4; OPENING_WORDS stays a closed list of verbs and function words).
+    expect(guard("Python").newEntities("Linear regression models in Python.", ["req-9"])).toEqual([
+      "linear",
+    ]);
+  });
+
+  it("the permanent canaries stay red", () => {
+    const g = guard("Python e Kafka");
+    expect(g.newEntities("Built a Nubank API integration with Kafka.", ["req-9"])).toContain(
+      "nubank",
+    );
+    for (const [text, name] of [
+      ["Delta delivered Python pipelines.", "delta"],
+      ["Rede entregou pipelines Python.", "rede"],
+      ["Via shipped Python pipelines.", "via"],
+      ["Meta adopted Python pipelines.", "meta"],
+      ["Meta em 2023 adotou pipelines Python.", "meta"],
+      ["Delta para clientes corporativos com Python.", "delta"],
+      ["Rede para varejo com Python.", "rede"],
+    ] as const) {
+      expect(g.newEntities(text, ["req-9"]), text).toContain(name);
+    }
+  });
+
+  it("new capitalized names at a sentence opening fail closed (no new opening construction)", () => {
+    const g = guard("Python");
+    expect(g.newEntities("Folha de pagamento automatizada com Python.", ["req-9"])).toContain(
+      "folha",
+    );
+  });
+
+  describe("through the parser (§6.4 credentials, numbers)", () => {
+    const target = resolveTargetLanguage("en");
+    function parseWith(requirement: string, text: string) {
+      const output = tailoringOutput();
+      const seg = output.tailoredCv.experiences[0]?.bullets.segments[1];
+      if (seg) {
+        seg.text = text;
+        seg.targetRequirementIds = ["req-9"];
+      }
+      output.matchAssessment.requirements.push({
+        requirementId: "req-9",
+        status: "missing",
+        cvEvidence: [],
+        rationale: "Não está no CV.",
+      });
+      return parseCvTailorResponse(output, { base: baseCv, job: postingWith(requirement), target });
+    }
+    const credential = "seg-3: hard limit, added credential";
+
+    it.each([
+      ["Azure", "Obtive a AZ-900."],
+      ["Azure data engineering", "Concluí a DP-203."],
+      ["AWS", "Concluí a SAA-C03."],
+      ["Azure", "Concluí o Azure Fundamentals."],
+      ["AWS", "Obtive a AWS Specialty em dados."],
+      ["Terraform", "Obtive o Terraform Associate."],
+      ["Kubernetes", "Atuei como Kubernetes Expert."],
+      ["Scrum", "Obtive o Professional Scrum."],
+      ["Python", "Obtive o Professional Data Engineer."],
+    ])("credential: with %s cited, %s is rejected", (requirement, text) => {
+      const result = parseWith(requirement, text);
+      expect(!result.ok && result.error.issues).toContain(credential);
+    });
+
+    it("'expert' and 'professional' as common words are not credentials", () => {
+      for (const text of [
+        "Atuei como expert em Kafka.",
+        "Built professional services integrations with Kafka.",
+      ]) {
+        const result = parseWith("Kafka", text);
+        expect(result.ok || result.error.issues, text).not.toContain(credential);
+      }
+    });
+
+    it("'Implantei data quality com BCBS 239' passes with BCBS 239 cited: 239 is not a new number", () => {
+      expect(parseWith("BCBS 239", "Implantei data quality com BCBS 239.").ok).toBe(true);
     });
   });
 });

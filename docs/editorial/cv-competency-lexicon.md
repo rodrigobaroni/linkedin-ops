@@ -1,10 +1,11 @@
-# Léxico de competências do CV (`cv-competency-lexicon@1.0.0`)
+# Léxico de competências do CV (`cv-competency-lexicon@1.0.1`)
 
-- Implementação: `packages/editorial-engine/src/career/lint/cv-competency-lexicon.v1.0.0.ts` (módulo tipado;
+- Implementação: `packages/editorial-engine/src/career/lint/cv-competency-lexicon.v1.0.1.ts` (módulo tipado;
   `JSON.stringify(CV_COMPETENCY_LEXICON)` é a forma JSON da lista) e a guarda de entidades em
   `packages/editorial-engine/src/career/entities.ts`.
 - Decisão: Maestro, 2026-10-22 (PR #89, achados da Sentinela e do Crivo). Critérios e cobertura: pré-revisão da
-  Pena (`cv-competency-lexicon-review`, critérios C1–C7, §3 e §4). Seed: Pêndulo; revisão item a item: Pena.
+  Pena (`cv-competency-lexicon-review`, critérios C1–C7, §3 e §4). Seed: Pêndulo; revisão item a item: Pena
+  (`cv-competency-lexicon-review` §6, aplicada na 1.0.1).
 - Relacionados: [`career-editorial-exception.md`](./career-editorial-exception.md) §3 e §9 (limites duros da D4),
   [`career-prompts.md`](./career-prompts.md) §3 item 9.
 
@@ -26,9 +27,11 @@ Os dígitos de um termo aceito do léxico (`ISO 27001`, `OAuth 2.0`, `GA4`) não
 
 A `denyTerms` também vale **em tempo de execução**: cada trecho é comparado com a lista por frase, sem caixa e
 sem acento, e um termo encontrado é rejeitado (salvo se já estiver no CV base). Cada grupo declara como casa:
-`any-case` para nomes distintivos, rejeitados mesmo em minúscula (`nubank`, `itaú`, `magazine luiza`), e
-`capitalized` para nomes que também são palavras comuns (`Via`, `Rede`, `Meta`, `Spring`), rejeitados só quando
-escritos como nome. Na abertura da frase, só ficam isentos nas construções fechadas e de alta confiança de uma
+`any-case` para nomes distintivos, rejeitados mesmo em minúscula (`nubank`, `itaú`, `magazine luiza`);
+`capitalized` para nomes que também são palavras comuns (`Via`, `Rede`, `Meta`, `Shell`, `Visa`, `XP`), rejeitados
+só quando escritos como nome; e `lexicon-only` para formas curtas que não são clientes (`Spring`, `Linear`,
+`Make`, `Temporal`), que **não** valem em tempo de execução: servem só para o teste de interseção as manter fora
+do léxico, e a lista fechada já as rejeita quando aparecem como nome (não estão no léxico nem no CV base). Na abertura da frase, só ficam isentos nas construções fechadas e de alta confiança de uma
 tabela **por termo** (`COMMON_OPENING_CONSTRUCTIONS`, testada): `Meta` e `Rede` seguidos de `de`, `da` ou `do`
 ("Meta de latência…", "Rede de pipelines…") e `Via` seguido de artigo ou de termo do léxico ("Via a API…",
 "Via Python…"). Qualquer outra combinação falha fechado: "Meta em 2023…", "Delta para clientes…" e "Rede para
@@ -58,9 +61,29 @@ Nunca entra, nem como alias (`denyTerms`, com teste de interseção vazia):
   `Oracle Database`, `SAP HANA`) e órgãos públicos ou universidades (C1, C4);
 - certificações e credenciais (`PMP`, `CKA`, `AWS Certified …`, `ITIL Foundation`; limite duro 1, C3). Um
   padrão entra como conhecimento (`ISO 27001`, `ITIL`), mas seguido de `certified`, `certificação`,
-  `foundation`, `practitioner`, `agilist` ou `belt` é rejeitado como credencial;
-- formas curtas ambíguas (`Next`, `Neon`, `Delta`, `Stone`, `Rede`, `Spring`, `Express`): só a forma qualificada
-  (`Next.js`, `Neon Postgres`, `Delta Lake`, `Spring Boot`, `Express.js`) (C2, C5).
+  `foundation`, `practitioner`, `agilist`, `belt`, `associate`, `specialty` ou `fundamentals` é rejeitado como
+  credencial, assim como códigos de prova (`AZ-900`, `DP-203`, `SAA-C03`), `expert` logo depois de um termo do
+  léxico (`Kubernetes Expert`) e `Professional` logo antes de um termo do léxico ou de `Data Engineer`,
+  `Cloud Architect` ou `Machine Learning Engineer` (`expert` e `professional` sozinhos são palavras comuns).
+  A regra vale para **todo** trecho que difere da fonte, não só o `acrescentado` (Sentinela, PR #91): um trecho
+  `reescrito` ou um `original` alterado só pode manter (ou encurtar) a frase de credencial que já está nos itens
+  do CV base que ele cita, e só encurta preservando um marcador inequívoco (`Certified`, `Associate`,
+  `Professional`, `Specialty`, código de prova…): "AWS Certified Solutions Architect" → "AWS Certified" passa;
+  nunca acrescenta ou estende uma ("Trabalhei com Kafka" → "Trabalhei com Kafka associate" reprova); o
+  humanizador que acrescenta uma credencial tem o trecho revertido. Uma credencial também nunca vira **cargo**
+  (Sentinela S-1): as palavras de uma credencial do CV base até um substantivo de cargo ("Solutions Architect",
+  "Data Engineer", "Kubernetes Administrator") reprovam em qualquer trecho, salvo dentro da própria credencial
+  com marcador (e não precedida de introdutor de função como "Atuei como", "No papel de" ou "Worked as")
+  ou quando o CV base já tem esse cargo como título de experiência; o substantivo de cargo sozinho
+  só reprova com maiúscula ("Architect", nunca "backend engineer"). O humanizador recebe o CV base e
+  segue as mesmas regras: o trecho que ganha credencial ou cargo vindo de credencial é revertido;
+- formas curtas ambíguas (`Next`, `Neon`, `Delta`, `Stone`, `Rede`, `Spring`, `Express`, `Kong`, `XP`, `LeSS`):
+  só a forma qualificada (`Next.js`, `Neon Postgres`, `Delta Lake`, `Spring Boot`, `Express.js`,
+  `Kong Gateway`, `Extreme Programming`, `Large-Scale Scrum`) (C2, C5).
+
+Exceções registradas: `VTEX` (marca e plataforma ao mesmo tempo, como `Salesforce`) entra porque é o produto que
+as vagas de varejo citam e a guarda exige requisito citado. `Swift` fica: `SWIFT` (a rede bancária) dobra para o
+mesmo token, mas não é cliente nem empregador nomeável num bullet, e o requisito precisa citá-lo.
 
 ## 3. Custo de um termo legítimo fora do léxico
 
@@ -82,8 +105,25 @@ verificador, ele é indistinguível de uma palavra comum. A mitigação é a pro
 acrescentado e por quê, e Rodrigo revisa antes de baixar o PDF (`career-editorial-exception.md` §4 e §5).
 Quando um nome assim for observado, ele entra na `denyTerms` (nova versão).
 
+O mesmo vale para um cliente com nome de palavra comum (grupo `capitalized`) escrito em minúscula no meio da frase
+("pagamentos via visa"): a `denyTerms` não o pega e o caminho geral não pega minúsculas.
+
+Na abertura da frase, os nomes `capitalized` acrescentados na 1.0.1 (`Folha`, `Dia`, `Record`, `Shell`…) não
+ganharam construção na tabela fechada `COMMON_OPENING_CONSTRUCTIONS`: "Folha de pagamento automatizada…" ou "Dia
+a dia…" reprova e custa uma regeneração. É falha fechada por decisão (Maestro, 2026-10-22); uma construção nova
+só entra na tabela com revisão da Sentinela.
+
+Uma forma curta `lexicon-only` que abre a frase como palavra comum ("Linear regression models…") só passa se a
+palavra aparecer em minúscula no CV base ou na vaga; senão reprova (a lista de palavras de abertura continua
+fechada a verbos e palavras gramaticais).
+
+Uma frase mais longa do léxico vence a mais curta: com a vaga citando só `Kafka`, "Kafka Connect" reprova, porque
+é outra entrada (`Kafka Connect`) que o requisito não cita. O mesmo vale para `Azure Databricks`, `Spark MLlib` e
+`Cloud SQL`.
+
 ## 5. Histórico
 
 | Data | Versão | Mudança |
 |---|---|---|
 | 2026-10-22 | 1.0.0 | Seed a partir da pré-revisão da Pena (C1–C7, cobertura §3, `denyTerms` §4); `denyTerms` aplicada em tempo de execução com modos `any-case` e `capitalized` (Sentinela, PR #89). |
+| 2026-10-22 | 1.0.1 | Revisão item a item da Pena (§6). §6.1: `Bash` troca o alias `Shell` por `Shell Script` e `shell scripting` (`Shell` vai para `denyTerms`); `Power Query` perde o alias `M`; sai `Amazon Inc` (redundante); `Swift` fica, com nota. §6.2: `denyTerms` passa de 197 para 409 termos (bancos, seguradoras, varejo, indústria, consultorias, big techs, órgãos, universidades, plataformas de curso, credenciais). §6.3: 198 entradas novas, 339 → 537 (cloud, dados, ML/IA, engenharia, produto, padrões e regulação) e `Open Banking` como alias de `Open Finance`. §6.4: credenciais `associate`, `specialty`, `fundamentals`, códigos de prova e `expert`/`Professional` junto de termo do léxico. §6.6 R4: modo novo `lexicon-only` (o grupo `ambiguous-short-forms` passa a ele, com `LeSS`, `Temporal`, `Make`, `Monday`, `X`…); nomes de palavra comum (`Shell`, `Visa`, `Dia`, `Folha`, `XP`, `SUS`…) em `common-word-names` (`capitalized`); grupo novo `credentials-common-words` (`any-case`, Sentinela PR #91: `solutions architect` em minúscula também é credencial ou cargo; `Solutions Architect`, `Professional Data Engineer`). Check de credencial em todo trecho diferente da fonte (`reescrito`, `original` alterado e humanizador), não só no `acrescentado`. Decisões restritivas (D4): `Kong Gateway` sem o alias `Kong`; `Boa Vista` e `Conta Azul` em `capitalized` (palavras comuns); plurais `SLAs`, `SLOs`, `SLIs` e `ADRs` como aliases. A versão do léxico passa a constar em `promptVersions` do resultado do `cv.tailor` (ADR-0005 §3). Prompts inalterados. |

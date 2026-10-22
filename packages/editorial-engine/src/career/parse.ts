@@ -22,7 +22,12 @@ import {
 import type { z } from "zod";
 import { err, ok, type EngineError, type Result } from "../result.js";
 import { sanitizeUntrustedText } from "../untrusted.js";
-import { createEntityGuard, withoutLexiconTerms } from "./entities.js";
+import {
+  createEntityGuard,
+  newCredentials,
+  titlesFromCredentials,
+  withoutLexiconTerms,
+} from "./entities.js";
 import { cvFullText, cvItemTexts, normalizeCvIds } from "./ids.js";
 import type { TargetLanguage } from "./language.js";
 import { lintText } from "./lint/checker.js";
@@ -140,15 +145,6 @@ export function parseJobExtractResponse(
 // cv-tailor
 // ---------------------------------------------------------------------------------------------------
 
-/**
- * D4 hard limits (career-editorial-exception.md §3, confirmed by Rodrigo on 2026-10-22, §9). Fixed rule:
- * employer, title, dates, education, certifications and languages are never generated (copied from the base CV
- * by id); added segments carry no number absent from the base CV and no credential; no added or rewritten
- * segment names an entity absent from the base CV (`entities.ts`).
- */
-const CREDENTIAL_PATTERN =
-  /(?<![\p{L}\p{N}])(?:certifica\p{L}*|certified|certificate\p{L}*|diploma\p{L}*|bacharel\p{L}*|bachelor\p{L}*|mestrado|mestre|master'?s|mba|ph\.?d|doutorado|doutor|licen[cç]a\p{L}*|licen[cs]e[ds]?|p[oó]s-gradua\p{L}*|foundation|practitioner|agilist|belt)(?![\p{L}\p{N}])/iu;
-
 export interface ParsedCvTailoring extends InjectionReport {
   /** Tailored CV in display order, provenance enforced. */
   cv: TailoredCvContent;
@@ -158,6 +154,13 @@ export interface ParsedCvTailoring extends InjectionReport {
   promotedSegmentIds: string[];
 }
 
+/**
+ * D4 hard limits (career-editorial-exception.md §3, confirmed by Rodrigo on 2026-10-22, §9). Fixed rule:
+ * employer, title, dates, education, certifications and languages are never generated (copied from the base CV
+ * by id); added segments carry no number absent from the base CV and no credential, rewritten and changed
+ * `original` segments no credential absent from their cited items; no added or rewritten segment names an entity
+ * absent from the base CV (`entities.ts`).
+ */
 export function parseCvTailorResponse(
   raw: unknown,
   context: { base: CvStructured; job: JobPostingExtracted; target: TargetLanguage },
@@ -261,6 +264,8 @@ export function parseCvTailorResponse(
   // Provenance (post-processing 3) and hard limits on additions (post-processing 4).
   const baseNumbers = new Set(numericTokens(cvFullText(base)));
   const entityGuard = createEntityGuard(base, job);
+  const baseText = cvFullText(base);
+  const titles = base.experiences.map((experience) => experience.title);
   const promotedSegmentIds: string[] = [];
   for (const { segment } of listSegments(draft.data)) {
     for (const id of segment.targetRequirementIds) {
@@ -271,13 +276,17 @@ export function parseCvTailorResponse(
     if (entityGuard.newEntities(segment.text, segment.targetRequirementIds).length > 0) {
       issues.push(`${segment.segmentId}: hard limit, new entity`);
     }
+    // A credential's words never become a title the base CV does not have (Sentinela S-1, PR #91).
+    if (titlesFromCredentials(segment.text, baseText, titles).length > 0) {
+      issues.push(`${segment.segmentId}: hard limit, title from a credential`);
+    }
     if (segment.provenance === "added") {
       if (
         numericTokens(withoutLexiconTerms(segment.text)).some((token) => !baseNumbers.has(token))
       ) {
         issues.push(`${segment.segmentId}: hard limit, added number`);
       }
-      if (CREDENTIAL_PATTERN.test(segment.text)) {
+      if (newCredentials(segment.text).length > 0) {
         issues.push(`${segment.segmentId}: hard limit, added credential`);
       }
       continue;
@@ -288,6 +297,11 @@ export function parseCvTailorResponse(
       continue;
     }
     const sourceText = sources.join("\n");
+    // Rewritten and changed `original` text may keep a credential of its cited items, never add one (Sentinela
+    // PR #91); an unchanged `original` holds exactly its source's.
+    if (newCredentials(segment.text, sourceText, titles).length > 0) {
+      issues.push(`${segment.segmentId}: hard limit, credential not in cited base items`);
+    }
     const sourceNumbers = new Set(numericTokens(sourceText));
     if (
       numericTokens(withoutLexiconTerms(segment.text)).some((token) => !sourceNumbers.has(token))
@@ -329,12 +343,12 @@ export interface ParsedCvHumanization extends InjectionReport {
 
 /**
  * Preservation (humanizer-cv-rules.md §3.1, career-prompts.md §4): same segments in the same order (else the
- * whole output is invalid); per segment, same numbers, no entity added or removed and no new lint marker,
- * otherwise the previous text is kept. A changed `original` segment becomes `rewritten`; `added` stays `added`.
+ * whole output is invalid); per segment, same numbers, no entity added or removed, no new credential or title
+ * from a base CV credential and no new lint marker, otherwise the previous text is kept. A changed `original` segment becomes `rewritten`; `added` stays `added`.
  */
 export function parseCvHumanizeResponse(
   raw: unknown,
-  context: { before: TailoredCvContent },
+  context: { before: TailoredCvContent; base: CvStructured },
 ): Result<ParsedCvHumanization, EngineError> {
   const parsed = CvHumanizationOutputSchema.safeParse(raw);
   if (!parsed.success) return err(schemaError(parsed.error));
@@ -352,6 +366,8 @@ export function parseCvHumanizeResponse(
   const blocks = new Map(before.map(({ segment, block }) => [segment.segmentId, block]));
   const updates = new Map(output.map((segment) => [segment.segmentId, segment]));
   const revertedSegmentIds: string[] = [];
+  const baseText = cvFullText(context.base);
+  const titles = context.base.experiences.map((experience) => experience.title);
 
   const cv = mapSegments(context.before, (segment: CvSegment): CvSegment => {
     const update = updates.get(segment.segmentId);
@@ -368,7 +384,14 @@ export function parseCvHumanizeResponse(
     const newMarker = lintText(segment.segmentId, update.text, language, block).some(
       (finding) => !oldMarkers.has(finding.entryId),
     );
-    if (!sameNumbers(segment.text, update.text) || !entitiesKept || newMarker) {
+    // A credential the segment did not already hold (`Kafka associate`), or a title made of a base CV
+    // credential's words ("data engineer" out of "Google Professional Data Engineer"), is an addition
+    // (Sentinela PR #91, S-1).
+    const oldTitles = new Set(titlesFromCredentials(segment.text, baseText, titles));
+    const newCredential =
+      newCredentials(update.text, segment.text, titles).length > 0 ||
+      titlesFromCredentials(update.text, baseText, titles).some((title) => !oldTitles.has(title));
+    if (!sameNumbers(segment.text, update.text) || !entitiesKept || newMarker || newCredential) {
       revertedSegmentIds.push(segment.segmentId);
       return segment;
     }
