@@ -148,7 +148,11 @@ export class PrismaJobPostingStore implements JobPostingStore {
           },
         },
       );
-      await this.enqueueTailor(sqlExecutor(tx), { jobPostingId, attempt: meta.attempt });
+      await this.enqueueTailor(sqlExecutor(tx), {
+        jobPostingId,
+        attempt: meta.attempt,
+        correlationId: meta.correlationId,
+      });
     });
   }
 

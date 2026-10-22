@@ -122,6 +122,7 @@ describe("registerWorkers", () => {
       correlationId: "req_01JABCDEF",
       requestedBy: { type: "USER", id: "018f6b1e-7c2a-7b3c-9d4e-000000000001" },
       jobPostingId: "018f6b1e-7c2a-7b3c-9d4e-000000000020",
+      attempt: 1,
     };
     const results = await (runner as unknown as (jobs: unknown[]) => Promise<unknown>)([
       {

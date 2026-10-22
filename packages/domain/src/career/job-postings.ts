@@ -71,6 +71,8 @@ export type CareerAuditMeta = CvAuditMeta;
 export interface CvTailorJob {
   jobPostingId: string;
   attempt: number;
+  /** The job that enqueues it, when a worker does (the API uses its request's). */
+  correlationId?: string;
 }
 
 /** One `job.fetch` to enqueue: `groupId` is the domain of the link, or `pasted` (no site is touched). */

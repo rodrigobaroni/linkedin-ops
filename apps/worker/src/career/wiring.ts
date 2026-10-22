@@ -16,7 +16,7 @@ export const cryptoRng: Rng = {
 
 export interface CareerStores {
   cvStore: CvBaseDraftStore;
-  /** Career PR 3. Without it `job.fetch` and `cv.tailor` are provisioned but not consumed. */
+  /** Job postings (career PR 3b). Without it `job.fetch` and `cv.tailor` are provisioned but not consumed. */
   jobStore?: JobPostingStore;
   fetcher?: JobPageFetcher;
 }
