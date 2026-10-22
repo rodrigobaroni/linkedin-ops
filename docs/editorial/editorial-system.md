@@ -37,6 +37,10 @@ Ver `upstream-mapping.md` §1.1.
 8. **Rodrigo decide.** Em modo assistido (padrão) nada é publicado sem aprovação. Em modos de
    piloto automático, a razão da aprovação automática fica registrada e auditável.
 
+> Exceção única ao princípio 1, restrita ao CV adaptado do módulo Carreira (decisão D4 de Rodrigo):
+> [`career-editorial-exception.md`](./career-editorial-exception.md). Não vale para posts nem para nenhuma outra
+> parte deste sistema.
+
 ---
 
 ## 2. Pilares editoriais
@@ -532,6 +536,9 @@ etapa falha e retorna o texto anterior com aviso).
 8. Edição manual de Rodrigo é soberana; o sistema só avisa se o texto editado perdeu refs.
 9. Tradução para inglês passa pela verificação factual de novo (números e nomes idênticos).
 10. Qualquer violação detectada bloqueia aprovação automática e registra evento de auditoria.
+
+Estas regras não aceitam a exceção D4 do módulo Carreira como justificativa em nenhum caso; a exceção vale só
+para o CV adaptado ([`career-editorial-exception.md`](./career-editorial-exception.md)).
 
 ---
 

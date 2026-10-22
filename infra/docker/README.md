@@ -13,7 +13,7 @@ que o job `compose-smoke` valida.
 | `s3`       | `rustfs/rustfs:1.0.1@sha256:1803fa…` (digest multiarch)              | Object storage S3-compatible só em dev/CI (`docker-compose.dev.yml`) | `127.0.0.1:${S3_PORT}`         |
 | `s3-init`  | `amazon/aws-cli:2.38.1@sha256:733d5b…`                               | One-shot (só dev/CI): cria o bucket privado via S3 padrão e sai      | —                              |
 | `api`      | build `apps/api/Dockerfile`                                          | API NestJS (placeholder até T-008)                                   | `127.0.0.1:3001`               |
-| `worker`   | build `apps/worker/Dockerfile`                                       | Worker pg-boss (placeholder até T-006)                               | —                              |
+| `worker`   | build `apps/worker/Dockerfile`                                       | Worker pg-boss (filas do módulo Carreira; healthcheck por heartbeat) | —                              |
 | `web`      | build `apps/web/Dockerfile`                                          | Dashboard Next.js                                                    | `127.0.0.1:3000`               |
 | `caddy`    | `caddy:2.11.7-alpine@sha256:d8542f…`                                 | Borda TLS, `/api/*` → api, `/` → web (`infra/caddy`)                 | `${CADDY_BIND_ADDRESS}:80/443` |
 
@@ -55,8 +55,14 @@ Obrigatórias (`${VAR:?}`): `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`,
 `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`. Com default seguro:
 `S3_FORCE_PATH_STYLE`, `APP_TIMEZONE`, `LOG_LEVEL`, `IMAGE_TAG`, `CADDY_SITE_ADDRESS`, `CADDY_TLS`,
 `CADDY_BIND_ADDRESS`, `CADDY_HSTS_MAX_AGE`, `POSTGRES_PORT` e `S3_PORT` (portas só no override de dev).
-O override de dev sobrescreve `DATABASE_URL` (host `postgres`) e `S3_ENDPOINT` (`http://s3:9000`) para
-`api` e `worker`; `web` não recebe `env_file` nem segredos (ADR-0001).
+O override de dev sobrescreve `DATABASE_URL` (host `postgres`) para `api` e `worker` e `S3_ENDPOINT`
+(`http://s3:9000`) para a `api`.
+
+Nenhum serviço usa `env_file` compartilhado (Sentinela, PR #89): `api` e `worker` têm cada um a **sua** lista
+de variáveis em `environment:`, interpoladas do `.env`. A `api` nunca recebe `OPENAI_*`; o `worker` nunca
+recebe `SESSION_SECRET`, `ENCRYPTION_KEY(S)`, `LINKEDIN_*` nem `S3_*`; `web` não recebe segredos (ADR-0001). O
+`compose-smoke` confere o ambiente efetivo de cada contêiner contra uma allowlist exata de nomes por serviço
+(variável a mais ou a menos falha; valores nunca aparecem).
 
 ## Object storage: RustFS em dev/CI
 
@@ -83,8 +89,9 @@ BuildKit `docker/dockerfile:1.7` também por digest, pnpm na versão de `package
 runtime não-root (`node`). O stage `prod-deps` instala com `--ignore-scripts` (o `prepare` raiz, husky, não existe sem
 devDependencies) e em seguida roda `pnpm rebuild --pending -r --filter <app>...`, que executa só os build
 scripts permitidos em `onlyBuiltDependencies` (`pnpm-workspace.yaml`). A api expõe `GET /api/v1/health`
-por um listener placeholder (`apps/api/src/server.ts`) até T-008; o worker ainda é um placeholder que
-encerra logo após iniciar (health check chega com T-006).
+por um listener placeholder (`apps/api/src/server.ts`) até T-008. O worker (Carreira PR 1) roda pg-boss no
+schema `pgboss` e, sem HTTP, grava um arquivo de heartbeat enquanto o banco responde; o healthcheck
+(`apps/worker/dist/health/healthcheck.js`) falha quando o heartbeat passa de 60 s.
 
 Condições registradas na revisão do PR #80 (Atlas 2), também anotadas em T-008 e T-006:
 
@@ -104,5 +111,5 @@ o digest do `node` vive no default de um `ARG NODE_IMAGE`; se o Dependabot não 
 Dependabot e se renova manualmente (ou em T-062, junto com o `trivy image`).
 
 O `compose-smoke` constrói as imagens de runtime a partir do arquivo base e as testa fora do Compose
-(web serve HTML, api responde o health JSON, worker sai com código 0), além da combinação de dev com
-Caddy.
+(web serve HTML, api responde o health JSON, worker carrega os módulos e falha fechado sem ambiente), além da
+combinação de dev com Caddy, em que o worker precisa ficar `healthy` contra o PostgreSQL.

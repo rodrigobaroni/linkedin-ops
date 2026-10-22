@@ -13,7 +13,10 @@
 #   docker-compose.dev.yml (which also holds the dev/CI object store and the in-network overrides).
 #   Production points DATABASE_URL and S3_ENDPOINT at the managed services through .env (T-056).
 # - Only Caddy publishes ports here (bound to CADDY_BIND_ADDRESS, 127.0.0.1 by default).
-# - `apps/web` never receives secrets (no env_file). Only api/worker read the root .env.
+# - No service uses env_file: each one gets only the variables it needs, interpolated from the root .env
+#   (Sentinela, PR #89). `web` gets no secrets (ADR-0001); `api` never gets OpenAI credentials; `worker` never
+#   gets the session secret, the token-encryption key or LinkedIn credentials (ADR-0002, ADR-0008). Optional
+#   variables use `:-` and the apps validate them fail-closed at boot (validateRuntimeEnv/validateWorkerEnv).
 
 name: linkedin-ops
 
@@ -30,6 +33,9 @@ x-app-env: &app-env
   APP_TIMEZONE: ${APP_TIMEZONE:-America/Sao_Paulo}
   LOG_LEVEL: ${LOG_LEVEL:-info}
   DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+
+# Object storage credentials: api only for now (the worker gets them when it renders media, not before).
+x-s3-env: &s3-env
   S3_ENDPOINT: ${S3_ENDPOINT:?set S3_ENDPOINT in .env}
   S3_REGION: ${S3_REGION:?set S3_REGION in .env}
   S3_BUCKET: ${S3_BUCKET:?set S3_BUCKET in .env}
@@ -65,11 +71,20 @@ services:
       context: ../..
       dockerfile: apps/api/Dockerfile
     image: linkedin-ops/api:${IMAGE_TAG:-dev}
-    env_file:
-      - path: ../../.env
-        required: true
     environment:
-      <<: *app-env
+      <<: [*app-env, *s3-env]
+      APP_BASE_URL: ${APP_BASE_URL:?set APP_BASE_URL in .env}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      # Token encryption (ADR-0004): ENCRYPTION_KEY, or the ENCRYPTION_KEYS ring with its active version.
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      ENCRYPTION_KEYS: ${ENCRYPTION_KEYS:-}
+      ENCRYPTION_ACTIVE_KEY_VERSION: ${ENCRYPTION_ACTIVE_KEY_VERSION:-}
+      LINKEDIN_CLIENT_ID: ${LINKEDIN_CLIENT_ID:-}
+      LINKEDIN_CLIENT_SECRET: ${LINKEDIN_CLIENT_SECRET:-}
+      LINKEDIN_REDIRECT_URI: ${LINKEDIN_REDIRECT_URI:-}
+      LINKEDIN_PKCE: ${LINKEDIN_PKCE:-}
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
+      JOB_FETCH_LINKEDIN: ${JOB_FETCH_LINKEDIN:-enabled}
       # validateRuntimeEnv (T-008): the api listens on API_HOST:API_PORT. 0.0.0.0 is required inside the
       # container (Caddy reaches api:3001); outside production the default would be 127.0.0.1.
       API_PORT: "3001"
@@ -92,13 +107,19 @@ services:
       context: ../..
       dockerfile: apps/worker/Dockerfile
     image: linkedin-ops/worker:${IMAGE_TAG:-dev}
-    env_file:
-      - path: ../../.env
-        required: true
     environment:
       <<: *app-env
-    # TODO(T-006): liveness check for the pg-boss worker (no HTTP; e.g. heartbeat file or pg-boss
-    # `getQueueSize`) once the worker runtime exists.
+      # Mandatory in production, checked by validateWorkerEnv (a missing key must not stop the api deploy).
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      JOB_FETCH_LINKEDIN: ${JOB_FETCH_LINKEDIN:-enabled}
+    # Liveness without HTTP: heartbeat file written while pg-boss runs and the database answers (ADR-0002).
+    healthcheck:
+      test: ["CMD", "node", "apps/worker/dist/health/healthcheck.js"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy

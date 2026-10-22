@@ -44,7 +44,21 @@ be observable. The approved stack names pg-boss; this ADR fixes how it is used.
    duration, error class (never payload bodies with external content or tokens). Dead-letter growth and
    missed cron (no `CurationRun` by 09:30) raise alerts.
 
-## Alternatives considered
+## Amendment (2026-10-22, Career PR 1)
+
+- **Worker bootstrap.** Item 4 is relaxed for now: `apps/worker` boots as a plain composition root (pg-boss +
+  Pino, `apps/worker/src/index.ts`), not a NestJS application context. The worker does not call domain
+  services yet; the Career handlers depend on ports (`apps/worker/src/career/ports.ts`) that the domain binds in
+  Career PR 2/3. A NestJS context (or another container) is reconsidered when the worker needs the domain's
+  application services. Decision by the Maestro on 2026-10-22; Atlas confirms in review.
+- **Dead letter without retries.** Handlers run with pg-boss `perJobResults`; a permanent failure (invalid
+  payload, `PermanentJobError`) returns `deadletter`, which skips the remaining retries (item 7).
+- **Per-domain serialization.** `job.fetch` runs with `groupConcurrency: 1`; producers send
+  `group: { id: <registrable domain> }` (ADR-0008 §4).
+- **Liveness.** No HTTP: a heartbeat file is rewritten while pg-boss runs and the database answers; the
+  container healthcheck fails when it is older than 60 s.
+
+
 
 - **BullMQ / Redis.** Rejected: adds a stateful service to operate and back up; pg-boss gives
   transactional enqueue with the data we already persist.

@@ -1,0 +1,113 @@
+import { describe, expect, it } from "vitest";
+import {
+  listSegments,
+  parseCvHumanizeResponse,
+  parseCvTailorResponse,
+  resolveTargetLanguage,
+} from "../src/index.js";
+import type { TailoredCvContent } from "@linkedin-ops/contracts";
+import { baseCv, job, tailoringOutput } from "./fixtures/career.js";
+
+function before(): TailoredCvContent {
+  const result = parseCvTailorResponse(tailoringOutput(), {
+    base: baseCv,
+    job,
+    target: resolveTargetLanguage("en"),
+  });
+  if (!result.ok) throw new Error(result.error.issues.join());
+  return result.value.cv;
+}
+
+/** Humanizer output echoing every segment, with `changes` applied. */
+function output(cv: TailoredCvContent, changes: Record<string, string>) {
+  return {
+    schemaVersion: "1.0",
+    injectionSuspected: false,
+    injectionEvidence: null,
+    segments: listSegments(cv).map(({ segment }) => {
+      const text = changes[segment.segmentId];
+      return text === undefined
+        ? { segmentId: segment.segmentId, text: segment.text, changed: false, changeReason: null }
+        : { segmentId: segment.segmentId, text, changed: true, changeReason: "Ajuste de estilo." };
+    }),
+  };
+}
+
+function textOf(cv: TailoredCvContent, segmentId: string) {
+  return listSegments(cv).find(({ segment }) => segment.segmentId === segmentId)?.segment;
+}
+
+describe("parseCvHumanizeResponse (humanizer-cv-rules.md §3.1)", () => {
+  it("applies a clean rewrite and keeps provenance", () => {
+    const cv = before();
+    const result = parseCvHumanizeResponse(
+      output(cv, {
+        "seg-2": "Led the billing service move to durable queues, cutting incidents by 40%.",
+      }),
+      { before: cv },
+    );
+    expect(result.ok && result.value.revertedSegmentIds).toEqual([]);
+    expect(result.ok && textOf(result.value.cv, "seg-2")).toMatchObject({
+      provenance: "rewritten",
+    });
+  });
+
+  it("reverts a segment whose numbers changed", () => {
+    const cv = before();
+    const result = parseCvHumanizeResponse(
+      output(cv, {
+        "seg-2": "Led the billing migration to durable queues, cutting incidents by 45%.",
+      }),
+      { before: cv },
+    );
+    expect(result.ok && result.value.revertedSegmentIds).toEqual(["seg-2"]);
+    expect(result.ok && textOf(result.value.cv, "seg-2")?.text).toContain("40%");
+  });
+
+  it("reverts a segment that gained an entity", () => {
+    const cv = before();
+    const result = parseCvHumanizeResponse(
+      output(cv, { "seg-3": "Evaluated Kafka and Kubernetes for event streaming." }),
+      { before: cv },
+    );
+    expect(result.ok && result.value.revertedSegmentIds).toEqual(["seg-3"]);
+  });
+
+  it("reverts a segment that gained a lint marker (over-correction guard)", () => {
+    const cv = before();
+    const result = parseCvHumanizeResponse(
+      output(cv, { "seg-3": "Passionate about evaluating Kafka for event streaming." }),
+      { before: cv },
+    );
+    expect(result.ok && result.value.revertedSegmentIds).toEqual(["seg-3"]);
+  });
+
+  it("promotes a changed `original` to `rewritten` and never demotes `added`", () => {
+    const cv = before();
+    const result = parseCvHumanizeResponse(
+      output(cv, {
+        "seg-4": "PostgreSQL (production)",
+        "seg-3": "Evaluated Kafka for streaming events.",
+      }),
+      { before: cv },
+    );
+    expect(result.ok && textOf(result.value.cv, "seg-4")?.provenance).toBe("rewritten");
+    expect(result.ok && textOf(result.value.cv, "seg-3")?.provenance).toBe("added");
+  });
+
+  it("ignores text of segments marked unchanged", () => {
+    const cv = before();
+    const raw = output(cv, {});
+    raw.segments[0] = { ...raw.segments[0]!, text: "Something else entirely." };
+    const result = parseCvHumanizeResponse(raw, { before: cv });
+    expect(result.ok && result.value.cv).toEqual(cv);
+  });
+
+  it("rejects the whole output when segments are added, removed or reordered", () => {
+    const cv = before();
+    const raw = output(cv, {});
+    raw.segments.reverse();
+    const result = parseCvHumanizeResponse(raw, { before: cv });
+    expect(!result.ok && result.error.code).toBe("SEMANTIC_INVALID");
+  });
+});

@@ -50,6 +50,8 @@ catalog:
   swagger-ui-dist: ^5.34.0
   # OIDC id_token verification for the LinkedIn connection (RS256 + JWKS; T-038, Sentinela A-2). No deps.
   jose: 6.2.12
+  # Durable jobs (ADR-0002, Career PR 1): pg-boss pinned exactly (two-week soak rule; 12.37.0 of 2026-10-05).
+  pg-boss: 12.37.0
   # CV base upload (career module, PR 2): multipart parsing on the one route that declares it, and PDF text
   # extraction in pure JS (pdf.js serverless build, no native binary; `@napi-rs/canvas` peer stays absent).
   "@fastify/multipart": 10.1.2
@@ -62,3 +64,10 @@ onlyBuiltDependencies:
   - argon2
   - esbuild
   - prisma
+
+# Two-week soak rule for transitive dependencies of pg-boss 12.37.0 (Career PR 1): its peer
+# `@opentelemetry/api` (auto-installed) and `cron-parser` resolved to releases younger than 14 days on
+# 2026-10-21. Pinned to the newest soaked versions; remove when Dependabot proposes soaked bumps.
+overrides:
+  "@opentelemetry/api": 1.9.1
+  cron-parser: 5.10.1

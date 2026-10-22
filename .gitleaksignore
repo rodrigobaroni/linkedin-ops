@@ -21,3 +21,7 @@ docs/backlog/README.md:generic-api-key:43
 # Merge of main into the T-015 branch (e2a60b6): diffed against its first parent it re-introduces the T-008
 # PKCE field declaration already allowed above for commit 2c73935 (field name and type only, no value).
 e2a60b62ff8465f2f551d6916a0cd077891d1d6b:packages/domain/src/env/runtime.ts:linkedin-client-secret:51
+# Worker OpenAI adapter test, line 7 of commit d39953e only: a fictional canary key ("sk-test-canary-…") used
+# to prove the adapter never logs it. It is now assembled at run time, so the working tree no longer matches
+# (PR #89).
+d39953eaa201b97f5f918eb7eea565e0b63ce386:apps/worker/test/openai.test.ts:generic-api-key:7

@@ -22,7 +22,10 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm install --frozen-lockfile --store-dir /pnpm/store --filter "@linkedin-ops/worker..."
 
 FROM deps AS build
-RUN pnpm --filter "@linkedin-ops/worker..." run build
+# Turbo is not used here, so the Prisma client of @linkedin-ops/domain is generated explicitly before the
+# build (the worker imports the domain's runtime-env validation, ADR-0002).
+RUN pnpm --filter "@linkedin-ops/domain" run generate \
+    && pnpm --filter "@linkedin-ops/worker..." run build
 
 # Development image (docker-compose.dev.yml): toolchain + first build, sources bind-mounted on top.
 FROM build AS dev
@@ -44,7 +47,12 @@ ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=prod-deps --chown=node:node /app /app
 COPY --from=build --chown=node:node /app/packages/contracts/dist /app/packages/contracts/dist
+COPY --from=build --chown=node:node /app/packages/editorial-engine/dist /app/packages/editorial-engine/dist
+# @linkedin-ops/domain: compiled sources plus the generated Prisma client (dist/generated).
+COPY --from=build --chown=node:node /app/packages/domain/dist /app/packages/domain/dist
 COPY --from=build --chown=node:node /app/apps/worker/dist /app/apps/worker/dist
 USER node
-# TODO(T-006): HEALTHCHECK (no HTTP; heartbeat) once the pg-boss worker exists.
+# No HTTP: the worker rewrites a heartbeat file while pg-boss runs and the database answers; the check fails
+# when it is older than 60 s. The process refuses to start without a valid production environment.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=4 CMD ["node", "apps/worker/dist/health/healthcheck.js"]
 CMD ["node", "apps/worker/dist/index.js"]

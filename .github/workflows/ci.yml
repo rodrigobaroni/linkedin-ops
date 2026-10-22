@@ -164,6 +164,11 @@ jobs:
       - name: API readiness and auth against PostgreSQL (Testcontainers, T-008/T-015)
         run: pnpm --filter @linkedin-ops/api test:integration
 
+      - name: Worker on pg-boss (Testcontainers, Career PR 1)
+        run: |
+          pnpm turbo build --filter=@linkedin-ops/worker^...
+          pnpm --filter @linkedin-ops/worker test:integration
+
   # --- compose-smoke (T-003) ---------------------------------------------------------------------
   # Decision by Rodrigo (2026-10-13): Docker is not available on the local machine, so the Compose stack
   # is validated here, in the combination developers run (base + docker-compose.dev.yml). Credentials are
@@ -353,8 +358,21 @@ jobs:
             echo "::error::the api runtime image health body is not the HealthStatus contract: $health"
             exit 1
           fi
-          # The worker is still a placeholder: its runtime image must start and exit cleanly.
-          timeout 60 docker run --rm linkedin-ops/worker:smoke-runtime
+          # The worker (pg-boss, Career PR 1) loads all its modules (domain with argon2 and the Prisma client,
+          # editorial-engine, pg-boss) and then refuses to start without a valid production environment: it must
+          # exit non-zero naming the variables, never their values. Its healthcheck script must be present and
+          # report unhealthy when no heartbeat was written. Running against PostgreSQL is covered by the dev
+          # combination below and by the db-integration job.
+          set +e
+          worker_out="$(timeout 60 docker run --rm linkedin-ops/worker:smoke-runtime 2>&1)"; worker_rc=$?
+          timeout 30 docker run --rm --entrypoint node linkedin-ops/worker:smoke-runtime apps/worker/dist/health/healthcheck.js; health_rc=$?
+          set -e
+          if [ "$worker_rc" -eq 0 ] || ! printf '%s\n' "$worker_out" | grep -q 'Invalid runtime environment'; then
+            echo "::error::the worker runtime image did not fail closed without environment (rc=$worker_rc)"
+            printf '%s\n' "$worker_out" | tail -n 30
+            exit 1
+          fi
+          if [ "$health_rc" -ne 1 ]; then echo "::error::worker healthcheck returned $health_rc without a heartbeat"; exit 1; fi
           docker rm -f smoke-web smoke-api > /dev/null
           echo "runtime images OK: web serves HTML ($(printf '%s' "$body" | wc -c) bytes), api health $health"
 
@@ -413,8 +431,54 @@ jobs:
         run: |
           set -euo pipefail
           docker compose build api web worker
-          docker compose up -d --wait web api caddy
+          # The worker joins the stack (Career PR 1): healthy = pg-boss started on PostgreSQL and heartbeating.
+          docker compose up -d --wait web api caddy worker
           docker compose ps
+
+      - name: Each service receives exactly its own variables (effective environment, names only)
+        run: |
+          set -euo pipefail
+          # Sentinela, PR #89: an exact allowlist per service. The variables Compose injects are the container's
+          # names minus the image's own ENV names; any extra or missing name fails. Values are never printed.
+          injected() { # <service>: names set by Compose for the running container, sorted
+            local cid image
+            cid="$(docker compose ps -q "$1")"
+            image="$(docker inspect -f '{{.Image}}' "$cid")"
+            comm -23 \
+              <(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$cid" | cut -d= -f1 | sed '/^$/d' | sort -u) \
+              <(docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$image" | cut -d= -f1 | sed '/^$/d' | sort -u)
+          }
+          image_names() { # <service>: the image's own ENV names (allowed to be overridden by Compose)
+            docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' \
+              "$(docker inspect -f '{{.Image}}' "$(docker compose ps -q "$1")")" | cut -d= -f1 | sed '/^$/d' | sort -u
+          }
+          status=0
+          check() { # <service> <allowed names...>
+            local service=$1; shift
+            local allowed actual extra missing
+            allowed="$(printf '%s\n' "$@" | sort -u)"
+            actual="$(injected "$service")"
+            extra="$(comm -23 <(printf '%s\n' "$actual" | sed '/^$/d') <(printf '%s\n' "$allowed"))"
+            # An allowed name may come from the image ENV (e.g. NODE_ENV); only names Compose must add count as missing.
+            missing="$(comm -23 <(printf '%s\n' "$allowed") <(printf '%s\n' "$actual" "$(image_names "$service")" | sed '/^$/d' | sort -u))"
+            if [ -n "$extra" ]; then echo "::error::$service receives unexpected variables: $(tr '\n' ' ' <<<"$extra")"; status=1; fi
+            if [ -n "$missing" ]; then echo "::error::$service is missing variables: $(tr '\n' ' ' <<<"$missing")"; status=1; fi
+          }
+          check api NODE_ENV APP_TIMEZONE LOG_LEVEL DATABASE_URL \
+            S3_ENDPOINT S3_REGION S3_BUCKET S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY S3_FORCE_PATH_STYLE \
+            APP_BASE_URL SESSION_SECRET ENCRYPTION_KEY ENCRYPTION_KEYS ENCRYPTION_ACTIVE_KEY_VERSION \
+            LINKEDIN_CLIENT_ID LINKEDIN_CLIENT_SECRET LINKEDIN_REDIRECT_URI LINKEDIN_PKCE \
+            TRUSTED_PROXY_CIDRS JOB_FETCH_LINKEDIN API_PORT API_HOST
+          check worker NODE_ENV APP_TIMEZONE LOG_LEVEL DATABASE_URL OPENAI_API_KEY OPENAI_MODEL JOB_FETCH_LINKEDIN
+          check web NODE_ENV PORT HOSTNAME NEXT_TELEMETRY_DISABLED
+          # Explicit denials on top of the allowlists (defence in depth).
+          worker_env="$(injected worker)"
+          for var in S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY SESSION_SECRET ENCRYPTION_KEY ENCRYPTION_KEYS \
+            LINKEDIN_CLIENT_SECRET APP_BASE_URL; do
+            if printf '%s\n' "$worker_env" | grep -qx "$var"; then echo "::error::worker must not receive $var"; status=1; fi
+          done
+          if injected api | grep -qx OPENAI_API_KEY; then echo "::error::api must not receive OPENAI_API_KEY"; status=1; fi
+          exit "$status"
 
       - name: Caddy serves web and api on one TLS host with the security headers
         run: |
