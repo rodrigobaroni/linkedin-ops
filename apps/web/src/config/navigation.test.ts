@@ -61,7 +61,7 @@ describe("navigation config", () => {
       "Histórico",
     ]);
     expect(byGroup("editorialMemory")).toEqual(["Story Bank", "Voice Profile"]);
-    expect(byGroup("career")).toEqual(["Meu CV"]);
+    expect(byGroup("career")).toEqual(["Meu CV", "Vagas"]);
     expect(byGroup("secondary")).toEqual(["Fontes", "Analytics", "Notificações", "Configurações"]);
   });
 });

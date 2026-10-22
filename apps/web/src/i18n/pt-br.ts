@@ -250,9 +250,25 @@ export const messages = {
       viewPost: "Ver no LinkedIn",
     },
   },
-  /** Career module copy: Aurora's spec (~/Developer/.maestri/aurora/career-screens-spec.md §2). */
+  /** Career module copy: Aurora's spec (~/Developer/.maestri/aurora/career-screens-spec.md §2 and §3). */
   career: {
     breadcrumb: "Carreira",
+    jobs: {
+      title: "Vagas",
+      description: "Cole links de vagas para comparar os requisitos com seu CV base.",
+      loading: "Carregando vagas",
+      loadError: "Não foi possível carregar suas vagas.",
+      retry: "Tentar novamente",
+      noCv: {
+        title: "Confirme seu CV antes de analisar vagas",
+        description: "Precisamos de um CV base revisado para calcular a aderência.",
+        action: "Ir para Meu CV",
+      },
+      /** Interim state until the job analysis ships (career PR 3b); Maestro's call, Aurora reviews. */
+      comingSoon: {
+        title: "A análise de vagas chega em breve.",
+      },
+    },
     cv: {
       title: "Meu CV",
       description: "Mantenha um CV base confirmado para analisar vagas e gerar versões adaptadas.",
