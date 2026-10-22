@@ -797,3 +797,163 @@ describe("cv bases (career PR 2, migration 20261022100000)", () => {
     expect(await prisma.cvBase.count({ where: { userId } })).toBe(0);
   });
 });
+
+describe("job postings and tailored CVs (career PR 3b, migration 20261023000000)", () => {
+  const now = () => new Date();
+  const hash = (n: number) => n.toString(16).padStart(64, "0");
+
+  /** Owner with an active CV base and an empty batch. */
+  async function batchFixture() {
+    const userId = newId();
+    await prisma.user.create({
+      data: { id: userId, email: `jobs-${userId}@example.test`, passwordHash: "x", name: "Jobs" },
+    });
+    const cvBase = await prisma.cvBase.create({
+      data: {
+        id: newId(),
+        userId,
+        version: 1,
+        status: "READY",
+        content: { language: "pt-BR" },
+        isActive: true,
+        confirmedAt: now(),
+        createdAt: now(),
+        updatedAt: now(),
+      },
+    });
+    const batch = await prisma.tailoringBatch.create({
+      data: { id: newId(), userId, cvBaseId: cvBase.id, createdAt: now() },
+    });
+    return { userId, cvBaseId: cvBase.id, batchId: batch.id };
+  }
+
+  function posting(
+    fixture: { userId: string; batchId: string },
+    data: Record<string, unknown> = {},
+  ) {
+    return prisma.jobPosting.create({
+      data: {
+        id: newId(),
+        userId: fixture.userId,
+        batchId: fixture.batchId,
+        url: "https://www.linkedin.com/jobs/view/1/",
+        urlHash: hash(1),
+        source: "LINKEDIN",
+        status: "FETCHING",
+        createdAt: now(),
+        updatedAt: now(),
+        ...data,
+      },
+    });
+  }
+
+  it("merges a link once per batch (url_hash unique per batch only)", async () => {
+    const fixture = await batchFixture();
+    await posting(fixture);
+    await expectRejects(posting(fixture), UNIQUE);
+    const other = await prisma.tailoringBatch.create({
+      data: { id: newId(), userId: fixture.userId, cvBaseId: fixture.cvBaseId, createdAt: now() },
+    });
+    await expect(posting({ userId: fixture.userId, batchId: other.id })).resolves.toBeTruthy();
+  });
+
+  it("each status carries exactly its payload", async () => {
+    const fixture = await batchFixture();
+    let n = 10;
+    const at = (data: Record<string, unknown>) => posting(fixture, { urlHash: hash(n++), ...data });
+    const extracted = { title: "Vaga" };
+    await expectRejects(at({ failureReason: "FETCH" }), CHECK);
+    await expectRejects(at({ extracted }), CHECK);
+    await expectRejects(at({ source: "PASTED" }), CHECK);
+    await expectRejects(at({ status: "ANALYZING", extracted }), CHECK);
+    await expectRejects(at({ status: "READY" }), CHECK);
+    await expectRejects(at({ status: "FAILED" }), CHECK);
+    await expect(at({ source: "PASTED", pageText: "texto colado" })).resolves.toBeTruthy();
+    await expect(
+      at({ status: "ANALYZING", extracted, pageText: "texto da vaga" }),
+    ).resolves.toBeTruthy();
+    await expect(at({ status: "READY", extracted })).resolves.toBeTruthy();
+    await expect(
+      at({ status: "FAILED", failureReason: "TIMED_OUT", extracted }),
+    ).resolves.toBeTruthy();
+  });
+
+  it("bounds the URL, the hash, the text and the extraction metadata", async () => {
+    const fixture = await batchFixture();
+    let n = 100;
+    const at = (data: Record<string, unknown>) => posting(fixture, { urlHash: hash(n++), ...data });
+    await expectRejects(at({ url: "ftp://example.test/job" }), CHECK);
+    await expectRejects(at({ url: `https://example.test/${"a".repeat(2048)}` }), CHECK);
+    await expectRejects(at({ urlHash: "not-a-hash" }), CHECK);
+    await expectRejects(at({ pageText: "x".repeat(20_001) }), CHECK);
+    await expectRejects(at({ pageText: "" }), CHECK);
+    await expectRejects(at({ injectionEvidence: "trecho" }), CHECK);
+    await expectRejects(
+      at({ injectionSuspected: true, injectionEvidence: "x".repeat(501) }),
+      CHECK,
+    );
+    await expectRejects(at({ generation: ["gpt"] }), CHECK);
+    await expectRejects(at({ droppedRequirementCount: -1 }), CHECK);
+    await expect(
+      at({ pageText: "x".repeat(20_000), injectionSuspected: true, injectionEvidence: "trecho" }),
+    ).resolves.toBeTruthy();
+  });
+
+  it("never lets a row point at another owner's CV base or batch (composite owner FKs)", async () => {
+    const mine = await batchFixture();
+    const theirs = await batchFixture();
+    const FOREIGN_KEY = /23503|Foreign key constraint|foreign key/i;
+    await expectRejects(
+      prisma.tailoringBatch.create({
+        data: { id: newId(), userId: mine.userId, cvBaseId: theirs.cvBaseId, createdAt: now() },
+      }),
+      FOREIGN_KEY,
+    );
+    await expectRejects(posting({ userId: mine.userId, batchId: theirs.batchId }), FOREIGN_KEY);
+    const row = await posting(mine, { status: "READY", extracted: { title: "Vaga" } });
+    await expectRejects(
+      prisma.tailoredCv.create({
+        data: {
+          id: newId(),
+          userId: mine.userId,
+          jobPostingId: row.id,
+          cvBaseId: theirs.cvBaseId,
+          content: {},
+          matchReport: {},
+          generation: {},
+          createdAt: now(),
+          updatedAt: now(),
+        },
+      }),
+      FOREIGN_KEY,
+    );
+  });
+
+  it("cascades from the CV base through the batch, and from the posting to its tailored CV", async () => {
+    const fixture = await batchFixture();
+    const row = await posting(fixture, { status: "READY", extracted: { title: "Vaga" } });
+    const tailored = () =>
+      prisma.tailoredCv.create({
+        data: {
+          id: newId(),
+          userId: fixture.userId,
+          jobPostingId: row.id,
+          cvBaseId: fixture.cvBaseId,
+          content: { segments: [] },
+          matchReport: { baseScore: 50 },
+          generation: { model: "gpt-test" },
+          createdAt: now(),
+          updatedAt: now(),
+        },
+      });
+    await tailored();
+    await expectRejects(tailored(), UNIQUE);
+    await prisma.jobPosting.delete({ where: { id: row.id } });
+    expect(await prisma.tailoredCv.count({ where: { jobPostingId: row.id } })).toBe(0);
+
+    const again = await posting(fixture, { urlHash: hash(2) });
+    await prisma.cvBase.delete({ where: { id: fixture.cvBaseId } });
+    expect(await prisma.tailoringBatch.count({ where: { id: fixture.batchId } })).toBe(0);
+    expect(await prisma.jobPosting.count({ where: { id: again.id } })).toBe(0);
+  });
+});

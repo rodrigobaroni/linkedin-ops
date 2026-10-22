@@ -185,7 +185,7 @@ describe("cv.extract", () => {
 describe("job.fetch", () => {
   it("extracts a pasted posting and hands over to the store (which enqueues cv.tailor)", async () => {
     const { h, events, saved } = handlers({ "job-extract": jobExtractionOutput });
-    await h["job.fetch"]({ ...envelope, jobPostingId: IDS.posting }, context());
+    await h["job.fetch"]({ ...envelope, jobPostingId: IDS.posting, attempt: 1 }, context());
     expect(events).toEqual(["job:extracted"]);
     expect(saved.job).toMatchObject({ job, droppedRequirementCount: 0, rawText: postingText });
   });
@@ -195,7 +195,7 @@ describe("job.fetch", () => {
       {},
       fakeStores({ kind: "url", url: "https://jobs.example.com/1" }),
     );
-    await h["job.fetch"]({ ...envelope, jobPostingId: IDS.posting }, context());
+    await h["job.fetch"]({ ...envelope, jobPostingId: IDS.posting, attempt: 1 }, context());
     expect(events).toEqual(["job:failed:fetch"]);
     expect(llm.calls).toEqual([]);
   });
@@ -211,7 +211,7 @@ describe("job.fetch", () => {
       fetcher,
       false,
     );
-    await h["job.fetch"]({ ...envelope, jobPostingId: IDS.posting }, context());
+    await h["job.fetch"]({ ...envelope, jobPostingId: IDS.posting, attempt: 1 }, context());
     expect(events).toEqual(["job:failed:fetch_blocked"]);
     expect(fetched).toBe(false);
     // lnkd.in is LinkedIn too: refused before any request (Maestro D2).
@@ -221,7 +221,7 @@ describe("job.fetch", () => {
       fetcher,
       false,
     );
-    await short.h["job.fetch"]({ ...envelope, jobPostingId: IDS.posting }, context());
+    await short.h["job.fetch"]({ ...envelope, jobPostingId: IDS.posting, attempt: 1 }, context());
     expect(short.events).toEqual(["job:failed:fetch_blocked"]);
     expect(fetched).toBe(false);
   });
@@ -237,7 +237,7 @@ describe("job.fetch", () => {
       deferred,
     );
     const error = await h["job.fetch"](
-      { ...envelope, jobPostingId: IDS.posting },
+      { ...envelope, jobPostingId: IDS.posting, attempt: 1 },
       context({ isLastAttempt: true }),
     ).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(RescheduleJobError);
@@ -254,11 +254,11 @@ describe("job.fetch", () => {
     };
     const url = { kind: "url" as const, url: "https://jobs.example.com/1" };
     const a = handlers({}, fakeStores(url), blocked);
-    await a.h["job.fetch"]({ ...envelope, jobPostingId: IDS.posting }, context());
+    await a.h["job.fetch"]({ ...envelope, jobPostingId: IDS.posting, attempt: 1 }, context());
     expect(a.events).toEqual(["job:failed:fetch_blocked"]);
     const b = handlers({}, fakeStores(url), transient);
     await expect(
-      b.h["job.fetch"]({ ...envelope, jobPostingId: IDS.posting }, context()),
+      b.h["job.fetch"]({ ...envelope, jobPostingId: IDS.posting, attempt: 1 }, context()),
     ).rejects.toBeInstanceOf(RetryableJobError);
     expect(b.events).toEqual([]);
   });
@@ -270,7 +270,7 @@ describe("job.fetch", () => {
     };
     const stores = fakeStores({ kind: "url", url: "https://jobs.example.com/1" });
     const { h, events, llm } = handlers({ "job-extract": { nonsense: true } }, stores, fetcher);
-    const payload = { ...envelope, jobPostingId: IDS.posting };
+    const payload = { ...envelope, jobPostingId: IDS.posting, attempt: 1 };
     // 1 call + 2 regenerations inside the handler, then a permanent failure (no queue retry, no refetch).
     await expect(h["job.fetch"](payload, context())).rejects.toBeInstanceOf(PermanentJobError);
     expect(llm.calls.filter((c) => c.promptId === "job-extract")).toHaveLength(3);
@@ -293,7 +293,7 @@ describe("job.fetch", () => {
       fakeStores({ kind: "url", url: "https://jobs.example.com/1" }),
       fetcher,
     );
-    await h["job.fetch"]({ ...envelope, jobPostingId: IDS.posting }, context());
+    await h["job.fetch"]({ ...envelope, jobPostingId: IDS.posting, attempt: 1 }, context());
     expect(events).toEqual(["job:fetched", "job:extracted"]);
     expect(llm.calls).toHaveLength(2);
     expect(requests).toBe(1);
@@ -315,7 +315,7 @@ describe("job.fetch", () => {
       fakeStores({ kind: "url", url: "https://jobs.example.com/1" }),
       fetcher,
     );
-    const payload = { ...envelope, jobPostingId: IDS.posting };
+    const payload = { ...envelope, jobPostingId: IDS.posting, attempt: 1 };
     await expect(h["job.fetch"](payload, context())).rejects.toBeInstanceOf(RetryableJobError);
     await h["job.fetch"](payload, context({ retryCount: 1, isLastAttempt: true }));
     expect(requests).toBe(1);
@@ -331,7 +331,7 @@ describe("job.fetch", () => {
         requirements: [],
       },
     });
-    await h["job.fetch"]({ ...envelope, jobPostingId: IDS.posting }, context());
+    await h["job.fetch"]({ ...envelope, jobPostingId: IDS.posting, attempt: 1 }, context());
     expect(events).toEqual(["job:failed:not_a_job"]);
   });
 
@@ -350,7 +350,7 @@ describe("cv.tailor", () => {
       "cv-tailor": tailoringOutput(),
       "cv-humanize": humanizeOutput({}, segmentTexts),
     });
-    await h["cv.tailor"]({ ...envelope, jobPostingId: IDS.posting }, context());
+    await h["cv.tailor"]({ ...envelope, jobPostingId: IDS.posting, attempt: 1 }, context());
     expect(events).toEqual(["job:tailored"]);
     expect(llm.calls.map((c) => c.promptId)).toEqual(["cv-tailor", "cv-humanize"]);
     const tailored = saved.tailored as {
@@ -378,7 +378,7 @@ describe("cv.tailor", () => {
       "cv-tailor": tailoringOutput(tellBullet),
       "cv-humanize": humanizeOutput({}, { ...segmentTexts, "seg-2": tellBullet }),
     });
-    await h["cv.tailor"]({ ...envelope, jobPostingId: IDS.posting }, context());
+    await h["cv.tailor"]({ ...envelope, jobPostingId: IDS.posting, attempt: 1 }, context());
     expect(llm.calls.filter((c) => c.promptId === "cv-humanize")).toHaveLength(3);
     const report = (saved.tailored as { report: { humanizer: Record<string, unknown> } }).report;
     expect(report.humanizer).toMatchObject({
@@ -400,7 +400,7 @@ describe("cv.tailor", () => {
               segmentTexts,
             ),
     });
-    await h["cv.tailor"]({ ...envelope, jobPostingId: IDS.posting }, context());
+    await h["cv.tailor"]({ ...envelope, jobPostingId: IDS.posting, attempt: 1 }, context());
     expect(llm.calls.filter((c) => c.promptId === "cv-humanize")).toHaveLength(2);
     const report = (saved.tailored as { report: { humanizer: Record<string, unknown> } }).report;
     expect(report.humanizer).toMatchObject({ passed: true, regenerations: 1 });
@@ -413,7 +413,7 @@ describe("cv.tailor", () => {
     const { h, events, llm } = handlers({ "cv-tailor": output });
     // 1 call + 2 regenerations inside the handler, then a permanent `ai` failure (no queue retry).
     await expect(
-      h["cv.tailor"]({ ...envelope, jobPostingId: IDS.posting }, context()),
+      h["cv.tailor"]({ ...envelope, jobPostingId: IDS.posting, attempt: 1 }, context()),
     ).rejects.toBeInstanceOf(PermanentJobError);
     expect(llm.calls.filter((c) => c.promptId === "cv-tailor")).toHaveLength(3);
     expect(events).toEqual(["job:failed:ai"]);
@@ -427,7 +427,7 @@ describe("cv.tailor", () => {
       "cv-tailor": (_request, call) => (call === 0 ? invented : tailoringOutput()),
       "cv-humanize": humanizeOutput({}, segmentTexts),
     });
-    await h["cv.tailor"]({ ...envelope, jobPostingId: IDS.posting }, context());
+    await h["cv.tailor"]({ ...envelope, jobPostingId: IDS.posting, attempt: 1 }, context());
     expect(llm.calls.filter((c) => c.promptId === "cv-tailor")).toHaveLength(2);
     expect(events).toEqual(["job:tailored"]);
   });
@@ -441,7 +441,7 @@ describe("cv.tailor", () => {
     });
     await expect(
       h["cv.tailor"](
-        { ...envelope, jobPostingId: IDS.posting },
+        { ...envelope, jobPostingId: IDS.posting, attempt: 1 },
         context({ retryCount: 2, isLastAttempt: true }),
       ),
     ).rejects.toBeInstanceOf(CancelledJobError);
@@ -463,7 +463,7 @@ describe("cv.tailor", () => {
     );
     await expect(
       h["job.fetch"](
-        { ...envelope, jobPostingId: IDS.posting },
+        { ...envelope, jobPostingId: IDS.posting, attempt: 1 },
         context({ isLastAttempt: true, signal: controller.signal }),
       ),
     ).rejects.toBeInstanceOf(CancelledJobError);
@@ -478,7 +478,7 @@ describe("cv.tailor", () => {
       },
     });
     await expect(
-      h["cv.tailor"]({ ...envelope, jobPostingId: IDS.posting }, context()),
+      h["cv.tailor"]({ ...envelope, jobPostingId: IDS.posting, attempt: 1 }, context()),
     ).rejects.toBeInstanceOf(PermanentJobError);
     expect(events).toEqual(["job:failed:ai"]);
   });

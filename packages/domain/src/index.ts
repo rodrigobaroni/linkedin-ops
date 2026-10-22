@@ -100,9 +100,41 @@ export {
   type SqlExecutor,
 } from "./career/cv-bases.js";
 export { PrismaCvBaseDraftStore } from "./career/prisma-cv-base-draft-store.js";
+export {
+  PrismaJobPostings,
+  CvBaseRequiredError,
+  JobPostingBusyError,
+  JobPostingNotFoundError,
+  JobPostingTextRequiredError,
+  JobPostingUrlTooLongError,
+  JOB_POSTING_URL_MAX_CHARS,
+  JOB_POSTING_FAILED_TEXT_RETENTION_MS,
+  JOB_POSTING_INJECTION_EVIDENCE_MAX_CHARS,
+  JOB_POSTING_STALE_MS,
+  JOB_POSTING_SWEEP_BATCH,
+  JOB_POSTING_TEXT_MAX_CHARS,
+  TAILORING_BATCH_MAX_LINKS,
+  type CareerAuditMeta,
+  type CreatedBatch,
+  type CvTailorEnqueue,
+  type CvTailorJob,
+  type JobFetchEnqueue,
+  type JobFetchJob,
+  type JobPostingRecord,
+  type JobPostingSummaryRecord,
+  type TailoringRecord,
+} from "./career/job-postings.js";
+export { PrismaJobPostingStore } from "./career/prisma-job-posting-store.js";
+export {
+  isFetchableJobPostingUrl,
+  jobPostingSourceOf,
+  jobPostingUrlHash,
+  normalizeJobPostingUrl,
+} from "./career/job-posting-url.js";
 export type {
   CareerFailureReason,
   CareerJobMeta,
+  JobPostingJobMeta,
   CvBaseDraftStore,
   CvExtractionResult,
   FetchDomainGuard,

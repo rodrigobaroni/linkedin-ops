@@ -287,6 +287,34 @@ enum CvExtractionFailure {
   @@map("cv_extraction_failure")
 }
 
+/// Job posting lifecycle (spec 2026-10-22 §3): buscando → analisando → pronto, or falhou.
+enum JobPostingStatus {
+  FETCHING
+  ANALYZING
+  READY
+  FAILED
+
+  @@map("job_posting_status")
+}
+
+enum JobPostingFailure {
+  FETCH
+  FETCH_BLOCKED
+  NOT_A_JOB
+  AI
+  TIMED_OUT
+
+  @@map("job_posting_failure")
+}
+
+enum JobPostingSourceKind {
+  LINKEDIN
+  OTHER
+  PASTED
+
+  @@map("job_posting_source_kind")
+}
+
 // ───────────────────────────── 2.1 Identity and access ─────────────────────────────
 
 model User {
@@ -333,6 +361,9 @@ model User {
   auditEvents      AuditEvent[]
   idempotencyKeys  IdempotencyKey[]
   cvBases          CvBase[]
+  tailoringBatches TailoringBatch[]
+  jobPostings      JobPosting[]
+  tailoredCvs      TailoredCv[]
 
   @@map("users")
 }
@@ -1125,8 +1156,91 @@ model CvBase {
   createdAt          DateTime             @map("created_at") @db.Timestamptz(3)
   updatedAt          DateTime             @map("updated_at") @db.Timestamptz(3)
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tailoringBatches TailoringBatch[]
+  tailoredCvs      TailoredCv[]
 
   @@unique([userId, version])
+  /// Target of the composite owner FKs of the career tables (a child row never points at another owner's CV).
+  @@unique([id, userId])
   @@map("cv_bases")
+}
+
+/// One submission of 1–20 job links (spec §5 step 2), made against the CV base active at that moment.
+model TailoringBatch {
+  id        String   @id @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  cvBaseId  String   @map("cv_base_id") @db.Uuid
+  createdAt DateTime @map("created_at") @db.Timestamptz(3)
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cvBase      CvBase       @relation(fields: [cvBaseId, userId], references: [id, userId], onDelete: Cascade)
+  jobPostings JobPosting[]
+
+  @@unique([id, userId])
+  @@index([userId])
+  @@index([cvBaseId])
+  @@map("tailoring_batches")
+}
+
+/// A job posting of a batch, one per distinct normalized link. Posting text is untrusted data (spec §8).
+model JobPosting {
+  id                      String               @id @db.Uuid
+  userId                  String               @map("user_id") @db.Uuid
+  batchId                 String               @map("batch_id") @db.Uuid
+  /// Normalized link (no fragment, no tracking parameters). Never logged.
+  url                     String
+  /// sha256 (hex) of `url`: duplicates inside a batch are merged on it.
+  urlHash                 String               @map("url_hash")
+  source                  JobPostingSourceKind
+  status                  JobPostingStatus
+  failureReason           JobPostingFailure?   @map("failure_reason")
+  /// Processing cycle, bumped by every reprocessing and carried by the job payloads (late-job guard).
+  attempt                 Int                  @default(1)
+  /// Fetched or pasted text, sanitized, ≤ 20 000 characters; erased from `FAILED` postings after retention.
+  pageText                String?              @map("page_text")
+  fetchedAt               DateTime?            @map("fetched_at") @db.Timestamptz(3)
+  /// `JobPostingExtracted` (contracts schema, validated on write and read).
+  extracted               Json?
+  droppedRequirementCount Int?                 @map("dropped_requirement_count")
+  injectionSuspected      Boolean              @default(false) @map("injection_suspected")
+  /// Offending excerpt of the posting (≤ 500 characters); never logged nor audited.
+  injectionEvidence       String?              @map("injection_evidence")
+  /// Model, prompt and engine versions of `job-extract` (ADR-0005 §3).
+  generation              Json?
+  createdAt               DateTime             @map("created_at") @db.Timestamptz(3)
+  updatedAt               DateTime             @map("updated_at") @db.Timestamptz(3)
+
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  batch      TailoringBatch @relation(fields: [batchId, userId], references: [id, userId], onDelete: Cascade)
+  tailoredCv TailoredCv?
+
+  @@unique([batchId, urlHash])
+  @@index([userId, id(sort: Desc)])
+  @@index([status, updatedAt])
+  @@map("job_postings")
+}
+
+/// The CV tailored to one posting (1:1); reprocessing replaces it (the audit keeps the previous generation).
+model TailoredCv {
+  id           String   @id @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  jobPostingId String   @unique @map("job_posting_id") @db.Uuid
+  /// The CV base version the tailoring actually used (the active one at that moment).
+  cvBaseId     String   @map("cv_base_id") @db.Uuid
+  /// `TailoredCvContent`, with provenance per segment (shown on review only, never in the PDF).
+  content      Json
+  /// `MatchReport`: score before additions, requirements, gaps, additions.
+  matchReport  Json     @map("match_report")
+  /// `GenerationInfo` (model, prompt versions including `cv-competency-lexicon`, engine version).
+  generation   Json
+  createdAt    DateTime @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @map("updated_at") @db.Timestamptz(3)
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobPosting JobPosting @relation(fields: [jobPostingId], references: [id], onDelete: Cascade)
+  cvBase     CvBase     @relation(fields: [cvBaseId, userId], references: [id, userId], onDelete: Cascade)
+
+  @@index([cvBaseId])
+  @@map("tailored_cvs")
 }

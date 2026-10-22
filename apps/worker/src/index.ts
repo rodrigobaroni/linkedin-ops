@@ -7,11 +7,13 @@ import {
   PrismaCvBaseDraftStore,
   PrismaCvBases,
   PrismaFetchDomainGuard,
+  PrismaJobPostingStore,
   RuntimeEnvError,
   validateWorkerEnv,
   type WorkerRuntimeEnv,
 } from "@linkedin-ops/domain";
 import { PgBoss } from "pg-boss";
+import { pgBossCvTailorEnqueue } from "./career/enqueue.js";
 import { HttpJobPageFetcher } from "./career/http-job-page-fetcher.js";
 import { wireCareer } from "./career/wiring.js";
 import { createLogger } from "./logger.js";
@@ -39,19 +41,23 @@ async function main(): Promise<void> {
   });
   boss.on("error", (error: Error) => logger.error({ errorClass: error.name }, "pg-boss error"));
 
-  // Domain stores over Prisma (connections open lazily). The postings store arrives with career PR 3.
+  // Domain stores over Prisma (connections open lazily).
   const prisma = createPrismaClient({ connectionString: env.databaseUrl });
   const cvStore = new PrismaCvBaseDraftStore(
     new PrismaCvBases(prisma, (value) => CvStructuredSchema.parse(value)),
   );
   // Anonymous job-page fetcher (ADR-0008): the per-domain limiter, breaker and kill switch live in Postgres, so
-  // they survive restarts and are shared by every worker process. Consumed once the postings store is wired.
+  // they survive restarts and are shared by every worker process.
   const fetcher = new HttpJobPageFetcher({
     guard: new PrismaFetchDomainGuard(prisma, () => new Date(), {
       linkedInFetch: env.jobFetchLinkedIn,
     }),
   });
-  const career = wireCareer(env, logger, { cvStore, fetcher });
+  // Job postings (career PR 3b): completing an extraction enqueues `cv.tailor` in the same transaction, through
+  // this process's pg-boss (`send({ db })`, ADR-0002 §3). With the store wired, `job.fetch` and `cv.tailor` are
+  // consumed.
+  const jobStore = new PrismaJobPostingStore(prisma, pgBossCvTailorEnqueue(boss));
+  const career = wireCareer(env, logger, { cvStore, jobStore, fetcher });
 
   await startWorkerLifecycle({ boss, logger, career, onStopped: () => prisma.$disconnect() });
   logger.info({ nodeEnv: env.nodeEnv, openai: env.openai !== null }, "worker started");

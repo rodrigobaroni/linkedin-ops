@@ -31,8 +31,8 @@ export const jobPayloads: Record<QueueName, Record<string, unknown>> = {
     userId: ids.user,
   },
   "cv.extract": { ...envelope, cvBaseId: ids.cvBase },
-  "job.fetch": { ...envelope, jobPostingId: ids.jobPosting },
-  "cv.tailor": { ...envelope, jobPostingId: ids.jobPosting },
+  "job.fetch": { ...envelope, jobPostingId: ids.jobPosting, attempt: 1 },
+  "cv.tailor": { ...envelope, jobPostingId: ids.jobPosting, attempt: 2 },
 };
 
 const specificInvalid: Partial<Record<QueueName, Record<string, (v: unknown) => unknown>>> = {
@@ -62,7 +62,11 @@ const specificInvalid: Partial<Record<QueueName, Record<string, (v: unknown) => 
     "url instead of id": set("jobPostingId", "https://example.com/jobs/1"),
     "content in payload": set("rawText", "Senior Engineer"),
   },
-  "cv.tailor": { "missing jobPostingId": drop("jobPostingId") },
+  "cv.tailor": {
+    "missing jobPostingId": drop("jobPostingId"),
+    "missing attempt": drop("attempt"),
+    "attempt 0": set("attempt", 0),
+  },
 };
 
 export const jobCases: SchemaCase[] = (Object.keys(QUEUES) as QueueName[]).map((name) => ({

@@ -53,6 +53,15 @@ import {
   CvConfirmInputSchema,
   CvUploadAcceptedSchema,
 } from "../resources/cv-base.js";
+import {
+  JobPostingAcceptedSchema,
+  JobPostingDetailSchema,
+  JobPostingListQuerySchema,
+  JobPostingSummarySchema,
+  JobPostingTextInputSchema,
+  TailoringBatchAcceptedSchema,
+  TailoringBatchInputSchema,
+} from "../resources/job-posting.js";
 import { DraftVersionCreateInputSchema, DraftVersionSchema } from "../resources/draft-version.js";
 import { HealthStatusSchema, ReadinessStatusSchema } from "../resources/health.js";
 import {
@@ -931,6 +940,69 @@ export const routesV1 = defineRoutes({
     tag: "career",
     auth: "elevated",
     roles: OWNER_ONLY,
+    responses: { 204: null },
+  },
+
+  // 2.14 Carreira: lotes e vagas (spec 2026-10-22 §7, PR 3b)
+  "career.batches.create": {
+    method: "POST",
+    path: "/career/batches",
+    summary: "Submit 1–20 job links; one `job.fetch` per distinct link, against the active CV base",
+    tag: "career",
+    auth: "session",
+    body: TailoringBatchInputSchema,
+    responses: { 202: TailoringBatchAcceptedSchema },
+    async: true,
+    rateLimited: true,
+  },
+  "career.jobs.list": {
+    method: "GET",
+    path: "/career/jobs",
+    summary: "Job postings with their status, newest first",
+    tag: "career",
+    auth: "session",
+    query: JobPostingListQuerySchema,
+    responses: { 200: paginated(JobPostingSummarySchema) },
+  },
+  "career.jobs.get": {
+    method: "GET",
+    path: "/career/jobs/{id}",
+    summary: "Job posting detail: extracted requirements, match report and tailored CV",
+    tag: "career",
+    auth: "session",
+    params: IdParamsSchema,
+    responses: { 200: JobPostingDetailSchema },
+  },
+  "career.jobs.pasteText": {
+    method: "POST",
+    path: "/career/jobs/{id}/text",
+    summary: "Paste the posting text (a link that did not open) and reprocess it",
+    tag: "career",
+    auth: "session",
+    params: IdParamsSchema,
+    body: JobPostingTextInputSchema,
+    responses: { 202: JobPostingAcceptedSchema },
+    async: true,
+    rateLimited: true,
+  },
+  "career.jobs.retry": {
+    method: "POST",
+    path: "/career/jobs/{id}/retry",
+    summary: "Reprocess a failed or ready posting from the furthest step its data allows",
+    tag: "career",
+    auth: "session",
+    params: IdParamsSchema,
+    responses: { 202: JobPostingAcceptedSchema },
+    async: true,
+    rateLimited: true,
+  },
+  "career.jobs.delete": {
+    method: "DELETE",
+    path: "/career/jobs/{id}",
+    summary: "Delete the posting and its tailored CV",
+    tag: "career",
+    auth: "session",
+    params: IdParamsSchema,
     responses: { 204: null },
   },
 });

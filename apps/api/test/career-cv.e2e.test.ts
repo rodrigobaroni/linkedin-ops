@@ -25,7 +25,7 @@ import {
   CvPdfExtractor,
   DEFAULT_CV_PDF_EXTRACTOR_LIMITS,
 } from "../src/career/cv-pdf.extractor.js";
-import { CV_EXTRACT_QUEUE, type CvExtractQueue } from "../src/career/cv-extract.queue.js";
+import { CV_EXTRACT_QUEUE, type CvExtractQueue } from "../src/career/career.queue.js";
 import { REQUESTED_WITH_VALUE } from "../src/common/route-access.guard.js";
 
 const UPLOAD = "/api/v1/career/cv";

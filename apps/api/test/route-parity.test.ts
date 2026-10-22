@@ -36,6 +36,13 @@ const IMPLEMENTED: readonly RouteKey[] = [
   "career.cv.upload",
   "career.cv.confirm",
   "career.cv.delete",
+  // Career module PR 3b (batches and job postings)
+  "career.batches.create",
+  "career.jobs.list",
+  "career.jobs.get",
+  "career.jobs.pasteText",
+  "career.jobs.retry",
+  "career.jobs.delete",
 ];
 
 type ModuleRef = Type<unknown> | DynamicModule | Promise<DynamicModule>;
