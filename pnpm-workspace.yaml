@@ -6,7 +6,7 @@ packages:
 # Single source of truth for toolchain versions shared by every workspace (`"catalog:"` in package.json).
 catalog:
   "@types/node": ^24.0.0
-  eslint: ^10.12.0
+  eslint: ^10.13.0
   prettier: ^3.9.10
   typescript: ~5.9.3
   vitest: ^5.0.5
@@ -29,16 +29,16 @@ catalog:
   msw: ^3.0.3
   # API (T-008, ADR-0001): NestJS 12 on Fastify, pinned exactly (two-week soak rule; Dependabot bumps).
   # `fastify` tracks the exact version @nestjs/platform-fastify depends on so a single copy is installed.
-  "@nestjs/common": 12.1.3
-  "@nestjs/core": 12.1.3
-  "@nestjs/platform-fastify": 12.1.3
-  "@nestjs/testing": 12.1.3
+  "@nestjs/common": 12.2.0
+  "@nestjs/core": 12.2.0
+  "@nestjs/platform-fastify": 12.2.0
+  "@nestjs/testing": 12.2.0
   reflect-metadata: ^0.2.2
   rxjs: ^7.8.2
-  fastify: 5.12.5
+  fastify: 5.12.7
   "@fastify/cookie": ^11.1.3
   "@fastify/helmet": ^13.2.0
-  "@fastify/static": ^10.1.6
+  "@fastify/static": ^10.1.7
   # Structured logging (ADR-0001): Pino through nestjs-pino; pino-pretty only for local development.
   nestjs-pino: ^5.3.1
   pino: ^10.4.0
@@ -49,23 +49,23 @@ catalog:
   "@types/supertest": ^7.2.1
   swagger-ui-dist: ^5.34.0
   # OIDC id_token verification for the LinkedIn connection (RS256 + JWKS; T-038, Sentinela A-2). No deps.
-  jose: 6.2.12
+  jose: 6.2.13
   # Durable jobs (ADR-0002, Career PR 1): pg-boss pinned exactly (two-week soak rule; 12.37.0 of 2026-10-05).
-  pg-boss: 12.37.0
+  pg-boss: 12.38.0
   # CV base upload (career module, PR 2): multipart parsing on the one route that declares it, and PDF text
   # extraction in pure JS (pdf.js serverless build, no native binary; `@napi-rs/canvas` peer stays absent).
-  "@fastify/multipart": 10.1.2
-  unpdf: 1.8.1
+  "@fastify/multipart": 10.1.6
+  unpdf: 1.9.1
   # Registrable domain (eTLD+1, Public Suffix List) for the per-domain job.fetch limiter (ADR-0008 §4);
   # 7.4.18 of 2026-10-07, already in the lockfile through tough-cookie.
-  tldts: 7.4.18
+  tldts: 7.4.19
   # HTML parsing only (no DOM, no scripts) for the job page main text (ADR-0008 §2); 8.0.1, already in the
   # lockfile through jsdom.
   parse5: 8.0.1
   # Tailored CV PDF output (career module, PR 3c, ADR-0009): pure JS, embedded subset fonts, Unicode line
   # breaking; 0.20.2 of 2026-08-30 (two-week soak rule). Types from DefinitelyTyped (0.17.6 of 2026-04-16).
   pdfkit: 0.20.2
-  "@types/pdfkit": 0.17.6
+  "@types/pdfkit": 0.17.7
   # Glyph coverage of the embedded fonts (characters outside them are dropped before rendering); the exact
   # version pdfkit 0.20.2 already installs (2.0.4 of 2024-08-09). Types 2.0.9 of 2026-03-17.
   fontkit: 2.0.4
