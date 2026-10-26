@@ -71,7 +71,7 @@ catalog:
   fontkit: 2.0.4
   "@types/fontkit": 2.0.9
   # Claude provider for the worker (ADR-0011): official SDK, 0.132.1 of 2026-10-08 (two-week soak rule).
-  "@anthropic-ai/sdk": 0.132.1
+  "@anthropic-ai/sdk": 1.1.0
 
 # pnpm 10 blocks install scripts by default. Only these packages may run them (T-005): the Prisma CLI and
 # its schema engine download, argon2's native binding, and esbuild (used by tsx and Vitest).
