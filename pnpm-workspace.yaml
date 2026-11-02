@@ -55,7 +55,7 @@ catalog:
   # CV base upload (career module, PR 2): multipart parsing on the one route that declares it, and PDF text
   # extraction in pure JS (pdf.js serverless build, no native binary; `@napi-rs/canvas` peer stays absent).
   "@fastify/multipart": 10.1.2
-  unpdf: 1.8.1
+  unpdf: 2.1.0
   # Registrable domain (eTLD+1, Public Suffix List) for the per-domain job.fetch limiter (ADR-0008 §4);
   # 7.4.18 of 2026-10-07, already in the lockfile through tough-cookie.
   tldts: 7.4.18
@@ -71,7 +71,7 @@ catalog:
   fontkit: 2.0.4
   "@types/fontkit": 2.0.9
   # Claude provider for the worker (ADR-0011): official SDK, 0.132.1 of 2026-10-08 (two-week soak rule).
-  "@anthropic-ai/sdk": 0.132.1
+  "@anthropic-ai/sdk": 1.3.0
 
 # pnpm 10 blocks install scripts by default. Only these packages may run them (T-005): the Prisma CLI and
 # its schema engine download, argon2's native binding, and esbuild (used by tsx and Vitest).
